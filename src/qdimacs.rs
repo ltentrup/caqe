@@ -1,5 +1,4 @@
-use super::Matrix;
-use super::HierarchicalPrefix;
+use super::*;
 use std::error::Error;
 use std::fmt;
 
@@ -10,6 +9,8 @@ pub enum ParseError {
     WrongHeader(String),
     UnexpectedQuantification(String),
     WrongClause(String),
+    UnexpectedNegation(String),
+    WrongNumberOfClauses(usize, usize),
 }
 
 impl fmt::Display for ParseError {
@@ -24,6 +25,14 @@ impl fmt::Display for ParseError {
                 write!(f, "line that caused error: {}", line)
             }
             &ParseError::WrongClause(ref line) => write!(f, "line that caused error: {}", line),
+            &ParseError::UnexpectedNegation(ref line) => {
+                write!(f, "line that caused error: {}", line)
+            }
+            &ParseError::WrongNumberOfClauses(was, read) => write!(
+                f,
+                "read {} clauses, but {} were specified in prefix",
+                read, was
+            ),
         }
     }
 }
@@ -38,6 +47,12 @@ impl Error for ParseError {
                 "quantification has to be in prefix"
             }
             &ParseError::WrongClause(ref _line) => "clause is malformed",
+            &ParseError::UnexpectedNegation(ref _line) => {
+                "negation is not allowed in quantifier prefix"
+            }
+            &ParseError::WrongNumberOfClauses(_was, _read) => {
+                "instance contains a different number of clauses than specified"
+            }
         }
     }
 
@@ -50,6 +65,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
     let mut lines = content.lines();
 
     let mut initial_matrix: Option<Matrix<HierarchicalPrefix>> = None;
+    let mut num_clauses: Option<usize> = None;
 
     // parse header
     while let Some(line) = lines.next() {
@@ -59,8 +75,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
         } else if line.starts_with("p") {
             // header line
             let mut num_var: Option<usize> = None;
-            let mut num_clauses: Option<usize> = None;
-            let mut chunks = line.split(|char| char == ' ');
+            let mut chunks = line.split(|c| c == ' ');
             for (i, chunk) in chunks.enumerate() {
                 match i {
                     0 => {
@@ -88,7 +103,6 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
                     _ => return Err(ParseError::WrongHeader(String::from(line)).into()),
                 }
             }
-            println!("{:?} {:?}", num_var, num_clauses);
             match (num_var, num_clauses) {
                 (Some(variables), Some(clauses)) => {
                     initial_matrix = Some(Matrix::new(variables, clauses))
@@ -106,14 +120,20 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
         None => return Err(ParseError::NoHeaderFound.into()),
     };
 
+    let num_clauses = num_clauses.unwrap();
+
     // parse quantifier prefix and clauses
     let mut in_prefix = true;
+    let mut num_clauses_read = 0;
     while let Some(line) = lines.next() {
         // a line looks as follows:
         // quantifier: e 1 2 0 or a 1 2 0
         // clause: 1 2 0
         let mut clause_ended = false;
         let mut chunks = line.split(|char| char == ' ');
+        let mut literals: Vec<Literal> = Vec::new();
+        let mut scope_id: Option<ScopeId> = None;
+
         for (i, chunk) in chunks.enumerate() {
             if clause_ended {
                 return Err(ParseError::WrongClause(String::from(line)).into());
@@ -124,6 +144,14 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
                     if !in_prefix {
                         return Err(ParseError::UnexpectedQuantification(String::from(line)).into());
                     }
+                    let quantifier: Quantifier;
+                    if chunk == "a" {
+                        quantifier = Quantifier::Universal;
+                    } else {
+                        assert!(chunk == "e");
+                        quantifier = Quantifier::Existential;
+                    }
+                    scope_id = Some(matrix.prefix.new_scope(quantifier));
                     continue;
                 } else {
                     in_prefix = false;
@@ -137,12 +165,35 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
                 }
             };
             if literal == 0 {
+                if scope_id.is_none() {
+                    let clause = Clause::new(literals);
+                    matrix.add(clause);
+                    num_clauses_read += 1;
+                }
+
                 clause_ended = true;
+                scope_id = None;
+                literals = Vec::new();
+                continue;
+            }
+
+            if let Some(scope_id) = scope_id {
+                if literal < 0 {
+                    return Err(ParseError::UnexpectedNegation(String::from(line)).into());
+                }
+                matrix.prefix.add_variable(literal as Variable, scope_id);
+            } else {
+                // clause
+                literals.push(Literal::from(literal));
             }
         }
         if !clause_ended {
             return Err(ParseError::WrongClause(String::from(line)).into());
         }
+    }
+
+    if num_clauses_read != num_clauses {
+        return Err(ParseError::WrongNumberOfClauses(num_clauses, num_clauses_read).into());
     }
 
     println!("{:?}", matrix);
@@ -207,6 +258,17 @@ mod tests {
     }
 
     #[test]
+    fn test_negation_in_prefix() {
+        let result = parse("p cnf 1 1\na 1 -2 0\n");
+        assert!(result.is_err());
+        let error = result.err().unwrap();
+        assert_eq!(
+            error.description(),
+            ParseError::UnexpectedNegation(String::new()).description()
+        );
+    }
+
+    #[test]
     fn test_wrong_clauses() {
         let instances = vec![
             "p cnf 2 1\n1 0 2\n",
@@ -220,6 +282,23 @@ mod tests {
             assert_eq!(
                 error.description(),
                 ParseError::WrongClause(String::new()).description()
+            );
+        }
+    }
+
+    #[test]
+    fn test_wrong_number_of_clauses() {
+        let instances = vec![
+            "p cnf 2 2\n1 2 0\n",          // less
+            "p cnf 2 1\n1 2 0\n-1 -2 0\n", // more
+        ];
+        for instance in instances {
+            let result = parse(instance);
+            assert!(result.is_err());
+            let error = result.err().unwrap();
+            assert_eq!(
+                error.description(),
+                ParseError::WrongNumberOfClauses(0, 0).description()
             );
         }
     }

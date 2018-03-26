@@ -1,148 +1,23 @@
-use std::ops;
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
 
+mod literal;
+use literal::*;
+pub use self::literal::Literal; // re-export literals
+
+mod clause;
+use clause::*;
+
+mod dimacs;
+use dimacs::*;
+
 mod qdimacs;
-
-pub type Variable = u32;
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
-pub struct Literal {
-    x: u32,
-}
-
-impl Literal {
-    pub fn new(variable: Variable, signed: bool) -> Literal {
-        Literal {
-            x: variable << 1 | (signed as u32),
-        }
-    }
-
-    /// Returns true if `Literal` is signed
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// assert!(qbf::Literal::new(0, true).signed());
-    /// assert!(!qbf::Literal::new(0, false).signed());
-    /// ```
-    pub fn signed(&self) -> bool {
-        (self.x & 1) != 0
-    }
-
-    pub fn unsigned(&self) -> Literal {
-        Literal { x: self.x & !1 }
-    }
-
-    pub fn variable(&self) -> Variable {
-        self.x >> 1
-    }
-
-    pub fn dimacs(&self) -> i32 {
-        let base = self.variable() as i32;
-        if self.signed() {
-            -base
-        } else {
-            base
-        }
-    }
-}
-
-impl ops::Neg for Literal {
-    type Output = Literal;
-
-    fn neg(self) -> Literal {
-        Literal { x: self.x ^ 1 }
-    }
-}
-
-#[cfg(test)]
-mod literal_tests {
-
-    use std::mem;
-
-    use super::*;
-
-    #[test]
-    fn size_of_literal() {
-        let result = mem::size_of::<Literal>();
-        assert!(
-            result == 4,
-            "Size of `Literal` should be 4 bytes, was `{}`",
-            result
-        );
-    }
-}
-
-#[derive(PartialEq, Eq, Debug)]
-pub struct Clause {
-    literals: Vec<Literal>,
-}
-
-impl Clause {
-    pub fn new(literals: Vec<Literal>, normalize: bool) -> Clause {
-        if normalize {
-            let mut l = literals;
-            l.sort();
-            l.dedup();
-            Clause { literals: l }
-        } else {
-            Clause { literals: literals }
-        }
-    }
-
-    pub fn new_normalized(literals: Vec<Literal>) -> Clause {
-        Clause::new(literals, true)
-    }
-
-    pub fn len(&self) -> usize {
-        self.literals.len()
-    }
-
-    pub fn is_tautology(&self) -> bool {
-        for (i, &el1) in self.literals.iter().enumerate() {
-            if i + 1 >= self.literals.len() {
-                break;
-            }
-            let el2 = self.literals[i + 1];
-            if el1 == -el2 {
-                return true;
-            }
-        }
-        true
-    }
-}
-
-#[cfg(test)]
-mod clause_tests {
-    use std::mem;
-
-    use super::*;
-
-    #[test]
-    fn size_of_clause() {
-        let result = mem::size_of::<Clause>();
-        assert!(
-            result == 24,
-            "Size of `Clause` should be 24 bytes, was `{}`",
-            result
-        );
-    }
-
-    #[test]
-    fn clause_normalization() {
-        let lit1 = Literal::new(0, false);
-        let lit2 = Literal::new(1, false);
-        let literals = vec![lit2, lit1, lit2];
-        let clause1 = Clause::new_normalized(literals);
-        let clause2 = Clause::new(vec![lit1, lit2], false);
-        assert_eq!(clause1, clause2);
-    }
-}
 
 pub trait Prefix {
     fn new(num_variables: usize) -> Self;
+
+    fn num_variables(&self) -> usize;
 }
 
 #[derive(Debug)]
@@ -158,13 +33,36 @@ impl<P: Prefix> Matrix<P> {
             clauses: Vec::with_capacity(num_clauses),
         }
     }
+
+    fn add(&mut self, clause: Clause) {
+        self.clauses.push(clause);
+    }
+}
+
+impl<P: Prefix> Dimacs for Matrix<P> {
+    fn dimacs(&self) -> String {
+        let mut dimacs = String::new();
+        dimacs.push_str(&format!(
+            "p cnf {} {}",
+            self.prefix.num_variables(),
+            self.clauses.len()
+        ));
+        dimacs
+    }
 }
 
 pub type ScopeId = i32;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VariableInfo {
     scope: ScopeId,
+    is_universal: bool,
+}
+
+impl VariableInfo {
+    fn is_bound(&self) -> bool {
+        self.scope >= 0
+    }
 }
 
 #[derive(Debug)]
@@ -172,10 +70,23 @@ pub struct Scope {
     variables: Vec<Variable>,
 }
 
+impl Scope {
+    fn new() -> Scope {
+        Scope {
+            variables: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct HierarchicalPrefix {
     variables: Vec<VariableInfo>,
     scopes: Vec<Scope>,
+}
+
+pub enum Quantifier {
+    Existential,
+    Universal,
 }
 
 impl Prefix for HierarchicalPrefix {
@@ -188,6 +99,60 @@ impl Prefix for HierarchicalPrefix {
                 },
             ],
         }
+    }
+
+    fn num_variables(&self) -> usize {
+        self.variables.len() - 1
+    }
+}
+
+impl HierarchicalPrefix {
+    /// Creates a new scope with given quantification type
+    fn new_scope(&mut self, quantifier: Quantifier) -> ScopeId {
+        let last_scope: ScopeId = self.last_scope();
+        if last_scope % 2 == quantifier as i32 {
+            return last_scope;
+        } else {
+            self.scopes.push(Scope::new());
+            return self.last_scope();
+        }
+    }
+
+    /// Returns the last created scope
+    fn last_scope(&self) -> ScopeId {
+        assert!(self.scopes.len() > 0);
+        (self.scopes.len() - 1) as ScopeId
+    }
+
+    /// Makes sure variable vector is large enough
+    fn import(&mut self, variable: Variable) {
+        if self.variables.len() <= variable as usize {
+            self.variables.resize(
+                (variable + 1) as usize,
+                VariableInfo {
+                    scope: -1,
+                    is_universal: false,
+                },
+            )
+        }
+    }
+
+    /// Adds a variable to a given scope
+    ///
+    /// Panics, if variable is already bound or scope does not exist (use new_scope first)
+    fn add_variable(&mut self, variable: Variable, scope_id: ScopeId) {
+        self.import(variable);
+        if self.variables[variable as usize].is_bound() {
+            panic!("variable cannot be bound twice");
+        }
+        if scope_id > self.last_scope() {
+            panic!("scope does not exists");
+        }
+        let variable_info = &mut self.variables[variable as usize];
+        variable_info.scope = scope_id;
+        variable_info.is_universal = scope_id % 2 == 1;
+        let scope = &mut self.scopes[scope_id as usize];
+        scope.variables.push(variable);
     }
 }
 
@@ -215,7 +180,9 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
     let mut contents = String::new();
     f.read_to_string(&mut contents)?;
 
-    let matrix = qdimacs::parse(&contents);
+    let matrix = qdimacs::parse(&contents)?;
+
+    println!("{}", matrix.dimacs());
 
     Ok(())
 }
