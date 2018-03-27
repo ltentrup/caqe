@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 
 [dependencies]
+cryptominisat = "5.0.1"
