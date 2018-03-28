@@ -19,4 +19,5 @@ fn main() {
     });
 
     println!("{:?}", result);
+    process::exit(result as i32);
 }

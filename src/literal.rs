@@ -61,7 +61,7 @@ impl From<i32> for Literal {
 }
 
 #[cfg(test)]
-mod literal_tests {
+mod tests {
 
     use std::mem;
 

@@ -40,10 +40,14 @@ impl Clause {
         }
         true
     }
+
+    pub fn iter(&self) -> std::slice::Iter<Literal> {
+        self.literals.iter()
+    }
 }
 
 #[cfg(test)]
-mod clause_tests {
+mod tests {
     use std::mem;
 
     use super::*;

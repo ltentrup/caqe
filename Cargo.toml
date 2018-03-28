@@ -5,3 +5,5 @@ authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 
 [dependencies]
 cryptominisat = "5.0.1"
+log = "0.4"
+simplelog = "^0.5.0"

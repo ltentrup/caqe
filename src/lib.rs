@@ -1,3 +1,8 @@
+#[macro_use] extern crate log;
+extern crate simplelog;
+
+use simplelog::*;
+
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
@@ -12,8 +17,14 @@ use clause::*;
 mod matrix;
 use matrix::*;
 
+mod caqe;
+use caqe::*;
+
 mod dimacs;
 use dimacs::*;
+
+mod solver;
+use solver::*;
 
 mod qdimacs;
 
@@ -36,14 +47,23 @@ impl Config {
     }
 }
 
-pub fn run(config: Config) -> Result<(), Box<Error>> {
+pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     let mut f = File::open(config.filename)?;
     let mut contents = String::new();
     f.read_to_string(&mut contents)?;
+
+    CombinedLogger::init(vec![
+        TermLogger::new(LevelFilter::Trace, simplelog::Config::default()).unwrap(),
+        //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+    ]).unwrap();
 
     let matrix = qdimacs::parse(&contents)?;
 
     println!("{}", matrix.dimacs());
 
-    Ok(())
+    let mut solver = CaqeSolver::new(&matrix);
+
+    let result = solver.solve();
+
+    Ok(result)
 }

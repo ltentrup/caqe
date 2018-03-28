@@ -9,7 +9,7 @@ pub trait Prefix {
 #[derive(Debug)]
 pub struct Matrix<P: Prefix> {
     pub prefix: P,
-    clauses: Vec<Clause>,
+    pub clauses: Vec<Clause>,
 }
 
 impl<P: Prefix> Matrix<P> {
@@ -41,7 +41,7 @@ pub type ScopeId = i32;
 
 #[derive(Debug, Clone)]
 pub struct VariableInfo {
-    scope: ScopeId,
+    pub scope: ScopeId,
     is_universal: bool,
 }
 
@@ -53,12 +53,14 @@ impl VariableInfo {
 
 #[derive(Debug)]
 pub struct Scope {
-    variables: Vec<Variable>,
+    pub id: ScopeId,
+    pub variables: Vec<Variable>,
 }
 
 impl Scope {
-    fn new() -> Scope {
+    fn new(id: ScopeId) -> Scope {
         Scope {
+            id: id,
             variables: Vec::new(),
         }
     }
@@ -67,12 +69,42 @@ impl Scope {
 #[derive(Debug)]
 pub struct HierarchicalPrefix {
     variables: Vec<VariableInfo>,
-    scopes: Vec<Scope>,
+    pub scopes: Vec<Scope>,
 }
 
+impl HierarchicalPrefix {
+    pub fn get(&self, variable: Variable) -> &VariableInfo {
+        &self.variables[variable as usize]
+    }
+}
+
+#[derive(Eq, PartialEq)]
 pub enum Quantifier {
     Existential,
     Universal,
+}
+
+impl From<usize> for Quantifier {
+    fn from(item: usize) -> Self {
+        if item % 2 == 0 {
+            Quantifier::Existential
+        } else {
+            Quantifier::Universal
+        }
+    }
+}
+
+impl From<ScopeId> for Quantifier {
+    fn from(item: ScopeId) -> Self {
+        if item < 0 {
+            panic!("scope id's have to be positive");
+        }
+        if item % 2 == 0 {
+            Quantifier::Existential
+        } else {
+            Quantifier::Universal
+        }
+    }
 }
 
 impl Prefix for HierarchicalPrefix {
@@ -81,6 +113,7 @@ impl Prefix for HierarchicalPrefix {
             variables: Vec::with_capacity(num_variables + 1),
             scopes: vec![
                 Scope {
+                    id: 0,
                     variables: Vec::new(),
                 },
             ],
@@ -96,10 +129,10 @@ impl HierarchicalPrefix {
     /// Creates a new scope with given quantification type
     pub fn new_scope(&mut self, quantifier: Quantifier) -> ScopeId {
         let last_scope: ScopeId = self.last_scope();
-        if last_scope % 2 == quantifier as i32 {
+        if last_scope % 2 == quantifier as ScopeId {
             return last_scope;
         } else {
-            self.scopes.push(Scope::new());
+            self.scopes.push(Scope::new(last_scope + 1));
             return self.last_scope();
         }
     }
