@@ -139,7 +139,7 @@ impl HierarchicalPrefix {
 
     /// Returns the last created scope
     pub fn last_scope(&self) -> ScopeId {
-        assert!(self.scopes.len() > 0);
+        debug_assert!(self.scopes.len() > 0);
         (self.scopes.len() - 1) as ScopeId
     }
 

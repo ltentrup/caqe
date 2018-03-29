@@ -148,7 +148,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
                     if chunk == "a" {
                         quantifier = Quantifier::Universal;
                     } else {
-                        assert!(chunk == "e");
+                        debug_assert!(chunk == "e");
                         quantifier = Quantifier::Existential;
                     }
                     scope_id = Some(matrix.prefix.new_scope(quantifier));
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_expect_header_or_comment() {
         let result = parse("c comment line\nsome wrong line\np cnf 0 0\n");
-        assert!(result.is_err());
+        debug_assert!(result.is_err());
         let error = result.err().unwrap();
         assert_eq!(
             error.description(),
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn test_expect_header() {
         let result = parse("c comment line\n");
-        assert!(result.is_err());
+        debug_assert!(result.is_err());
         let error = result.err().unwrap();
         assert_eq!(error.description(), ParseError::NoHeaderFound.description());
     }
@@ -237,7 +237,7 @@ mod tests {
         ];
         for instance in instances {
             let result = parse(instance);
-            assert!(result.is_err());
+            debug_assert!(result.is_err());
             let error = result.err().unwrap();
             assert_eq!(
                 error.description(),
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn test_prefix_after_clause() {
         let result = parse("p cnf 1 1\n1 2 0\ne 1 2 0\n");
-        assert!(result.is_err());
+        debug_assert!(result.is_err());
         let error = result.err().unwrap();
         assert_eq!(
             error.description(),
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_negation_in_prefix() {
         let result = parse("p cnf 1 1\na 1 -2 0\n");
-        assert!(result.is_err());
+        debug_assert!(result.is_err());
         let error = result.err().unwrap();
         assert_eq!(
             error.description(),
@@ -277,7 +277,7 @@ mod tests {
         ];
         for instance in instances {
             let result = parse(instance);
-            assert!(result.is_err());
+            debug_assert!(result.is_err());
             let error = result.err().unwrap();
             assert_eq!(
                 error.description(),
@@ -294,7 +294,7 @@ mod tests {
         ];
         for instance in instances {
             let result = parse(instance);
-            assert!(result.is_err());
+            debug_assert!(result.is_err());
             let error = result.err().unwrap();
             assert_eq!(
                 error.description(),
@@ -308,7 +308,7 @@ mod tests {
         let instances = vec!["p cnf 0 0\n", "p cnf 0 1\n0\n"];
         for instance in instances {
             let result = parse(instance);
-            assert!(result.is_ok(), instance);
+            debug_assert!(result.is_ok(), instance);
         }
     }
 

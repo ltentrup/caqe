@@ -18,27 +18,8 @@ impl<'a> CaqeSolver<'a> {
     pub fn new(matrix: &'a QMatrix) -> CaqeSolver {
         CaqeSolver {
             matrix: matrix,
-            abstraction: Self::init_abstraction_recursively(matrix, 0),
+            abstraction: CandidateGeneration::init_abstraction_recursively(matrix, 0),
         }
-    }
-
-    fn init_abstraction_recursively(
-        matrix: &'a QMatrix,
-        scope_id: ScopeId,
-    ) -> Box<CandidateGeneration> {
-        let prev;
-        if scope_id < matrix.prefix.last_scope() {
-            prev = Some(Self::init_abstraction_recursively(matrix, scope_id + 1));
-        } else {
-            prev = None;
-        }
-        let scope = &matrix.prefix.scopes[scope_id as usize];
-        Box::new(CandidateGeneration::new(
-            matrix,
-            scope,
-            Quantifier::from(scope_id),
-            prev,
-        ))
     }
 }
 
@@ -112,10 +93,91 @@ impl CandidateGeneration {
         candidate
     }
 
+    fn init_abstraction_recursively(
+        matrix: &QMatrix,
+        scope_id: ScopeId,
+    ) -> Box<CandidateGeneration> {
+        let prev;
+        if scope_id < matrix.prefix.last_scope() {
+            prev = Some(Self::init_abstraction_recursively(matrix, scope_id + 1));
+        } else {
+            prev = None;
+        }
+        let scope = &matrix.prefix.scopes[scope_id as usize];
+        let result = Box::new(CandidateGeneration::new(
+            matrix,
+            scope,
+            Quantifier::from(scope_id),
+            prev,
+        ));
+
+        #[cfg(debug_assertions)]
+        {
+            // check consistency of interface literals
+            // for every b_lit in abstraction, there is a corresponding t_lit in one of its inner abstractions
+            for (clause_id, b_lit) in result.b_literals.iter() {
+                let mut current = &result;
+                let mut found = false;
+                while let Some(next) = current.next.as_ref() {
+                    if next.t_literals.contains_key(clause_id) {
+                        found = true;
+                        break;
+                    }
+                    current = &next;
+                }
+                if !found {
+                    panic!(
+                        "missing t-literal for b-literal {} at scope {}",
+                        clause_id, scope.id
+                    );
+                }
+            }
+
+            if scope_id == 0 {
+                let mut abstractions = Vec::new();
+                Self::verify_t_literals(&mut abstractions, result.as_ref());
+            }
+        }
+
+        result
+    }
+
+    #[cfg(debug_assertions)]
+    fn verify_t_literals<'a>(
+        abstractions: &mut Vec<&'a CandidateGeneration>,
+        scope: &'a CandidateGeneration,
+    ) {
+        // check that for every clause containing a t-literal at this scope,
+        // there is a clause containing a b-literal in the previous scope
+        abstractions.push(scope);
+        match scope.next.as_ref() {
+            None => return,
+            Some(next) => {
+                debug!("{} {}", next.scope_id, abstractions.len());
+
+                for (clause_id, t_lit) in next.t_literals.iter() {
+                    let has_matching_b_lit =
+                        abstractions.iter().fold(false, |val, &abstraction| {
+                            val || abstraction.b_literals.contains_key(clause_id)
+                        });
+                    if !has_matching_b_lit {
+                        panic!(
+                            "missing b-literal for t-literal {} at scope {}",
+                            clause_id, next.scope_id
+                        );
+                    }
+                }
+
+                Self::verify_t_literals(abstractions, next);
+            }
+        }
+        abstractions.pop();
+    }
+
     fn new_existential(&mut self, matrix: &QMatrix, scope: &Scope) {
         // build SAT instance for existential quantifier: abstract all literals that are not contained in quantifier into b- and t-literals
         for (clause_id, clause) in matrix.clauses.iter().enumerate() {
-            assert!(clause.len() != 0, "unit clauses indicate a problem");
+            debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
 
             let mut contains_variables = false;
 
@@ -140,9 +202,9 @@ impl CandidateGeneration {
             let need_b_lit = contains_variables && min_scope <= scope.id && scope.id < max_scope;
 
             if !contains_variables {
-                assert!(!need_t_lit);
-                assert!(!need_b_lit);
-                assert!(sat_clause.is_empty());
+                debug_assert!(!need_t_lit);
+                debug_assert!(!need_b_lit);
+                debug_assert!(sat_clause.is_empty());
                 continue;
             }
 
@@ -160,19 +222,19 @@ impl CandidateGeneration {
                 self.b_literals.insert(clause_id as ClauseId, b_lit);
             }
 
-            assert!(!sat_clause.is_empty());
+            debug_assert!(!sat_clause.is_empty());
             self.sat.add_clause(sat_clause.as_ref());
         }
 
-        println!("Scope {}", scope.id);
-        println!("t-literals: {}", self.t_literals.len());
-        println!("b-literals: {}", self.b_literals.len());
+        debug!("Scope {}", scope.id);
+        debug!("t-literals: {}", self.t_literals.len());
+        debug!("b-literals: {}", self.b_literals.len());
     }
 
     fn new_universal(&mut self, matrix: &QMatrix, scope: &Scope) {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
         for (clause_id, clause) in matrix.clauses.iter().enumerate() {
-            assert!(clause.len() != 0, "unit clauses indicate a problem");
+            debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
 
             let mut scopes = MinMax::new();
 
@@ -237,7 +299,7 @@ impl CandidateGeneration {
         } else {
             SolverResult::Unsatisfiable
         };
-        assert!(good_result != bad_result);
+        debug_assert!(good_result != bad_result);
 
         loop {
             debug!("");
@@ -250,7 +312,7 @@ impl CandidateGeneration {
                     if self.next.is_none() {
                         // innermost scope, propagate result to outer scopes
                         self.min_entry.clone_from(&self.entry);
-                        assert!(!self.is_universal);
+                        debug_assert!(!self.is_universal);
                         // TODO: optimize min_entry
                         return good_result;
                     }
@@ -265,7 +327,7 @@ impl CandidateGeneration {
                             .clone_from(&self.next.as_ref().unwrap().min_entry);
                         return good_result;
                     } else {
-                        assert!(result == bad_result);
+                        debug_assert!(result == bad_result);
 
                         self.refine();
                         continue;
@@ -361,12 +423,12 @@ impl CandidateGeneration {
                     assumptions[clause_id as usize] = true;
                     continue;
                 }
-                assert!(
+                debug_assert!(
                     !self.entry[clause_id as usize] || assumptions[clause_id as usize],
                     "entry -> assumption"
                 );
 
-                assert!(
+                debug_assert!(
                     !self.entry[clause_id as usize],
                     "may be true, would reduce overhead, so early return"
                 );
@@ -433,7 +495,7 @@ impl CandidateGeneration {
                     }
                 }
                 if !nonempty {
-                    assert!(self.t_literals.contains_key(&clause_id));
+                    debug_assert!(self.t_literals.contains_key(&clause_id));
                     if !self.entry[clause_id as usize] {
                         continue;
                     }
