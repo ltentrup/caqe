@@ -148,8 +148,6 @@ impl CandidateGeneration {
         match scope.next.as_ref() {
             None => return,
             Some(next) => {
-                debug!("{} {}", next.scope_id, abstractions.len());
-
                 for (clause_id, _t_lit) in next.t_literals.iter() {
                     let has_matching_b_lit =
                         abstractions.iter().fold(false, |val, &abstraction| {
@@ -224,6 +222,21 @@ impl CandidateGeneration {
         debug!("Scope {}", scope.id);
         debug!("t-literals: {}", self.t_literals.len());
         debug!("b-literals: {}", self.b_literals.len());
+
+        #[cfg(debug_assertions)]
+        {
+            let mut t_literals = String::new();
+            for clause_id in self.t_literals.keys() {
+                t_literals.push_str(&format!(" t{}", clause_id));
+            }
+            debug!("t-literals: {}", t_literals);
+
+            let mut b_literals = String::new();
+            for clause_id in self.b_literals.keys() {
+                b_literals.push_str(&format!(" b{}", clause_id));
+            }
+            debug!("b-literals: {}", b_literals);
+        }
     }
 
     fn new_universal(&mut self, matrix: &QMatrix, scope: &Scope) {
@@ -270,6 +283,21 @@ impl CandidateGeneration {
         debug!("Scope {}", scope.id);
         debug!("t-literals: {}", self.t_literals.len());
         debug!("b-literals: {}", self.b_literals.len());
+
+        #[cfg(debug_assertions)]
+        {
+            let mut t_literals = String::new();
+            for clause_id in self.t_literals.keys() {
+                t_literals.push_str(&format!(" t{}", clause_id));
+            }
+            debug!("t-literals: {}", t_literals);
+
+            let mut b_literals = String::new();
+            for clause_id in self.b_literals.keys() {
+                b_literals.push_str(&format!(" b{}", clause_id));
+            }
+            debug!("b-literals: {}", b_literals);
+        }
     }
 
     fn lit_to_sat_lit(&self, literal: Literal) -> Lit {
@@ -343,6 +371,11 @@ impl CandidateGeneration {
     }
 
     fn check_candidate_exists(&mut self) -> Lbool {
+        // we need to reset abstraction entries for next scopes, since some entries may be pushed down
+        if self.next.is_some() {
+            self.next.as_mut().unwrap().entry.clone_from(&self.entry);
+        }
+
         self.sat_solver_assumptions.clear();
 
         let mut assumptions = Vec::new();
@@ -350,6 +383,11 @@ impl CandidateGeneration {
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
+        // we iterate in parallel over the entry and the t-literals of current level
+        // there are 3 possibilities:
+        // * clause from entry is not a t-lit: push entry to next quantifier
+        // * clause is in entry and a t-lit: assume positively
+        // * clause is not in entry and a t-lit: assume negatively
         for (&clause_id, &t_literal) in self.t_literals.iter() {
             let mut t_literal = t_literal;
             if !self.entry[clause_id as usize] {
@@ -362,9 +400,9 @@ impl CandidateGeneration {
             #[cfg(debug_assertions)]
             {
                 if t_literal.isneg() {
-                    debug_print.push_str(&format!(" t{}", clause_id));
-                } else {
                     debug_print.push_str(&format!(" -t{}", clause_id));
+                } else {
+                    debug_print.push_str(&format!(" t{}", clause_id));
                 }
             }
 
@@ -421,11 +459,8 @@ impl CandidateGeneration {
     fn get_assumptions(&mut self, matrix: &QMatrix) {
         trace!("get_assumptions");
 
+        // assumptions were already cleared in check_candidate_exists
         let assumptions = &mut self.next.as_mut().unwrap().entry;
-
-        let len = assumptions.len();
-        assumptions.clear();
-        assumptions.resize(len, false);
 
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
@@ -541,7 +576,13 @@ impl CandidateGeneration {
                 continue;
             }
             let clause_id = i as ClauseId;
-            let b_lit = self.b_literals[&clause_id];
+            let b_lit = Self::add_b_lit_and_adapt_abstraction(
+                clause_id,
+                &mut self.sat,
+                &mut self.b_literals,
+                &mut self.t_literals,
+                &mut self.reverse_t_literals,
+            );
             sat_clause.push(b_lit);
 
             #[cfg(debug_assertions)]
@@ -551,6 +592,24 @@ impl CandidateGeneration {
 
         #[cfg(debug_assertions)]
         debug!("refinement: {}", debug_print);
+    }
+
+    fn add_b_lit_and_adapt_abstraction(
+        clause_id: ClauseId,
+        sat: &mut cryptominisat::Solver,
+        b_literals: &mut HashMap<ClauseId, Lit>,
+        t_literals: &mut HashMap<ClauseId, Lit>,
+        reverse_t_literals: &mut HashMap<u32, ClauseId>,
+    ) -> Lit {
+        let b_lit = b_literals.entry(clause_id).or_insert_with(|| {
+            // A new b-literal has to be inserted
+            // Create a new SAT solver literal and add it to both, t-literals and b-literals
+            let b_lit = sat.new_var();
+            t_literals.insert(clause_id, b_lit);
+            reverse_t_literals.insert(b_lit.var(), clause_id);
+            b_lit
+        });
+        *b_lit
     }
 
     fn get_unsat_core(&mut self) {
@@ -585,8 +644,6 @@ impl CandidateGeneration {
         }
 
         for (&variable, value) in self.assignments.iter() {
-            debug!("{} {}", variable, value);
-
             let literal = Literal::new(variable, !value);
 
             // check if assignment is needed, i.e., it can flip a bit in entry
@@ -716,5 +773,43 @@ e 3 4 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_two_alternations() {
+        let instance = "c
+p cnf 11 24
+a 1 0
+e 2 0
+a 3 0
+e 4 5 6 7 8 9 10 11 0
+3 5 0
+-4 5 0
+-3 4 -5 0
+-3 6 0
+4 6 0
+3 -4 -6 0
+2 -7 0
+5 -7 0
+6 -7 0
+-2 -5 -6 7 0
+-1 8 0
+-7 8 0
+1 7 -8 0
+-2 -9 0
+5 -9 0
+6 -9 0
+2 -5 -6 9 0
+1 10 0
+-9 10 0
+-1 9 -10 0
+8 -11 0
+10 -11 0
+-8 -10 11 0
+11 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
     }
 }
