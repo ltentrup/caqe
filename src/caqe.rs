@@ -11,140 +11,40 @@ type QMatrix = Matrix<HierarchicalPrefix>;
 
 pub struct CaqeSolver<'a> {
     matrix: &'a QMatrix,
-    abstractions: Vec<CandidateGeneration>,
-    assignments: HashMap<Variable, bool>,
-    min_entry: Vec<bool>,
+    abstraction: Box<CandidateGeneration>,
 }
 
 impl<'a> CaqeSolver<'a> {
     pub fn new(matrix: &'a QMatrix) -> CaqeSolver {
-        let mut abstractions = Vec::new();
-        for (i, scope) in matrix.prefix.scopes.iter().enumerate() {
-            println!("{:?}", scope);
-            abstractions.push(CandidateGeneration::new(matrix, scope, Quantifier::from(i)));
-        }
-        let mut min_entry = Vec::new();
-        min_entry.resize(matrix.clauses.len(), false);
-
         CaqeSolver {
             matrix: matrix,
-            abstractions: abstractions,
-            assignments: HashMap::new(),
-            min_entry: min_entry,
+            abstraction: Self::init_abstraction_recursively(matrix, 0),
         }
     }
 
-    fn solve_scope(&mut self, scope_id: ScopeId) -> ScopeResult {
-        // we need to borrow current scope and following scope
-        // thus, the need to split the array
-        let (head, tail) = self.abstractions.split_at_mut((scope_id + 1) as usize);
-        let scope = &mut head[scope_id as usize];
-
-        debug!("");
-        debug!("solve level {}", scope_id);
-
-        match scope.check_candidate_exists() {
-            Lbool::True => {
-                // there is a candidate solution, verify it recursively
-                scope.update_assignment(&mut self.assignments);
-                if scope_id == self.matrix.prefix.last_scope() {
-                    // innermost scope, propagate result to outer scopes
-                    self.min_entry.clone_from(&scope.entry);
-                    return ScopeResult::CandidateVerified;
-                }
-                let assumptions = &mut tail[0].entry;
-                scope.get_assumptions(self.matrix, &self.assignments, assumptions);
-                return ScopeResult::CandidateFound;
-            }
-            Lbool::False => {
-                // there is no candidate solution, return witness
-                scope.get_unsat_core(&mut self.min_entry);
-                return ScopeResult::CandidateRefuted;
-            }
-            _ => panic!("inconsistent internal state"),
+    fn init_abstraction_recursively(
+        matrix: &'a QMatrix,
+        scope_id: ScopeId,
+    ) -> Box<CandidateGeneration> {
+        let prev;
+        if scope_id < matrix.prefix.last_scope() {
+            prev = Some(Self::init_abstraction_recursively(matrix, scope_id + 1));
+        } else {
+            prev = None;
         }
+        let scope = &matrix.prefix.scopes[scope_id as usize];
+        Box::new(CandidateGeneration::new(
+            matrix,
+            scope,
+            Quantifier::from(scope_id),
+            prev,
+        ))
     }
-
-    fn optimize_sat_entry(&mut self, current: ScopeId) -> Option<ScopeId> {
-        assert!(Quantifier::from(current) == Quantifier::Existential);
-        debug!("entry {:?}", self.min_entry);
-
-        let mut current = current;
-        let mut next = current - 1;
-        loop {
-            if current == 0 {
-                // instance is satisfiable
-                return None;
-            }
-            // TODO: add local refinement literals
-            // TODO: optimize entry based on current scope (need occurrence list in matrix)
-            // TODO: check if `next` scope influences entry
-            let scope = &mut self.abstractions[next as usize];
-            scope.refine(&self.min_entry);
-            return Some(next);
-        }
-    }
-
-    fn optimize_unsat_entry(&mut self, current: ScopeId) -> Option<ScopeId> {
-        assert!(Quantifier::from(current) == Quantifier::Universal);
-        debug!("entry {:?}", self.min_entry);
-        let mut current = current;
-        let mut next = current - 1;
-        loop {
-            if current == 1 {
-                // instance is satisfiable
-                return None;
-            }
-            let scope = &mut self.abstractions[next as usize];
-            scope.refine(&self.min_entry);
-            return Some(next);
-        }
-        None
-    }
-}
-
-enum ScopeResult {
-    CandidateFound,
-    CandidateVerified,
-    CandidateRefuted,
 }
 
 impl<'a> super::Solver for CaqeSolver<'a> {
     fn solve(&mut self) -> SolverResult {
-        let initial_scope;
-        if self.matrix.prefix.scopes[0].variables.is_empty() {
-            // top-level existential scope is empty
-            initial_scope = 1;
-        } else {
-            initial_scope = 0;
-        }
-
-        let mut current_scope = initial_scope;
-        loop {
-            match self.solve_scope(current_scope) {
-                ScopeResult::CandidateFound => {
-                    current_scope += 1;
-                }
-                ScopeResult::CandidateVerified => {
-                    assert!(current_scope == self.matrix.prefix.last_scope());
-                    match self.optimize_sat_entry(current_scope) {
-                        None => return SolverResult::Satisfiable,
-                        Some(next) => current_scope = next,
-                    }
-                }
-                ScopeResult::CandidateRefuted => match Quantifier::from(current_scope) {
-                    Quantifier::Existential => match self.optimize_unsat_entry(current_scope - 1) {
-                        None => return SolverResult::Unsatisfiable,
-                        Some(next) => current_scope = next,
-                    },
-                    Quantifier::Universal => match self.optimize_sat_entry(current_scope - 1) {
-                        None => return SolverResult::Satisfiable,
-                        Some(next) => current_scope = next,
-                    },
-                },
-            }
-        }
-        SolverResult::Unknown
+        self.abstraction.as_mut().solve_recursive(self.matrix)
     }
 }
 
@@ -157,17 +57,29 @@ struct CandidateGeneration {
     /// lookup from sat solver variables to clause id's
     reverse_t_literals: HashMap<u32, ClauseId>,
 
+    assignments: HashMap<Variable, bool>,
+
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
     entry: Vec<bool>,
+
+    min_entry: Vec<bool>,
 
     /// stores the assumptions (as clause id's) given to sat solver
     sat_solver_assumptions: Vec<ClauseId>,
 
     is_universal: bool,
+    scope_id: ScopeId,
+
+    next: Option<Box<CandidateGeneration>>,
 }
 
 impl CandidateGeneration {
-    fn new(matrix: &QMatrix, scope: &Scope, quantifier: Quantifier) -> CandidateGeneration {
+    fn new(
+        matrix: &QMatrix,
+        scope: &Scope,
+        quantifier: Quantifier,
+        next: Option<Box<CandidateGeneration>>,
+    ) -> CandidateGeneration {
         let mut entry = Vec::new();
         entry.resize(matrix.clauses.len(), false);
         let mut candidate = CandidateGeneration {
@@ -176,9 +88,13 @@ impl CandidateGeneration {
             t_literals: HashMap::new(),
             b_literals: HashMap::new(),
             reverse_t_literals: HashMap::new(),
+            assignments: HashMap::new(),
+            min_entry: entry.clone(),
             entry: entry,
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
+            scope_id: scope.id,
+            next: next,
         };
 
         // add variables of scope to sat solver
@@ -308,10 +224,69 @@ impl CandidateGeneration {
         }
     }
 
+    fn solve_recursive(&mut self, matrix: &QMatrix) -> SolverResult {
+        trace!("solve_recursive");
+
+        let good_result = if self.is_universal {
+            SolverResult::Unsatisfiable
+        } else {
+            SolverResult::Satisfiable
+        };
+        let bad_result = if self.is_universal {
+            SolverResult::Satisfiable
+        } else {
+            SolverResult::Unsatisfiable
+        };
+        assert!(good_result != bad_result);
+
+        loop {
+            debug!("");
+            debug!("solve level {}", self.scope_id);
+
+            match self.check_candidate_exists() {
+                Lbool::True => {
+                    // there is a candidate solution, verify it recursively
+                    self.update_assignment();
+                    if self.next.is_none() {
+                        // innermost scope, propagate result to outer scopes
+                        self.min_entry.clone_from(&self.entry);
+                        assert!(!self.is_universal);
+                        // TODO: optimize min_entry
+                        return good_result;
+                    }
+
+                    self.get_assumptions(matrix);
+
+                    let result = self.next.as_mut().unwrap().solve_recursive(matrix);
+
+                    if result == good_result {
+                        // TODO: do entry optimization
+                        self.min_entry
+                            .clone_from(&self.next.as_ref().unwrap().min_entry);
+                        return good_result;
+                    } else {
+                        assert!(result == bad_result);
+
+                        self.refine();
+                        continue;
+                    }
+                }
+                Lbool::False => {
+                    // there is no candidate solution, return witness
+                    self.get_unsat_core();
+                    return bad_result;
+                }
+                _ => panic!("inconsistent internal state"),
+            }
+        }
+    }
+
     fn check_candidate_exists(&mut self) -> Lbool {
         self.sat_solver_assumptions.clear();
 
         let mut assumptions = Vec::new();
+
+        let mut debug_print = String::new();
 
         for (&clause_id, &t_literal) in self.t_literals.iter() {
             let mut t_literal = t_literal;
@@ -320,6 +295,12 @@ impl CandidateGeneration {
             }
             if self.is_universal {
                 t_literal = !t_literal;
+            }
+
+            if t_literal.isneg() {
+                debug_print.push_str(&format!(" t{}", clause_id));
+            } else {
+                debug_print.push_str(&format!(" -t{}", clause_id));
             }
 
             if self.is_universal && !t_literal.isneg() {
@@ -334,11 +315,15 @@ impl CandidateGeneration {
                 self.sat_solver_assumptions.push(clause_id);
             }
         }
+        debug!("assume {}", debug_print);
         self.sat.solve_with_assumptions(assumptions.as_ref())
     }
 
-    fn update_assignment(&mut self, assignment: &mut HashMap<Variable, bool>) {
+    fn update_assignment(&mut self) {
         trace!("update_assignment");
+
+        let mut debug_print = String::new();
+
         let model = self.sat.get_model();
         for (&variable, &sat_var) in self.variable_to_sat.iter() {
             let value = match model[sat_var.var() as usize] {
@@ -346,23 +331,27 @@ impl CandidateGeneration {
                 Lbool::False => false,
                 _ => panic!("expect all variables to be assigned"),
             };
-            debug!("variable {} {}", variable, value);
-            let old = assignment.entry(variable).or_insert(value);
+            if value {
+                debug_print.push_str(&format!(" {}", variable));
+            } else {
+                debug_print.push_str(&format!(" -{}", variable));
+            }
+            let old = self.assignments.entry(variable).or_insert(value);
             *old = value;
         }
-        debug!("assignment {:?}", assignment);
+        debug!("assignment {}", debug_print);
     }
 
-    fn get_assumptions(
-        &mut self,
-        matrix: &QMatrix,
-        assignment: &HashMap<Variable, bool>,
-        assumptions: &mut Vec<bool>,
-    ) {
+    fn get_assumptions(&mut self, matrix: &QMatrix) {
         trace!("get_assumptions");
+
+        let assumptions = &mut self.next.as_mut().unwrap().entry;
+
         let len = assumptions.len();
         assumptions.clear();
         assumptions.resize(len, false);
+
+        let mut debug_print = String::new();
 
         let model = self.sat.get_model();
         if !self.is_universal {
@@ -390,7 +379,7 @@ impl CandidateGeneration {
                         // not a variable of current level
                         continue;
                     }
-                    let value = assignment[&literal.variable()];
+                    let value = self.assignments[&literal.variable()];
                     if value && !literal.signed() {
                         is_satisfied = true;
                         break;
@@ -403,6 +392,8 @@ impl CandidateGeneration {
                     assumptions[clause_id as usize] = true;
                     continue;
                 }
+
+                debug_print.push_str(&format!(" b{}", clause_id));
             }
         } else {
             for (&clause_id, b_lit) in self.b_literals.iter() {
@@ -423,7 +414,7 @@ impl CandidateGeneration {
                         continue;
                     }
                     nonempty = true;
-                    let value = assignment[&literal.variable()];
+                    let value = self.assignments[&literal.variable()];
                     if value && !literal.signed() {
                         falsified = false;
                         break;
@@ -449,14 +440,20 @@ impl CandidateGeneration {
                 }
 
                 assumptions[clause_id as usize] = true;
+
+                debug_print.push_str(&format!(" b{}", clause_id));
             }
         }
-        debug!("assumptions: {:?}", assumptions);
+        debug!("assumptions: {}", debug_print);
     }
 
-    fn refine(&mut self, entry: &Vec<bool>) {
+    fn refine(&mut self) {
         trace!("refine");
+        let entry = &self.next.as_ref().unwrap().min_entry;
         let mut sat_clause = Vec::new();
+
+        let mut debug_print = String::new();
+
         for (i, val) in entry.iter().enumerate() {
             if !val {
                 continue;
@@ -464,23 +461,28 @@ impl CandidateGeneration {
             let clause_id = i as ClauseId;
             let b_lit = self.b_literals[&clause_id];
             sat_clause.push(b_lit);
-            debug!("b{}", clause_id);
+            debug_print.push_str(&format!(" b{}", clause_id));
         }
         self.sat.add_clause(sat_clause.as_ref());
+        debug!("refinement: {}", debug_print);
     }
 
-    fn get_unsat_core(&mut self, entry: &mut Vec<bool>) {
+    fn get_unsat_core(&mut self) {
         trace!("unsat_core");
 
-        let len = entry.len();
-        entry.clear();
-        entry.resize(len, false);
+        let len = self.entry.len();
+        self.entry.clear();
+        self.entry.resize(len, false);
+
+        let mut debug_print = String::new();
 
         let failed = self.sat.get_conflict();
         for l in failed {
             let clause_id = self.reverse_t_literals[&l.var()];
-            entry[clause_id as usize] = true;
+            self.entry[clause_id as usize] = true;
+            debug_print.push_str(&format!(" t{}", clause_id));
         }
+        debug!("unsat core: {}", debug_print);
     }
 }
 
