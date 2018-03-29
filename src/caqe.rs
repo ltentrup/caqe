@@ -5,8 +5,6 @@ use super::*;
 
 use std::collections::HashMap;
 
-type ClauseId = u32;
-
 type QMatrix = Matrix<HierarchicalPrefix>;
 
 pub struct CaqeSolver<'a> {

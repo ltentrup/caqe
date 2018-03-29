@@ -1,5 +1,9 @@
 use super::*;
 
+use std::collections::HashMap;
+
+pub type ClauseId = u32;
+
 pub trait Prefix {
     fn new(num_variables: usize) -> Self;
 
@@ -10,6 +14,7 @@ pub trait Prefix {
 pub struct Matrix<P: Prefix> {
     pub prefix: P,
     pub clauses: Vec<Clause>,
+    occurrences: HashMap<Literal, Vec<ClauseId>>,
 }
 
 impl<P: Prefix> Matrix<P> {
@@ -17,11 +22,23 @@ impl<P: Prefix> Matrix<P> {
         Matrix {
             prefix: P::new(num_variables),
             clauses: Vec::with_capacity(num_clauses),
+            occurrences: HashMap::new(),
         }
     }
 
     pub fn add(&mut self, clause: Clause) {
+        for &literal in clause.iter() {
+            let occurrences = self.occurrences.entry(literal).or_insert(Vec::new());
+            occurrences.push(self.clauses.len() as ClauseId);
+        }
         self.clauses.push(clause);
+    }
+
+    pub fn occurrences(&self, literal: Literal) -> std::slice::Iter<ClauseId> {
+        match self.occurrences.get(&literal) {
+            None => [].iter(),
+            Some(vec) => vec.iter(),
+        }
     }
 }
 
@@ -172,5 +189,36 @@ impl HierarchicalPrefix {
         variable_info.is_universal = scope_id % 2 == 1;
         let scope = &mut self.scopes[scope_id as usize];
         scope.variables.push(variable);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_matrix_occurrences() {
+        let instance = "c
+p cnf 4 4
+a 1 2 0
+e 3 4 0
+1 3 0
+-1 4 0
+-3 -4 0
+1 2 4 0
+";
+        let lit1 = Literal::new(1, false);
+        let lit2 = Literal::new(2, false);
+        let lit3 = Literal::new(3, false);
+        let lit4 = Literal::new(4, false);
+        let matrix = qdimacs::parse(&instance).unwrap();
+        assert_eq!(matrix.occurrences(lit1).len(), 2);
+        assert_eq!(matrix.occurrences(-lit1).len(), 1);
+        assert_eq!(matrix.occurrences(lit2).len(), 1);
+        assert_eq!(matrix.occurrences(-lit2).len(), 0);
+        assert_eq!(matrix.occurrences(lit3).len(), 1);
+        assert_eq!(matrix.occurrences(-lit3).len(), 1);
+        assert_eq!(matrix.occurrences(lit4).len(), 2);
+        assert_eq!(matrix.occurrences(-lit4).len(), 1);
     }
 }

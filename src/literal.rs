@@ -2,7 +2,7 @@ use std::ops;
 
 pub type Variable = u32;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug, Hash)]
 pub struct Literal {
     x: u32,
 }
