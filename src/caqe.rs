@@ -272,9 +272,9 @@ impl CandidateGeneration {
             }
         }
 
-        println!("Scope {}", scope.id);
-        println!("t-literals: {}", self.t_literals.len());
-        println!("b-literals: {}", self.b_literals.len());
+        debug!("Scope {}", scope.id);
+        debug!("t-literals: {}", self.t_literals.len());
+        debug!("b-literals: {}", self.b_literals.len());
     }
 
     fn lit_to_sat_lit(&self, literal: Literal) -> Lit {
@@ -348,6 +348,7 @@ impl CandidateGeneration {
 
         let mut assumptions = Vec::new();
 
+        #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
         for (&clause_id, &t_literal) in self.t_literals.iter() {
@@ -359,10 +360,13 @@ impl CandidateGeneration {
                 t_literal = !t_literal;
             }
 
-            if t_literal.isneg() {
-                debug_print.push_str(&format!(" t{}", clause_id));
-            } else {
-                debug_print.push_str(&format!(" -t{}", clause_id));
+            #[cfg(debug_assertions)]
+            {
+                if t_literal.isneg() {
+                    debug_print.push_str(&format!(" t{}", clause_id));
+                } else {
+                    debug_print.push_str(&format!(" -t{}", clause_id));
+                }
             }
 
             if self.is_universal && !t_literal.isneg() {
@@ -377,13 +381,17 @@ impl CandidateGeneration {
                 self.sat_solver_assumptions.push(clause_id);
             }
         }
+
+        #[cfg(debug_assertions)]
         debug!("assume {}", debug_print);
+
         self.sat.solve_with_assumptions(assumptions.as_ref())
     }
 
     fn update_assignment(&mut self) {
         trace!("update_assignment");
 
+        #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
         let model = self.sat.get_model();
@@ -393,14 +401,21 @@ impl CandidateGeneration {
                 Lbool::False => false,
                 _ => panic!("expect all variables to be assigned"),
             };
-            if value {
-                debug_print.push_str(&format!(" {}", variable));
-            } else {
-                debug_print.push_str(&format!(" -{}", variable));
+
+            #[cfg(debug_assertions)]
+            {
+                if value {
+                    debug_print.push_str(&format!(" {}", variable));
+                } else {
+                    debug_print.push_str(&format!(" -{}", variable));
+                }
             }
+
             let old = self.assignments.entry(variable).or_insert(value);
             *old = value;
         }
+
+        #[cfg(debug_assertions)]
         debug!("assignment {}", debug_print);
     }
 
@@ -413,6 +428,7 @@ impl CandidateGeneration {
         assumptions.clear();
         assumptions.resize(len, false);
 
+        #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
         let model = self.sat.get_model();
@@ -455,6 +471,7 @@ impl CandidateGeneration {
                     continue;
                 }
 
+                #[cfg(debug_assertions)]
                 debug_print.push_str(&format!(" b{}", clause_id));
             }
         } else {
@@ -503,9 +520,12 @@ impl CandidateGeneration {
 
                 assumptions[clause_id as usize] = true;
 
+                #[cfg(debug_assertions)]
                 debug_print.push_str(&format!(" b{}", clause_id));
             }
         }
+
+        #[cfg(debug_assertions)]
         debug!("assumptions: {}", debug_print);
     }
 
@@ -514,6 +534,7 @@ impl CandidateGeneration {
         let entry = &self.next.as_ref().unwrap().min_entry;
         let mut sat_clause = Vec::new();
 
+        #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
         for (i, val) in entry.iter().enumerate() {
@@ -523,9 +544,13 @@ impl CandidateGeneration {
             let clause_id = i as ClauseId;
             let b_lit = self.b_literals[&clause_id];
             sat_clause.push(b_lit);
+
+            #[cfg(debug_assertions)]
             debug_print.push_str(&format!(" b{}", clause_id));
         }
         self.sat.add_clause(sat_clause.as_ref());
+
+        #[cfg(debug_assertions)]
         debug!("refinement: {}", debug_print);
     }
 
@@ -536,14 +561,19 @@ impl CandidateGeneration {
         self.entry.clear();
         self.entry.resize(len, false);
 
+        #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
         let failed = self.sat.get_conflict();
         for l in failed {
             let clause_id = self.reverse_t_literals[&l.var()];
             self.entry[clause_id as usize] = true;
+
+            #[cfg(debug_assertions)]
             debug_print.push_str(&format!(" t{}", clause_id));
         }
+
+        #[cfg(debug_assertions)]
         debug!("unsat core: {}", debug_print);
     }
 }
