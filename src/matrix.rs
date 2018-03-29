@@ -89,12 +89,6 @@ pub struct HierarchicalPrefix {
     pub scopes: Vec<Scope>,
 }
 
-impl HierarchicalPrefix {
-    pub fn get(&self, variable: Variable) -> &VariableInfo {
-        &self.variables[variable as usize]
-    }
-}
-
 #[derive(Eq, PartialEq)]
 pub enum Quantifier {
     Existential,
@@ -143,6 +137,10 @@ impl Prefix for HierarchicalPrefix {
 }
 
 impl HierarchicalPrefix {
+    pub fn get(&self, variable: Variable) -> &VariableInfo {
+        &self.variables[variable as usize]
+    }
+
     /// Creates a new scope with given quantification type
     pub fn new_scope(&mut self, quantifier: Quantifier) -> ScopeId {
         let last_scope: ScopeId = self.last_scope();

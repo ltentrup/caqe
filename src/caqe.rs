@@ -41,8 +41,6 @@ struct CandidateGeneration {
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
     entry: Vec<bool>,
 
-    min_entry: Vec<bool>,
-
     /// stores the assumptions (as clause id's) given to sat solver
     sat_solver_assumptions: Vec<ClauseId>,
 
@@ -68,7 +66,6 @@ impl CandidateGeneration {
             b_literals: HashMap::new(),
             reverse_t_literals: HashMap::new(),
             assignments: HashMap::new(),
-            min_entry: entry.clone(),
             entry: entry,
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
@@ -113,7 +110,7 @@ impl CandidateGeneration {
         {
             // check consistency of interface literals
             // for every b_lit in abstraction, there is a corresponding t_lit in one of its inner abstractions
-            for (clause_id, b_lit) in result.b_literals.iter() {
+            for (clause_id, _b_lit) in result.b_literals.iter() {
                 let mut current = &result;
                 let mut found = false;
                 while let Some(next) = current.next.as_ref() {
@@ -153,7 +150,7 @@ impl CandidateGeneration {
             Some(next) => {
                 debug!("{} {}", next.scope_id, abstractions.len());
 
-                for (clause_id, t_lit) in next.t_literals.iter() {
+                for (clause_id, _t_lit) in next.t_literals.iter() {
                     let has_matching_b_lit =
                         abstractions.iter().fold(false, |val, &abstraction| {
                             val || abstraction.b_literals.contains_key(clause_id)
@@ -309,9 +306,10 @@ impl CandidateGeneration {
                     self.update_assignment();
                     if self.next.is_none() {
                         // innermost scope, propagate result to outer scopes
-                        self.min_entry.clone_from(&self.entry);
                         debug_assert!(!self.is_universal);
-                        // TODO: optimize min_entry
+
+                        self.entry_minimization(matrix);
+
                         return good_result;
                     }
 
@@ -320,9 +318,12 @@ impl CandidateGeneration {
                     let result = self.next.as_mut().unwrap().solve_recursive(matrix);
 
                     if result == good_result {
-                        // TODO: do entry optimization
-                        self.min_entry
-                            .clone_from(&self.next.as_ref().unwrap().min_entry);
+                        self.entry.clone_from(&self.next.as_ref().unwrap().entry);
+                        if self.is_universal {
+                            self.unsat_propagation(matrix);
+                        } else {
+                            self.entry_minimization(matrix);
+                        }
                         return good_result;
                     } else {
                         debug_assert!(result == bad_result);
@@ -529,7 +530,7 @@ impl CandidateGeneration {
 
     fn refine(&mut self) {
         trace!("refine");
-        let entry = &self.next.as_ref().unwrap().min_entry;
+        let entry = &self.next.as_ref().unwrap().entry;
         let mut sat_clause = Vec::new();
 
         #[cfg(debug_assertions)]
@@ -573,6 +574,65 @@ impl CandidateGeneration {
 
         #[cfg(debug_assertions)]
         debug!("unsat core: {}", debug_print);
+    }
+
+    fn entry_minimization(&mut self, matrix: &QMatrix) {
+        trace!("entry_minimization");
+
+        if self.next.is_some() {
+            // we have to set the t-literals for which there are no corresponding b-literals
+            // TODO: local refinement literals
+        }
+
+        for (&variable, value) in self.assignments.iter() {
+            debug!("{} {}", variable, value);
+
+            let literal = Literal::new(variable, !value);
+
+            // check if assignment is needed, i.e., it can flip a bit in entry
+            let mut needed = false;
+            for &clause_id in matrix.occurrences(literal) {
+                if self.entry[clause_id as usize] {
+                    needed = true;
+                    self.entry[clause_id as usize] = false;
+                }
+            }
+
+            // TODO: check the case for self.next.is_none()
+            if !needed && self.next.is_some() {
+                // the current value set is not needed for the entry, try other polarity
+                for &clause_id in matrix.occurrences(-literal) {
+                    if self.entry[clause_id as usize] {
+                        self.entry[clause_id as usize] = false;
+                    }
+                }
+            }
+        }
+    }
+
+    fn unsat_propagation(&mut self, matrix: &QMatrix) {
+        // TODO: can be optimized
+        for (i, val) in self.entry.iter_mut().enumerate() {
+            if *val == false {
+                continue;
+            }
+            let min = matrix.clauses[i].iter().fold(
+                matrix.prefix.last_scope(),
+                |min_scope, literal| {
+                    let var_scope = matrix.prefix.get(literal.variable()).scope;
+                    if var_scope < min_scope {
+                        var_scope
+                    } else {
+                        min_scope
+                    }
+                },
+            );
+            if min == self.scope_id {
+                *val = false;
+                continue;
+            }
+            debug_assert!(min < self.scope_id);
+        }
     }
 }
 
