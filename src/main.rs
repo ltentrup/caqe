@@ -14,7 +14,11 @@ fn main() {
     println!("{:?}", config);
 
     let result = qbf::run(config).unwrap_or_else(|err| {
-        eprintln!("Problem while solving: {}", err);
+        eprintln!(
+            "Problem while solving: {}\ndetails: {}",
+            err.description(),
+            err
+        );
         process::exit(1);
     });
 

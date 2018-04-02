@@ -135,6 +135,9 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
         let mut scope_id: Option<ScopeId> = None;
 
         for (i, chunk) in chunks.enumerate() {
+            if chunk.is_empty() {
+                continue;
+            }
             if clause_ended {
                 return Err(ParseError::WrongClause(String::from(line)).into());
             }
@@ -308,6 +311,15 @@ mod tests {
         let instance = "\np cnf 1 1\n1 2 0\n";
         let result = parse(instance);
         debug_assert!(result.is_ok(), instance);
+    }
+
+    #[test]
+    fn test_whitespaces_in_clauses() {
+        let instances = vec!["p cnf 2 1\n1  2 0\n", "p cnf 2 1\n1 2 0 \n"];
+        for instance in instances {
+            let result = parse(instance);
+            debug_assert!(result.is_ok(), instance);
+        }
     }
 
     #[test]
