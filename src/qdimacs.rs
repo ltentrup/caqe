@@ -126,6 +126,10 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
     let mut in_prefix = true;
     let mut num_clauses_read = 0;
     while let Some(line) = lines.next() {
+        if line.is_empty() {
+            continue;
+        }
+
         // a line looks as follows:
         // quantifier: e 1 2 0 or a 1 2 0
         // clause: 1 2 0
@@ -308,9 +312,15 @@ mod tests {
 
     #[test]
     fn test_empty_lines() {
-        let instance = "\np cnf 1 1\n1 2 0\n";
-        let result = parse(instance);
-        debug_assert!(result.is_ok(), instance);
+        let instances = vec![
+            "\np cnf 1 1\n1 2 0\n", // empty line in front
+            "p cnf 1 1\n\n1 2 0\n", // empty line before clause
+            "p cnf 1 1\n1 2 0\n\n", // empty line after clause
+        ];
+        for instance in instances {
+            let result = parse(instance);
+            debug_assert!(result.is_ok(), instance);
+        }
     }
 
     #[test]
