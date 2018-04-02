@@ -14,6 +14,7 @@ pub struct CaqeSolver<'a> {
 
 impl<'a> CaqeSolver<'a> {
     pub fn new(matrix: &'a QMatrix) -> CaqeSolver {
+        debug_assert!(!matrix.conflict());
         CaqeSolver {
             matrix: matrix,
             abstraction: CandidateGeneration::init_abstraction_recursively(matrix, 0),
@@ -742,6 +743,21 @@ mod tests {
 
     use super::*;
     use solver::Solver;
+
+    #[test]
+    fn test_false() {
+        let instance = "p cnf 0 1\n0\n";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        assert!(matrix.conflict());
+    }
+
+    #[test]
+    fn test_true() {
+        let instance = "p cnf 0 0";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+    }
 
     #[test]
     fn test_sat_simple() {

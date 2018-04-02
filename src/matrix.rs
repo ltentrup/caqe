@@ -15,6 +15,7 @@ pub struct Matrix<P: Prefix> {
     pub prefix: P,
     pub clauses: Vec<Clause>,
     occurrences: HashMap<Literal, Vec<ClauseId>>,
+    conflict: bool,
 }
 
 impl<P: Prefix> Matrix<P> {
@@ -23,6 +24,7 @@ impl<P: Prefix> Matrix<P> {
             prefix: P::new(num_variables),
             clauses: Vec::with_capacity(num_clauses),
             occurrences: HashMap::new(),
+            conflict: false,
         }
     }
 
@@ -30,6 +32,9 @@ impl<P: Prefix> Matrix<P> {
         for &literal in clause.iter() {
             let occurrences = self.occurrences.entry(literal).or_insert(Vec::new());
             occurrences.push(self.clauses.len() as ClauseId);
+        }
+        if clause.len() == 0 {
+            self.conflict = true;
         }
         self.clauses.push(clause);
     }
@@ -39,6 +44,10 @@ impl<P: Prefix> Matrix<P> {
             None => [].iter(),
             Some(vec) => vec.iter(),
         }
+    }
+
+    pub fn conflict(&self) -> bool {
+        self.conflict
     }
 }
 

@@ -69,8 +69,8 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
 
     // parse header
     while let Some(line) = lines.next() {
-        if line.starts_with("c") {
-            // comment line
+        if line.starts_with("c") || line.is_empty() {
+            // comment or empty line
             continue;
         } else if line.starts_with("p") {
             // header line
@@ -301,6 +301,13 @@ mod tests {
                 ParseError::WrongNumberOfClauses(0, 0).description()
             );
         }
+    }
+
+    #[test]
+    fn test_empty_lines() {
+        let instance = "\np cnf 1 1\n1 2 0\n";
+        let result = parse(instance);
+        debug_assert!(result.is_ok(), instance);
     }
 
     #[test]

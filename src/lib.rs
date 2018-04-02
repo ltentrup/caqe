@@ -84,6 +84,10 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
 
     //println!("{}", matrix.dimacs());
 
+    if matrix.conflict() {
+        return Ok(SolverResult::Unsatisfiable);
+    }
+
     let mut solver = CaqeSolver::new(&matrix);
 
     let result = solver.solve();
