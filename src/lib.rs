@@ -1,4 +1,5 @@
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 extern crate simplelog;
 
 use simplelog::*;
@@ -33,17 +34,39 @@ mod qdimacs;
 #[derive(Debug)]
 pub struct Config {
     pub filename: String,
+    pub verbosity: LevelFilter,
 }
 
 impl Config {
     pub fn new(args: &[String]) -> Result<Config, &'static str> {
-        if args.len() != 2 {
-            return Err("expect only file name as agument");
+        if args.len() < 2 {
+            return Err("expect file name");
         }
 
-        let filename = args[1].clone();
+        let mut verbosity = LevelFilter::Info;
+        let mut filename = None;
+        for arg in args {
+            match arg.as_ref() {
+                "-v" => verbosity = LevelFilter::Trace,
+                _ => {
+                    if arg.starts_with("-") {
+                        return Err("unknown argument");
+                    } else {
+                        filename = Some(arg.clone());
+                    }
+                }
+            }
+        }
 
-        Ok(Config { filename })
+        let filename = match filename {
+            None => return Err("no filename given"),
+            Some(f) => f,
+        };
+
+        Ok(Config {
+            filename,
+            verbosity,
+        })
     }
 }
 
@@ -53,13 +76,13 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     f.read_to_string(&mut contents)?;
 
     CombinedLogger::init(vec![
-        TermLogger::new(LevelFilter::Trace, simplelog::Config::default()).unwrap(),
+        TermLogger::new(config.verbosity, simplelog::Config::default()).unwrap(),
         //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
     ]).unwrap();
 
     let matrix = qdimacs::parse(&contents)?;
 
-    println!("{}", matrix.dimacs());
+    //println!("{}", matrix.dimacs());
 
     let mut solver = CaqeSolver::new(&matrix);
 

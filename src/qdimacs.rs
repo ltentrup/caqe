@@ -196,7 +196,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
         return Err(ParseError::WrongNumberOfClauses(num_clauses, num_clauses_read).into());
     }
 
-    println!("{:?}", matrix);
+    //println!("{:?}", matrix);
 
     Ok(matrix)
 }
