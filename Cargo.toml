@@ -7,3 +7,9 @@ authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 cryptominisat = "5.0.1"
 log = "0.4"
 simplelog = "^0.5.0"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+incremental = false
