@@ -479,10 +479,10 @@ impl CandidateGeneration {
                     "entry -> assumption"
                 );
 
-                debug_assert!(
-                    !self.entry[clause_id as usize],
-                    "may be true, would reduce overhead, so early return"
-                );
+                if self.entry[clause_id as usize] {
+                    debug_assert!(assumptions[clause_id as usize]);
+                    continue;
+                }
 
                 // assumption literal was set, but it may be still true that the clause is satisfied
                 let clause = &matrix.clauses[clause_id as usize];

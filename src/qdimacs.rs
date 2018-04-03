@@ -173,7 +173,8 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
             };
             if literal == 0 {
                 if scope_id.is_none() {
-                    let clause = Clause::new(literals);
+                    let mut clause = Clause::new(literals);
+                    clause.reduce_universal_qbf(&matrix.prefix);
                     matrix.add(clause);
                     num_clauses_read += 1;
                 }

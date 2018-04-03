@@ -41,6 +41,24 @@ impl Clause {
         true
     }
 
+    pub fn reduce_universal_qbf(&mut self, prefix: &HierarchicalPrefix) {
+        let max = self.literals
+            .iter()
+            .filter(|l| !prefix.get(l.variable()).is_universal)
+            .fold(0, |max, l| {
+                let level = prefix.get(l.variable()).scope;
+                if level > max {
+                    level
+                } else {
+                    max
+                }
+            });
+        self.literals.retain(|l| {
+            let info = prefix.get(l.variable());
+            !info.is_universal || info.scope < max
+        });
+    }
+
     pub fn iter(&self) -> std::slice::Iter<Literal> {
         self.literals.iter()
     }
@@ -69,6 +87,35 @@ mod tests {
         let literals = vec![lit2, lit1, lit2];
         let clause1 = Clause::new(literals);
         let clause2 = Clause::new_normalized(vec![lit1, lit2]);
+        assert_eq!(clause1, clause2);
+    }
+
+    #[test]
+    fn clause_reduce_universal_qbf() {
+        // cretate a qbf prefix
+        let mut prefix = HierarchicalPrefix::new(3);
+        let exists1 = prefix.new_scope(Quantifier::Existential);
+        let forall = prefix.new_scope(Quantifier::Universal);
+        let exists2 = prefix.new_scope(Quantifier::Existential);
+
+        prefix.add_variable(1, exists1);
+        prefix.add_variable(2, forall);
+        prefix.add_variable(3, exists2);
+
+        let lit1 = Literal::new(1, false);
+        let lit2 = Literal::new(2, false);
+        let lit3 = Literal::new(3, false);
+
+        // no universal reduction
+        let mut clause1 = Clause::new(vec![lit1, lit2, lit3]);
+        clause1.reduce_universal_qbf(&prefix);
+        let clause2 = Clause::new(vec![lit1, lit2, lit3]);
+        assert_eq!(clause1, clause2);
+
+        // lit2 can be removed
+        let mut clause1 = Clause::new(vec![lit1, lit2]);
+        clause1.reduce_universal_qbf(&prefix);
+        let clause2 = Clause::new(vec![lit1]);
         assert_eq!(clause1, clause2);
     }
 }

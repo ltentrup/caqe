@@ -68,7 +68,7 @@ pub type ScopeId = i32;
 #[derive(Debug, Clone)]
 pub struct VariableInfo {
     pub scope: ScopeId,
-    is_universal: bool,
+    pub is_universal: bool,
 }
 
 impl VariableInfo {
@@ -147,7 +147,15 @@ impl Prefix for HierarchicalPrefix {
 
 impl HierarchicalPrefix {
     pub fn get(&self, variable: Variable) -> &VariableInfo {
-        &self.variables[variable as usize]
+        let index = variable as usize;
+        if index >= self.variables.len() {
+            // variable was not bound prior
+            return &VariableInfo {
+                scope: -1,
+                is_universal: false,
+            };
+        }
+        &self.variables[index]
     }
 
     /// Creates a new scope with given quantification type
