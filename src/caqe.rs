@@ -4,6 +4,9 @@ use self::cryptominisat::*;
 extern crate siphasher;
 use self::siphasher::sip::SipHasher;
 
+extern crate bit_vec;
+use self::bit_vec::BitVec;
+
 use super::*;
 
 use std::collections::HashMap;
@@ -75,7 +78,7 @@ struct ScopeSolverData {
     assignments: HashMap<Variable, bool, BuildDeterministicHasher>,
 
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
-    entry: Vec<bool>,
+    entry: BitVec,
 
     /// stores the assumptions given to sat solver
     sat_solver_assumptions: Vec<Lit>,
@@ -89,8 +92,6 @@ struct ScopeSolverData {
 
 impl ScopeSolverData {
     fn new(matrix: &QMatrix, scope: &Scope) -> ScopeSolverData {
-        let mut entry = Vec::new();
-        entry.resize(matrix.clauses.len(), false);
         ScopeSolverData {
             sat: cryptominisat::Solver::new(),
             variable_to_sat: HashMap::with_hasher(BuildDeterministicHasher {}),
@@ -98,7 +99,7 @@ impl ScopeSolverData {
             b_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
             reverse_t_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
             assignments: HashMap::with_hasher(BuildDeterministicHasher {}),
-            entry: entry,
+            entry: BitVec::from_elem(matrix.clauses.len(), false),
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
             scope_id: scope.id,
@@ -349,7 +350,7 @@ impl ScopeSolverData {
             for (&clause_id, b_lit) in self.b_literals.iter() {
                 let value = model[b_lit.var() as usize];
                 if value != Lbool::False {
-                    assumptions[clause_id as usize] = true;
+                    assumptions.set(clause_id as usize, true);
                     continue;
                 }
                 debug_assert!(
@@ -380,7 +381,7 @@ impl ScopeSolverData {
                     }
                 }
                 if is_satisfied {
-                    assumptions[clause_id as usize] = true;
+                    assumptions.set(clause_id as usize, true);
                     continue;
                 }
 
@@ -431,7 +432,7 @@ impl ScopeSolverData {
                     }
                 }
 
-                assumptions[clause_id as usize] = true;
+                assumptions.set(clause_id as usize, true);
 
                 #[cfg(debug_assertions)]
                 debug_print.push_str(&format!(" b{}", clause_id));
@@ -462,7 +463,7 @@ impl ScopeSolverData {
             for &clause_id in matrix.occurrences(literal) {
                 if self.entry[clause_id as usize] {
                     needed = true;
-                    self.entry[clause_id as usize] = false;
+                    self.entry.set(clause_id as usize, false);
                 }
             }
 
@@ -470,8 +471,8 @@ impl ScopeSolverData {
             if !needed && next.is_some() {
                 // the current value set is not needed for the entry, try other polarity
                 for &clause_id in matrix.occurrences(-literal) {
-                    if self.entry[clause_id as usize] {
-                        self.entry[clause_id as usize] = false;
+                    if self.entry.get(clause_id as usize).unwrap() {
+                        self.entry.set(clause_id as usize, false);
                     }
                 }
             }
@@ -522,9 +523,7 @@ impl ScopeSolverData {
     fn get_unsat_core(&mut self) {
         trace!("unsat_core");
 
-        let len = self.entry.len();
         self.entry.clear();
-        self.entry.resize(len, false);
 
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
@@ -532,7 +531,7 @@ impl ScopeSolverData {
         let failed = self.sat.get_conflict();
         for l in failed {
             let clause_id = self.reverse_t_literals[&l.var()];
-            self.entry[clause_id as usize] = true;
+            self.entry.set(clause_id as usize, true);
 
             #[cfg(debug_assertions)]
             debug_print.push_str(&format!(" t{}", clause_id));
@@ -544,8 +543,8 @@ impl ScopeSolverData {
 
     fn unsat_propagation(&mut self, matrix: &QMatrix) {
         // TODO: can be optimized
-        for (i, val) in self.entry.iter_mut().enumerate() {
-            if *val == false {
+        for i in 0..self.entry.len() {
+            if !self.entry.get(i).unwrap() {
                 continue;
             }
             let min = matrix.clauses[i].iter().fold(
@@ -560,7 +559,7 @@ impl ScopeSolverData {
                 },
             );
             if min == self.scope_id {
-                *val = false;
+                self.entry.set(i, false);
                 continue;
             }
             debug_assert!(min < self.scope_id);
