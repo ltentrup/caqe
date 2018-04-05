@@ -1,13 +1,25 @@
 extern crate cryptominisat;
 use self::cryptominisat::*;
 
+extern crate siphasher;
+use self::siphasher::sip::SipHasher;
+
 use super::*;
 
 use std::collections::HashMap;
 
 use std::fmt;
 
-#[cfg(feature="statistics")]
+// We use a deterministic Hasher to get deterministic results
+struct BuildDeterministicHasher {}
+impl std::hash::BuildHasher for BuildDeterministicHasher {
+    type Hasher = SipHasher;
+    fn build_hasher(&self) -> Self::Hasher {
+        SipHasher::new()
+    }
+}
+
+#[cfg(feature = "statistics")]
 use super::utils::statistics::TimingStats;
 
 type QMatrix = Matrix<HierarchicalPrefix>;
@@ -26,7 +38,7 @@ impl<'a> CaqeSolver<'a> {
         }
     }
 
-    #[cfg(feature="statistics")]
+    #[cfg(feature = "statistics")]
     pub fn print_statistics(&self) {
         self.abstraction.print_statistics();
     }
@@ -40,27 +52,27 @@ impl<'a> super::Solver for CaqeSolver<'a> {
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum SolverScopeEvents {
-    GenerateCandidate
+    GenerateCandidate,
 }
 
 impl fmt::Display for SolverScopeEvents {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &SolverScopeEvents::GenerateCandidate => write!(f, "GenerateCandidate")
+            &SolverScopeEvents::GenerateCandidate => write!(f, "GenerateCandidate"),
         }
     }
 }
 
 struct ScopeSolverData {
     sat: cryptominisat::Solver,
-    variable_to_sat: HashMap<Variable, Lit>,
-    t_literals: HashMap<ClauseId, Lit>,
-    b_literals: HashMap<ClauseId, Lit>,
+    variable_to_sat: HashMap<Variable, Lit, BuildDeterministicHasher>,
+    t_literals: HashMap<ClauseId, Lit, BuildDeterministicHasher>,
+    b_literals: HashMap<ClauseId, Lit, BuildDeterministicHasher>,
 
     /// lookup from sat solver variables to clause id's
-    reverse_t_literals: HashMap<u32, ClauseId>,
+    reverse_t_literals: HashMap<u32, ClauseId, BuildDeterministicHasher>,
 
-    assignments: HashMap<Variable, bool>,
+    assignments: HashMap<Variable, bool, BuildDeterministicHasher>,
 
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
     entry: Vec<bool>,
@@ -71,8 +83,8 @@ struct ScopeSolverData {
     is_universal: bool,
     scope_id: ScopeId,
 
-    #[cfg(feature="statistics")]
-    statistics: TimingStats<SolverScopeEvents>
+    #[cfg(feature = "statistics")]
+    statistics: TimingStats<SolverScopeEvents>,
 }
 
 impl ScopeSolverData {
@@ -81,16 +93,16 @@ impl ScopeSolverData {
         entry.resize(matrix.clauses.len(), false);
         ScopeSolverData {
             sat: cryptominisat::Solver::new(),
-            variable_to_sat: HashMap::new(),
-            t_literals: HashMap::new(),
-            b_literals: HashMap::new(),
-            reverse_t_literals: HashMap::new(),
-            assignments: HashMap::new(),
+            variable_to_sat: HashMap::with_hasher(BuildDeterministicHasher {}),
+            t_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
+            b_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
+            reverse_t_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
+            assignments: HashMap::with_hasher(BuildDeterministicHasher {}),
             entry: entry,
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
             scope_id: scope.id,
-             #[cfg(feature="statistics")]
+            #[cfg(feature = "statistics")]
             statistics: TimingStats::new(),
         }
     }
@@ -243,7 +255,7 @@ impl ScopeSolverData {
             next.as_mut().unwrap().data.entry.clone_from(&self.entry);
         }
 
-        #[cfg(feature="statistics")]
+        #[cfg(feature = "statistics")]
         let timer = self.statistics.start(SolverScopeEvents::GenerateCandidate);
 
         self.sat_solver_assumptions.clear();
@@ -735,7 +747,7 @@ impl ScopeRecursiveSolver {
         }
     }
 
-    #[cfg(feature="statistics")]
+    #[cfg(feature = "statistics")]
     pub fn print_statistics(&self) {
         self.data.statistics.print();
         match self.next {
