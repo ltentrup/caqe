@@ -5,6 +5,11 @@ use super::*;
 
 use std::collections::HashMap;
 
+use std::fmt;
+
+#[cfg(feature="statistics")]
+use super::utils::statistics::TimingStats;
+
 type QMatrix = Matrix<HierarchicalPrefix>;
 
 pub struct CaqeSolver<'a> {
@@ -20,11 +25,29 @@ impl<'a> CaqeSolver<'a> {
             abstraction: ScopeRecursiveSolver::init_abstraction_recursively(matrix, 0),
         }
     }
+
+    #[cfg(feature="statistics")]
+    pub fn print_statistics(&self) {
+        self.abstraction.print_statistics();
+    }
 }
 
 impl<'a> super::Solver for CaqeSolver<'a> {
     fn solve(&mut self) -> SolverResult {
         self.abstraction.as_mut().solve_recursive(self.matrix)
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+enum SolverScopeEvents {
+    GenerateCandidate
+}
+
+impl fmt::Display for SolverScopeEvents {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &SolverScopeEvents::GenerateCandidate => write!(f, "GenerateCandidate")
+        }
     }
 }
 
@@ -42,11 +65,14 @@ struct ScopeSolverData {
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
     entry: Vec<bool>,
 
-    /// stores the assumptions (as clause id's) given to sat solver
-    sat_solver_assumptions: Vec<ClauseId>,
+    /// stores the assumptions given to sat solver
+    sat_solver_assumptions: Vec<Lit>,
 
     is_universal: bool,
     scope_id: ScopeId,
+
+    #[cfg(feature="statistics")]
+    statistics: TimingStats<SolverScopeEvents>
 }
 
 impl ScopeSolverData {
@@ -64,6 +90,8 @@ impl ScopeSolverData {
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
             scope_id: scope.id,
+             #[cfg(feature="statistics")]
+            statistics: TimingStats::new(),
         }
     }
 
@@ -215,9 +243,10 @@ impl ScopeSolverData {
             next.as_mut().unwrap().data.entry.clone_from(&self.entry);
         }
 
-        self.sat_solver_assumptions.clear();
+        #[cfg(feature="statistics")]
+        let timer = self.statistics.start(SolverScopeEvents::GenerateCandidate);
 
-        let mut assumptions = Vec::new();
+        self.sat_solver_assumptions.clear();
 
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
@@ -251,17 +280,16 @@ impl ScopeSolverData {
                 continue;
             }
 
-            assumptions.push(t_literal);
+            self.sat_solver_assumptions.push(t_literal);
 
-            if t_literal.isneg() {
-                self.sat_solver_assumptions.push(clause_id);
-            }
+            if t_literal.isneg() {}
         }
 
         #[cfg(debug_assertions)]
         debug!("assume {}", debug_print);
 
-        self.sat.solve_with_assumptions(assumptions.as_ref())
+        self.sat
+            .solve_with_assumptions(self.sat_solver_assumptions.as_ref())
     }
 
     fn update_assignment(&mut self) {
@@ -704,6 +732,15 @@ impl ScopeRecursiveSolver {
                 }
                 _ => panic!("inconsistent internal state"),
             }
+        }
+    }
+
+    #[cfg(feature="statistics")]
+    pub fn print_statistics(&self) {
+        self.data.statistics.print();
+        match self.next {
+            Some(ref next) => next.print_statistics(),
+            _ => (),
         }
     }
 }

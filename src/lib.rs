@@ -29,6 +29,8 @@ use solver::*;
 
 mod qdimacs;
 
+mod utils;
+
 // Command line parsing
 
 #[derive(Debug)]
@@ -91,6 +93,9 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     let mut solver = CaqeSolver::new(&matrix);
 
     let result = solver.solve();
+
+    #[cfg(feature="statistics")]
+    solver.print_statistics();
 
     Ok(result)
 }
