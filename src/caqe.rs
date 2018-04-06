@@ -33,7 +33,7 @@ pub struct CaqeSolver<'a> {
 }
 
 impl<'a> CaqeSolver<'a> {
-    pub fn new(matrix: &'a QMatrix) -> CaqeSolver {
+    pub fn new(matrix: &QMatrix) -> CaqeSolver {
         debug_assert!(!matrix.conflict());
         CaqeSolver {
             matrix: matrix,
@@ -55,30 +55,36 @@ impl<'a> super::Solver for CaqeSolver<'a> {
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum SolverScopeEvents {
-    GenerateCandidate,
+    SolveScopeAbstraction,
 }
 
 impl fmt::Display for SolverScopeEvents {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &SolverScopeEvents::GenerateCandidate => write!(f, "GenerateCandidate"),
+            &SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
         }
     }
 }
 
 struct ScopeSolverData {
     sat: cryptominisat::Solver,
-    variable_to_sat: HashMap<Variable, Lit, BuildDeterministicHasher>,
-    t_literals: HashMap<ClauseId, Lit, BuildDeterministicHasher>,
-    b_literals: HashMap<ClauseId, Lit, BuildDeterministicHasher>,
+    variable_to_sat: HashMap<Variable, Lit>,
+    t_literals: HashMap<ClauseId, Lit>,
+    b_literals: HashMap<ClauseId, Lit>,
 
     /// lookup from sat solver variables to clause id's
-    reverse_t_literals: HashMap<u32, ClauseId, BuildDeterministicHasher>,
+    reverse_t_literals: HashMap<u32, ClauseId>,
 
-    assignments: HashMap<Variable, bool, BuildDeterministicHasher>,
+    assignments: HashMap<Variable, bool>,
 
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
     entry: BitVec,
+
+    /// Stores the clauses for which the current level is maximal, i.e.,
+    /// there is no literal of a inner scope contained.
+    /// For universal scopes, it stores the clauses which are only influenced by
+    /// the current, or some inner, scope.
+    max_clauses: BitVec,
 
     /// stores the assumptions given to sat solver
     sat_solver_assumptions: Vec<Lit>,
@@ -94,12 +100,13 @@ impl ScopeSolverData {
     fn new(matrix: &QMatrix, scope: &Scope) -> ScopeSolverData {
         ScopeSolverData {
             sat: cryptominisat::Solver::new(),
-            variable_to_sat: HashMap::with_hasher(BuildDeterministicHasher {}),
-            t_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
-            b_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
-            reverse_t_literals: HashMap::with_hasher(BuildDeterministicHasher {}),
-            assignments: HashMap::with_hasher(BuildDeterministicHasher {}),
+            variable_to_sat: HashMap::new(),
+            t_literals: HashMap::new(),
+            b_literals: HashMap::new(),
+            reverse_t_literals: HashMap::new(),
+            assignments: HashMap::new(),
             entry: BitVec::from_elem(matrix.clauses.len(), false),
+            max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
             scope_id: scope.id,
@@ -158,6 +165,10 @@ impl ScopeSolverData {
 
             debug_assert!(!sat_clause.is_empty());
             self.sat.add_clause(sat_clause.as_ref());
+
+            if max_scope == scope.id {
+                self.max_clauses.set(clause_id, true);
+            }
         }
 
         debug!("Scope {}", scope.id);
@@ -210,6 +221,9 @@ impl ScopeSolverData {
             let need_t_lit = min_scope < scope.id && scope.id <= max_scope;
             let need_b_lit = min_scope <= scope.id && scope.id <= max_scope;
 
+            debug_assert!(min_scope <= scope.id);
+            debug_assert!(max_scope >= scope.id);
+
             if need_t_lit {
                 self.t_literals.insert(clause_id as ClauseId, sat_var);
                 self.reverse_t_literals
@@ -218,6 +232,10 @@ impl ScopeSolverData {
 
             if need_b_lit {
                 self.b_literals.insert(clause_id as ClauseId, sat_var);
+            }
+
+            if min_scope == scope.id {
+                self.max_clauses.set(clause_id, true);
             }
         }
 
@@ -256,9 +274,6 @@ impl ScopeSolverData {
             next.as_mut().unwrap().data.entry.clone_from(&self.entry);
         }
 
-        #[cfg(feature = "statistics")]
-        let timer = self.statistics.start(SolverScopeEvents::GenerateCandidate);
-
         self.sat_solver_assumptions.clear();
 
         #[cfg(debug_assertions)]
@@ -269,8 +284,12 @@ impl ScopeSolverData {
         // * clause from entry is not a t-lit: push entry to next quantifier
         // * clause is in entry and a t-lit: assume positively
         // * clause is not in entry and a t-lit: assume negatively
-        for (&clause_id, &t_literal) in self.t_literals.iter() {
-            let mut t_literal = t_literal;
+        for clause_id in 0..self.entry.len() {
+            let clause_id = clause_id as ClauseId;
+            let mut t_literal = match self.t_literals.get(&clause_id) {
+                None => continue,
+                Some(t_lit) => *t_lit,
+            };
             if !self.entry[clause_id as usize] {
                 t_literal = !t_literal;
             }
@@ -294,8 +313,6 @@ impl ScopeSolverData {
             }
 
             self.sat_solver_assumptions.push(t_literal);
-
-            if t_literal.isneg() {}
         }
 
         #[cfg(debug_assertions)]
@@ -417,6 +434,8 @@ impl ScopeSolverData {
                     }
                 }
                 if nonempty && falsified {
+                    // depending on t-literal, the assumption is already set
+                    continue;
                     if self.t_literals.contains_key(&clause_id) {
                         if !self.entry[clause_id as usize] {
                             continue;
@@ -426,7 +445,10 @@ impl ScopeSolverData {
                     }
                 }
                 if !nonempty {
+                    debug_assert!(self.t_literals[&clause_id] == self.b_literals[&clause_id]);
                     debug_assert!(self.t_literals.contains_key(&clause_id));
+                    // we have already copied the value by copying current entry
+                    continue;
                     if !self.entry[clause_id as usize] {
                         continue;
                     }
@@ -443,17 +465,11 @@ impl ScopeSolverData {
         debug!("assumptions: {}", debug_print);
     }
 
-    fn entry_minimization(
-        &mut self,
-        matrix: &QMatrix,
-        next: Option<&mut Box<ScopeRecursiveSolver>>,
-    ) {
+    fn entry_minimization(&mut self, matrix: &QMatrix) {
         trace!("entry_minimization");
 
-        if next.is_some() {
-            // we have to set the t-literals for which there are no corresponding b-literals
-            // TODO: current refinement literals
-        }
+        // add clauses to entry where the current scope is maximal
+        self.entry.union(&self.max_clauses);
 
         for (&variable, value) in self.assignments.iter() {
             let literal = Literal::new(variable, !value);
@@ -467,15 +483,30 @@ impl ScopeSolverData {
                 }
             }
 
-            // TODO: check the case for self.next.is_none()
-            if !needed && next.is_some() {
+            if !needed {
                 // the current value set is not needed for the entry, try other polarity
                 for &clause_id in matrix.occurrences(-literal) {
-                    if self.entry.get(clause_id as usize).unwrap() {
+                    if self.entry[clause_id as usize] {
                         self.entry.set(clause_id as usize, false);
                     }
                 }
             }
+        }
+
+        // TODO: remove if not needed
+        for (i, val) in self.entry.iter().enumerate() {
+            if !val {
+                continue;
+            }
+            let clause = &matrix.clauses[i];
+            let mut min = ScopeId::max_value();
+            for &literal in clause.iter() {
+                let otherscope = matrix.prefix.get(literal.variable()).scope;
+                if otherscope < min {
+                    min = otherscope;
+                }
+            }
+            assert!(min < self.scope_id);
         }
     }
 
@@ -541,29 +572,9 @@ impl ScopeSolverData {
         debug!("unsat core: {}", debug_print);
     }
 
-    fn unsat_propagation(&mut self, matrix: &QMatrix) {
-        // TODO: can be optimized
-        for i in 0..self.entry.len() {
-            if !self.entry.get(i).unwrap() {
-                continue;
-            }
-            let min = matrix.clauses[i].iter().fold(
-                matrix.prefix.last_scope(),
-                |min_scope, literal| {
-                    let var_scope = matrix.prefix.get(literal.variable()).scope;
-                    if var_scope < min_scope {
-                        var_scope
-                    } else {
-                        min_scope
-                    }
-                },
-            );
-            if min == self.scope_id {
-                self.entry.set(i, false);
-                continue;
-            }
-            debug_assert!(min < self.scope_id);
-        }
+    /// filters those clauses that are only influenced by this quantifier (or inner)
+    fn unsat_propagation(&mut self) {
+        self.entry.difference(&self.max_clauses);
     }
 }
 
@@ -702,6 +713,11 @@ impl ScopeRecursiveSolver {
             debug!("");
             debug!("solve level {}", current.scope_id);
 
+            #[cfg(feature = "statistics")]
+            let mut timer = current
+                .statistics
+                .start(SolverScopeEvents::SolveScopeAbstraction);
+
             match current.check_candidate_exists(next) {
                 Lbool::True => {
                     // there is a candidate solution, verify it recursively
@@ -711,7 +727,8 @@ impl ScopeRecursiveSolver {
                         &mut None => {
                             // innermost scope, propagate result to outer scopes
                             debug_assert!(!current.is_universal);
-                            current.entry_minimization(matrix, None);
+                            //current.entry.clear();
+                            current.entry_minimization(matrix);
                             return good_result;
                         }
                         &mut Some(ref mut next) => next,
@@ -719,14 +736,17 @@ impl ScopeRecursiveSolver {
 
                     current.get_assumptions(matrix, next);
 
+                    #[cfg(feature = "statistics")]
+                    timer.stop();
+
                     let result = next.solve_recursive(matrix);
 
                     if result == good_result {
                         current.entry.clone_from(&next.data.entry);
                         if current.is_universal {
-                            current.unsat_propagation(matrix);
+                            current.unsat_propagation();
                         } else {
-                            current.entry_minimization(matrix, Some(next));
+                            current.entry_minimization(matrix);
                         }
                         return good_result;
                     } else {
@@ -889,5 +909,23 @@ e 4 5 6 7 8 9 10 11 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+    }
+
+    #[test]
+    fn test_wrong_sat() {
+        let instance = "c
+c This instance was falsly characterized as SAT
+p cnf 4 3
+a 4 0
+e 3 0
+a 1 0
+e 2 0
+-3 0
+3 -4 0
+-2 -1 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 }
