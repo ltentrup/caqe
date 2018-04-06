@@ -70,7 +70,7 @@ struct ScopeSolverData {
     sat: cryptominisat::Solver,
     variable_to_sat: HashMap<Variable, Lit>,
     t_literals: HashMap<ClauseId, Lit>,
-    b_literals: HashMap<ClauseId, Lit>,
+    b_literals: Vec<(ClauseId, Lit)>,
 
     /// lookup from sat solver variables to clause id's
     reverse_t_literals: HashMap<u32, ClauseId>,
@@ -102,7 +102,7 @@ impl ScopeSolverData {
             sat: cryptominisat::Solver::new(),
             variable_to_sat: HashMap::new(),
             t_literals: HashMap::new(),
-            b_literals: HashMap::new(),
+            b_literals: Vec::with_capacity(matrix.clauses.len()),
             reverse_t_literals: HashMap::new(),
             assignments: HashMap::new(),
             entry: BitVec::from_elem(matrix.clauses.len(), false),
@@ -160,7 +160,7 @@ impl ScopeSolverData {
             if need_b_lit {
                 let b_lit = self.sat.new_var();
                 sat_clause.push(!b_lit);
-                self.b_literals.insert(clause_id as ClauseId, b_lit);
+                self.b_literals.push((clause_id as ClauseId, b_lit));
             }
 
             debug_assert!(!sat_clause.is_empty());
@@ -184,7 +184,7 @@ impl ScopeSolverData {
             debug!("t-literals: {}", t_literals);
 
             let mut b_literals = String::new();
-            for clause_id in self.b_literals.keys() {
+            for &(clause_id, _) in self.b_literals.iter() {
                 b_literals.push_str(&format!(" b{}", clause_id));
             }
             debug!("b-literals: {}", b_literals);
@@ -231,7 +231,7 @@ impl ScopeSolverData {
             }
 
             if need_b_lit {
-                self.b_literals.insert(clause_id as ClauseId, sat_var);
+                self.b_literals.push((clause_id as ClauseId, sat_var));
             }
 
             if min_scope == scope.id {
@@ -252,7 +252,7 @@ impl ScopeSolverData {
             debug!("t-literals: {}", t_literals);
 
             let mut b_literals = String::new();
-            for clause_id in self.b_literals.keys() {
+            for &(clause_id, _) in self.b_literals.iter() {
                 b_literals.push_str(&format!(" b{}", clause_id));
             }
             debug!("b-literals: {}", b_literals);
@@ -364,7 +364,7 @@ impl ScopeSolverData {
 
         let model = self.sat.get_model();
         if !self.is_universal {
-            for (&clause_id, b_lit) in self.b_literals.iter() {
+            for &(clause_id, b_lit) in self.b_literals.iter() {
                 let value = model[b_lit.var() as usize];
                 if value != Lbool::False {
                     assumptions.set(clause_id as usize, true);
@@ -406,7 +406,7 @@ impl ScopeSolverData {
                 debug_print.push_str(&format!(" b{}", clause_id));
             }
         } else {
-            for (&clause_id, b_lit) in self.b_literals.iter() {
+            for &(clause_id, b_lit) in self.b_literals.iter() {
                 let value = model[b_lit.var() as usize];
                 if value != Lbool::False {
                     continue;
@@ -445,7 +445,6 @@ impl ScopeSolverData {
                     }
                 }
                 if !nonempty {
-                    debug_assert!(self.t_literals[&clause_id] == self.b_literals[&clause_id]);
                     debug_assert!(self.t_literals.contains_key(&clause_id));
                     // we have already copied the value by copying current entry
                     continue;
@@ -540,15 +539,19 @@ impl ScopeSolverData {
         let b_literals = &mut self.b_literals;
         let t_literals = &mut self.t_literals;
         let reverse_t_literals = &mut self.reverse_t_literals;
-        let b_lit = b_literals.entry(clause_id).or_insert_with(|| {
-            // A new b-literal has to be inserted
-            // Create a new SAT solver literal and add it to both, t-literals and b-literals
-            let b_lit = sat.new_var();
-            t_literals.insert(clause_id, b_lit);
-            reverse_t_literals.insert(b_lit.var(), clause_id);
-            b_lit
-        });
-        *b_lit
+
+        let b_lit = sat.new_var();
+
+        match b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
+            Ok(pos) => return b_literals[pos].1,
+            Err(pos) => b_literals.insert(pos, (clause_id, b_lit)),
+        }
+        
+
+        t_literals.insert(clause_id, b_lit);
+        reverse_t_literals.insert(b_lit.var(), clause_id);
+
+        b_lit
     }
 
     fn get_unsat_core(&mut self) {
@@ -633,11 +636,11 @@ impl ScopeRecursiveSolver {
         {
             // check consistency of interface literals
             // for every b_lit in abstraction, there is a corresponding t_lit in one of its inner abstractions
-            for (clause_id, _b_lit) in result.data.b_literals.iter() {
+            for &(clause_id, _b_lit) in result.data.b_literals.iter() {
                 let mut current = &result;
                 let mut found = false;
                 while let Some(next) = current.next.as_ref() {
-                    if next.data.t_literals.contains_key(clause_id) {
+                    if next.data.t_literals.contains_key(&clause_id) {
                         found = true;
                         break;
                     }
@@ -674,7 +677,7 @@ impl ScopeRecursiveSolver {
                 for (clause_id, _t_lit) in next.data.t_literals.iter() {
                     let has_matching_b_lit =
                         abstractions.iter().fold(false, |val, &abstraction| {
-                            val || abstraction.data.b_literals.contains_key(clause_id)
+                            val || abstraction.data.b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)).is_ok()
                         });
                     if !has_matching_b_lit {
                         panic!(
