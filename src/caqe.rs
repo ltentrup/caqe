@@ -69,11 +69,8 @@ impl fmt::Display for SolverScopeEvents {
 struct ScopeSolverData {
     sat: cryptominisat::Solver,
     variable_to_sat: HashMap<Variable, Lit>,
-    t_literals: HashMap<ClauseId, Lit>,
+    t_literals: Vec<(ClauseId, Lit)>,
     b_literals: Vec<(ClauseId, Lit)>,
-
-    /// lookup from sat solver variables to clause id's
-    reverse_t_literals: HashMap<u32, ClauseId>,
 
     assignments: HashMap<Variable, bool>,
 
@@ -101,9 +98,8 @@ impl ScopeSolverData {
         ScopeSolverData {
             sat: cryptominisat::Solver::new(),
             variable_to_sat: HashMap::new(),
-            t_literals: HashMap::new(),
+            t_literals: Vec::with_capacity(matrix.clauses.len()),
             b_literals: Vec::with_capacity(matrix.clauses.len()),
-            reverse_t_literals: HashMap::new(),
             assignments: HashMap::new(),
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
@@ -152,9 +148,7 @@ impl ScopeSolverData {
             if need_t_lit {
                 let t_lit = self.sat.new_var();
                 sat_clause.push(t_lit);
-                self.t_literals.insert(clause_id as ClauseId, t_lit);
-                self.reverse_t_literals
-                    .insert(t_lit.var(), clause_id as ClauseId);
+                self.t_literals.push((clause_id as ClauseId, t_lit));
             }
 
             if need_b_lit {
@@ -178,7 +172,7 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         {
             let mut t_literals = String::new();
-            for clause_id in self.t_literals.keys() {
+            for &(clause_id, _) in self.t_literals.iter() {
                 t_literals.push_str(&format!(" t{}", clause_id));
             }
             debug!("t-literals: {}", t_literals);
@@ -225,9 +219,7 @@ impl ScopeSolverData {
             debug_assert!(max_scope >= scope.id);
 
             if need_t_lit {
-                self.t_literals.insert(clause_id as ClauseId, sat_var);
-                self.reverse_t_literals
-                    .insert(sat_var.var(), clause_id as ClauseId);
+                self.t_literals.push((clause_id as ClauseId, sat_var));
             }
 
             if need_b_lit {
@@ -246,7 +238,7 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         {
             let mut t_literals = String::new();
-            for clause_id in self.t_literals.keys() {
+            for &(clause_id, _) in self.t_literals.iter() {
                 t_literals.push_str(&format!(" t{}", clause_id));
             }
             debug!("t-literals: {}", t_literals);
@@ -284,12 +276,7 @@ impl ScopeSolverData {
         // * clause from entry is not a t-lit: push entry to next quantifier
         // * clause is in entry and a t-lit: assume positively
         // * clause is not in entry and a t-lit: assume negatively
-        for clause_id in 0..self.entry.len() {
-            let clause_id = clause_id as ClauseId;
-            let mut t_literal = match self.t_literals.get(&clause_id) {
-                None => continue,
-                Some(t_lit) => *t_lit,
-            };
+        for &(clause_id, mut t_literal) in self.t_literals.iter() {
             if !self.entry[clause_id as usize] {
                 t_literal = !t_literal;
             }
@@ -436,21 +423,25 @@ impl ScopeSolverData {
                 if nonempty && falsified {
                     // depending on t-literal, the assumption is already set
                     continue;
-                    if self.t_literals.contains_key(&clause_id) {
+                    /*if self.t_literals.contains_key(&clause_id) {
                         if !self.entry[clause_id as usize] {
                             continue;
                         }
                     } else {
                         continue;
-                    }
+                    }*/
                 }
                 if !nonempty {
-                    debug_assert!(self.t_literals.contains_key(&clause_id));
+                    debug_assert!(
+                        self.t_literals
+                            .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                            .is_ok()
+                    );
                     // we have already copied the value by copying current entry
                     continue;
-                    if !self.entry[clause_id as usize] {
+                    /*if !self.entry[clause_id as usize] {
                         continue;
-                    }
+                    }*/
                 }
 
                 assumptions.set(clause_id as usize, true);
@@ -538,7 +529,6 @@ impl ScopeSolverData {
         let sat = &mut self.sat;
         let b_literals = &mut self.b_literals;
         let t_literals = &mut self.t_literals;
-        let reverse_t_literals = &mut self.reverse_t_literals;
 
         let b_lit = sat.new_var();
 
@@ -546,10 +536,11 @@ impl ScopeSolverData {
             Ok(pos) => return b_literals[pos].1,
             Err(pos) => b_literals.insert(pos, (clause_id, b_lit)),
         }
-        
 
-        t_literals.insert(clause_id, b_lit);
-        reverse_t_literals.insert(b_lit.var(), clause_id);
+        match t_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
+            Ok(_pos) => panic!("inconsistent solver state"),
+            Err(pos) => t_literals.insert(pos, (clause_id, b_lit)),
+        }
 
         b_lit
     }
@@ -563,8 +554,17 @@ impl ScopeSolverData {
         let mut debug_print = String::new();
 
         let failed = self.sat.get_conflict();
+        if failed.is_empty() {
+            return;
+        }
+        let mut iterator = self.t_literals.iter();
+        let mut current = iterator.next().unwrap();
         for l in failed {
-            let clause_id = self.reverse_t_literals[&l.var()];
+            debug_assert!(!l.isneg());
+            while current.1 != *l {
+                current = iterator.next().unwrap();
+            }
+            let clause_id = current.0;
             self.entry.set(clause_id as usize, true);
 
             #[cfg(debug_assertions)]
@@ -640,7 +640,11 @@ impl ScopeRecursiveSolver {
                 let mut current = &result;
                 let mut found = false;
                 while let Some(next) = current.next.as_ref() {
-                    if next.data.t_literals.contains_key(&clause_id) {
+                    if next.data
+                        .t_literals
+                        .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                        .is_ok()
+                    {
                         found = true;
                         break;
                     }
@@ -674,10 +678,15 @@ impl ScopeRecursiveSolver {
         match scope.next.as_ref() {
             None => return,
             Some(next) => {
-                for (clause_id, _t_lit) in next.data.t_literals.iter() {
+                for &(clause_id, _t_lit) in next.data.t_literals.iter() {
                     let has_matching_b_lit =
                         abstractions.iter().fold(false, |val, &abstraction| {
-                            val || abstraction.data.b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)).is_ok()
+                            val
+                                || abstraction
+                                    .data
+                                    .b_literals
+                                    .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                                    .is_ok()
                         });
                     if !has_matching_b_lit {
                         panic!(
