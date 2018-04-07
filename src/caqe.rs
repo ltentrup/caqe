@@ -72,6 +72,9 @@ struct ScopeSolverData {
     t_literals: Vec<(ClauseId, Lit)>,
     b_literals: Vec<(ClauseId, Lit)>,
 
+    /// lookup from sat solver variables to clause id's
+    reverse_t_literals: HashMap<u32, ClauseId>,
+
     assignments: HashMap<Variable, bool>,
 
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
@@ -100,6 +103,7 @@ impl ScopeSolverData {
             variable_to_sat: HashMap::new(),
             t_literals: Vec::with_capacity(matrix.clauses.len()),
             b_literals: Vec::with_capacity(matrix.clauses.len()),
+            reverse_t_literals: HashMap::new(),
             assignments: HashMap::new(),
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
@@ -149,6 +153,8 @@ impl ScopeSolverData {
                 let t_lit = self.sat.new_var();
                 sat_clause.push(t_lit);
                 self.t_literals.push((clause_id as ClauseId, t_lit));
+                self.reverse_t_literals
+                    .insert(t_lit.var(), clause_id as ClauseId);
             }
 
             if need_b_lit {
@@ -220,6 +226,8 @@ impl ScopeSolverData {
 
             if need_t_lit {
                 self.t_literals.push((clause_id as ClauseId, sat_var));
+                self.reverse_t_literals
+                    .insert(sat_var.var(), clause_id as ClauseId);
             }
 
             if need_b_lit {
@@ -529,6 +537,7 @@ impl ScopeSolverData {
         let sat = &mut self.sat;
         let b_literals = &mut self.b_literals;
         let t_literals = &mut self.t_literals;
+        let reverse_t_literals = &mut self.reverse_t_literals;
 
         let b_lit = sat.new_var();
 
@@ -541,6 +550,7 @@ impl ScopeSolverData {
             Ok(_pos) => panic!("inconsistent solver state"),
             Err(pos) => t_literals.insert(pos, (clause_id, b_lit)),
         }
+        reverse_t_literals.insert(b_lit.var(), clause_id);
 
         b_lit
     }
@@ -554,17 +564,8 @@ impl ScopeSolverData {
         let mut debug_print = String::new();
 
         let failed = self.sat.get_conflict();
-        if failed.is_empty() {
-            return;
-        }
-        let mut iterator = self.t_literals.iter();
-        let mut current = iterator.next().unwrap();
         for l in failed {
-            debug_assert!(!l.isneg());
-            while current.1 != *l {
-                current = iterator.next().unwrap();
-            }
-            let clause_id = current.0;
+            let clause_id = self.reverse_t_literals[&l.var()];
             self.entry.set(clause_id as usize, true);
 
             #[cfg(debug_assertions)]
