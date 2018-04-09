@@ -202,26 +202,46 @@ impl ScopeSolverData {
 
             let mut scopes = MinMax::new();
 
-            let mut sat_var = None;
+            // check if there is at most one variable bound in current scope (and no outer variables)
+            // then one can replace the b-literal by the variable itself
+            let mut single_literal = None;
+            let mut num_scope_variables = 0;
             for &literal in clause.iter() {
                 let var_scope = matrix.prefix.get(literal.variable()).scope;
                 scopes.update(var_scope);
                 if var_scope != scope.id {
                     continue;
                 }
-                if sat_var == None {
-                    sat_var = Some(self.sat.new_var());
+                if single_literal.is_none() {
+                    single_literal = Some(literal);
+                    num_scope_variables += 1;
                 }
-                let lit = self.lit_to_sat_lit(literal);
-                self.sat.add_clause(&[!sat_var.unwrap(), !lit]);
             }
-            if sat_var == None {
+            let (min_scope, max_scope) = scopes.get();
+
+            let sat_var;
+
+            // there is a single literal and no outer variables, replace t-literal by literal
+            if num_scope_variables == 1 && min_scope == scope.id {
+                let literal = single_literal.unwrap();
+                sat_var = !self.lit_to_sat_lit(literal);
+            } else if num_scope_variables > 0 {
+                // build abstraction
+                sat_var = self.sat.new_var();
+                for &literal in clause.iter() {
+                    let var_scope = matrix.prefix.get(literal.variable()).scope;
+                    if var_scope != scope.id {
+                        continue;
+                    }
+                    let lit = self.lit_to_sat_lit(literal);
+                    self.sat.add_clause(&[!sat_var, !lit]);
+                }
+            } else {
                 // no variable of current scope
+                // do not add t-literal nor b-literal, we adapt abstraction during siolv
                 continue;
             }
-            let sat_var = sat_var.unwrap();
 
-            let (min_scope, max_scope) = scopes.get();
             let need_t_lit = min_scope < scope.id && scope.id <= max_scope;
             let need_b_lit = min_scope <= scope.id && scope.id <= max_scope;
 
@@ -364,8 +384,7 @@ impl ScopeSolverData {
         let model = self.sat.get_model();
         if !self.is_universal {
             for &(clause_id, b_lit) in self.b_literals.iter() {
-                let value = model[b_lit.var() as usize];
-                if value != Lbool::False {
+                if self.sat.is_true(b_lit) {
                     assumptions.set(clause_id as usize, true);
                     continue;
                 }
@@ -406,8 +425,7 @@ impl ScopeSolverData {
             }
         } else {
             for &(clause_id, b_lit) in self.b_literals.iter() {
-                let value = model[b_lit.var() as usize];
-                if value != Lbool::False {
+                if self.sat.is_true(b_lit) {
                     continue;
                 }
 
