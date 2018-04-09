@@ -549,7 +549,7 @@ impl ScopeSolverData {
         // if no, we continue
         match b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
             Ok(pos) => return b_literals[pos].1,
-            Err(pos) => {}
+            Err(_) => {}
         };
 
         // we then check, if there is a corresponding t-literal
@@ -562,6 +562,14 @@ impl ScopeSolverData {
         let sat_lit = sat.new_var();
         t_literals.insert(insert_pos, (clause_id, sat_lit));
         reverse_t_literals.insert(sat_lit.var(), clause_id);
+
+        // note that, we could also adapt b_literals (with the same sat_literal)
+        // however, this is not necessary and not directly obvious
+        // 1) reason *not* to do it: in get_assumptions we iterate over b_literals to check
+        //    if we can improve the assumptions produced by the SAT solver. Since the clauses
+        //    that are added here have no influence of current scope, this check is wasted time
+        // 2) we do not *need* them, because abstraction entries are just copied from one
+        //    scope to another
 
         sat_lit
     }
