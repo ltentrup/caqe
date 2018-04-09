@@ -77,6 +77,7 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     let mut contents = String::new();
     f.read_to_string(&mut contents)?;
 
+    #[cfg(debug_assertions)]
     CombinedLogger::init(vec![
         TermLogger::new(config.verbosity, simplelog::Config::default()).unwrap(),
         //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),

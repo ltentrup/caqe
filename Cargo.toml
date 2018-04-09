@@ -10,6 +10,9 @@ simplelog = "^0.5.0"
 siphasher = "~0.1"  # for deterministic has functions
 bit-vec = "0.4.4"
 
+[patch.crates-io]
+cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git" }
+
 [features]
 statistics = [] # enable statistics
 
