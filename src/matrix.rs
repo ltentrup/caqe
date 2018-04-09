@@ -72,7 +72,7 @@ pub struct VariableInfo {
 }
 
 impl VariableInfo {
-    fn is_bound(&self) -> bool {
+    pub fn is_bound(&self) -> bool {
         self.scope >= 0
     }
 }

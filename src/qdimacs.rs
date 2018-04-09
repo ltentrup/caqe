@@ -192,7 +192,12 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
                 matrix.prefix.add_variable(literal as Variable, scope_id);
             } else {
                 // clause
-                literals.push(Literal::from(literal));
+                let l = Literal::from(literal);
+                literals.push(l);
+                // check of variable is bounded
+                if !matrix.prefix.get(l.variable()).is_bound() {
+                    matrix.prefix.add_variable(l.variable(), 0);
+                }
             }
         }
         if !clause_ended {
