@@ -68,6 +68,7 @@ impl fmt::Display for SolverScopeEvents {
 
 struct ScopeSolverData {
     sat: cryptominisat::Solver,
+    variables: Vec<Variable>,
     variable_to_sat: HashMap<Variable, Lit>,
     t_literals: Vec<(ClauseId, Lit)>,
     b_literals: Vec<(ClauseId, Lit)>,
@@ -98,8 +99,11 @@ struct ScopeSolverData {
 
 impl ScopeSolverData {
     fn new(matrix: &QMatrix, scope: &Scope) -> ScopeSolverData {
+        let mut s = cryptominisat::Solver::new();
+        s.set_num_threads(1);
         ScopeSolverData {
-            sat: cryptominisat::Solver::new(),
+            sat: s,
+            variables: scope.variables.clone(),
             variable_to_sat: HashMap::new(),
             t_literals: Vec::with_capacity(matrix.clauses.len()),
             b_literals: Vec::with_capacity(matrix.clauses.len()),
@@ -469,8 +473,9 @@ impl ScopeSolverData {
         // add clauses to entry where the current scope is maximal
         self.entry.union(&self.max_clauses);
 
-        for (&variable, value) in self.assignments.iter() {
-            let literal = Literal::new(variable, !value);
+        for variable in self.variables.iter() {
+            let value = self.assignments[variable];
+            let literal = Literal::new(*variable, !value);
 
             // check if assignment is needed, i.e., it can flip a bit in entry
             let mut needed = false;
@@ -539,20 +544,26 @@ impl ScopeSolverData {
         let t_literals = &mut self.t_literals;
         let reverse_t_literals = &mut self.reverse_t_literals;
 
-        let b_lit = sat.new_var();
-
+        // first check if there is a b-literal for clause
+        // if yes, just return it (the currents scope influences clause since there is at least one variable contained)
+        // if no, we continue
         match b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
             Ok(pos) => return b_literals[pos].1,
-            Err(pos) => b_literals.insert(pos, (clause_id, b_lit)),
-        }
+            Err(pos) => {}
+        };
 
-        match t_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
-            Ok(_pos) => panic!("inconsistent solver state"),
-            Err(pos) => t_literals.insert(pos, (clause_id, b_lit)),
-        }
-        reverse_t_literals.insert(b_lit.var(), clause_id);
+        // we then check, if there is a corresponding t-literal
+        // if yes, we return this instead
+        // if no, we have to adapt the abstraction by inserting a new t-literal
+        let insert_pos = match t_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
+            Ok(pos) => return t_literals[pos].1,
+            Err(pos) => pos,
+        };
+        let sat_lit = sat.new_var();
+        t_literals.insert(insert_pos, (clause_id, sat_lit));
+        reverse_t_literals.insert(sat_lit.var(), clause_id);
 
-        b_lit
+        sat_lit
     }
 
     fn get_unsat_core(&mut self) {
@@ -936,6 +947,19 @@ e 2 0
 -3 0
 3 -4 0
 -2 -1 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_cnf() {
+        let instance = "c
+c CNF instance without quantifier
+p cnf 1 2
+-1 0
+1 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
