@@ -7,7 +7,6 @@ authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 cryptominisat = "5.0.1"
 log = "0.4"
 simplelog = "^0.5.0"
-siphasher = "~0.1"  # for deterministic has functions
 bit-vec = "0.4.4"
 
 [patch.crates-io]

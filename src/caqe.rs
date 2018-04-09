@@ -1,9 +1,6 @@
 extern crate cryptominisat;
 use self::cryptominisat::*;
 
-extern crate siphasher;
-use self::siphasher::sip::SipHasher;
-
 extern crate bit_vec;
 use self::bit_vec::BitVec;
 
@@ -12,15 +9,6 @@ use super::*;
 use std::collections::HashMap;
 
 use std::fmt;
-
-// We use a deterministic Hasher to get deterministic results
-struct BuildDeterministicHasher {}
-impl std::hash::BuildHasher for BuildDeterministicHasher {
-    type Hasher = SipHasher;
-    fn build_hasher(&self) -> Self::Hasher {
-        SipHasher::new()
-    }
-}
 
 #[cfg(feature = "statistics")]
 use super::utils::statistics::TimingStats;
@@ -212,9 +200,9 @@ impl ScopeSolverData {
                 if var_scope != scope.id {
                     continue;
                 }
+                num_scope_variables += 1;
                 if single_literal.is_none() {
                     single_literal = Some(literal);
-                    num_scope_variables += 1;
                 }
             }
             let (min_scope, max_scope) = scopes.get();
@@ -381,7 +369,6 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
-        let model = self.sat.get_model();
         if !self.is_universal {
             for &(clause_id, b_lit) in self.b_literals.iter() {
                 if self.sat.is_true(b_lit) {
@@ -990,5 +977,20 @@ p cnf 1 2
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_wrong_unsat() {
+        let instance = "c
+c This instance was falsly characterized as UNSAT
+p cnf 3 2
+a 1 2 0
+e 3 0
+3 -2 0
+-3 -1 2 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
     }
 }
