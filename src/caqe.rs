@@ -689,7 +689,11 @@ impl ScopeSolverData {
     /// This does not change the number of iterations, but may make the job of SAT solver easier.
     ///
     /// Returns true if the refinement clause could be reduced.
-    fn refinement_literal_subsumption_optimization(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>,) -> bool {
+    fn refinement_literal_subsumption_optimization(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut Box<ScopeRecursiveSolver>,
+    ) -> bool {
         let mut successful = false;
         let entry = &mut next.data.entry;
         'outer: for i in 0..entry.len() {
@@ -701,6 +705,7 @@ impl ScopeSolverData {
             for &literal in clause.iter() {
                 let info = matrix.prefix.get(literal.variable());
                 if info.scope > self.scope_id {
+                    // do not consider inner variables
                     continue;
                 }
                 // iterate over occurrence list
@@ -715,10 +720,11 @@ impl ScopeSolverData {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     let current_scope = self.scope_id;
                     // check if other clause subsumes current
+                    // check is done with respect to current and outer variables
                     if self.is_universal {
                         if other_clause.is_subset_wrt_predicate(clause, |l| {
                             let info = matrix.prefix.get(l.variable());
-                            info.scope >= current_scope
+                            info.scope <= current_scope
                         }) {
                             entry.set(clause_id as usize, false);
                             successful = true;
@@ -727,7 +733,7 @@ impl ScopeSolverData {
                     } else {
                         if clause.is_subset_wrt_predicate(other_clause, |l| {
                             let info = matrix.prefix.get(l.variable());
-                            info.scope >= current_scope
+                            info.scope <= current_scope
                         }) {
                             entry.set(clause_id as usize, false);
                             successful = true;
@@ -740,20 +746,17 @@ impl ScopeSolverData {
         successful
     }
 
-    fn is_expansion_refinement_applicable(&self, next: &mut Box<ScopeRecursiveSolver>,) -> bool {
+    fn is_expansion_refinement_applicable(&self, next: &mut Box<ScopeRecursiveSolver>) -> bool {
         if self.is_universal {
-            return false
+            return false;
         }
         debug_assert!(next.next.is_some());
         return next.next.as_ref().unwrap().next.is_none();
     }
 
-    fn expansion_refinement(
-        &mut self,
-        matrix: &QMatrix,
-        next: &mut Box<ScopeRecursiveSolver>,) {
-            panic!("expansion refinement is not implemented");
-        }
+    fn expansion_refinement(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
+        panic!("expansion refinement is not implemented");
+    }
 
     fn add_b_lit_and_adapt_abstraction(
         clause_id: ClauseId,
@@ -1232,7 +1235,7 @@ e 3 0
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 
-        #[test]
+    #[test]
     fn test_refinement_literal_failure() {
         let instance = "c
 c This instance was solved incorrectly in earlier versions due to refinement literal optimization
@@ -1250,5 +1253,23 @@ e 2 4 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+    }
+
+    #[test]
+    fn test_refinement_literal_failure2() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions due to refinement literal optimization
+p cnf 4 3
+a 4 0
+e 1 0
+a 3 0
+e 2 0
+-2 0
+2 -3 -4 0
+-1 -4 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 }
