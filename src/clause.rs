@@ -115,6 +115,33 @@ impl Clause {
         self.is_subset_wrt_predicate(other, |_| true)
     }
 
+    /// Returns true, if the literals contained in `self` are equal to the literals in `other`.
+    /// Only literals satisfying the predicate are considered.
+    /// Note that literals in clauses are sorted.
+    pub fn is_equal_wrt_predicate<P>(&self, other: &Clause, predicate: P) -> bool
+    where
+        P: Fn(&Literal) -> bool,
+    {
+        // iterate over all literals in lhs and try to match it to the literals in rhs
+        let mut lhs = self.iter().filter(|l| predicate(l));
+        let mut rhs = other.iter().filter(|l| predicate(l));
+        loop {
+            match (lhs.next(), rhs.next()) {
+                (None, None) => return true,
+                (Some(l), Some(r)) => {
+                    if l != r {
+                        return false;
+                    }
+                }
+                (_, _) => return false,
+            }
+        }
+    }
+
+    pub fn is_equal(&self, other: &Clause) -> bool {
+        self.is_equal_wrt_predicate(other, |_| true)
+    }
+
     pub fn is_satisfied_by_assignment(&self, assignment: &HashMap<Variable, bool>) -> bool {
         self.literals.iter().fold(false, |satisifed, &l| {
             if satisifed {
@@ -200,6 +227,17 @@ mod tests {
         let clause2 = Clause::new(vec![lit1, lit2, lit3]);
         assert!(!clause1.is_subset(&clause2));
         assert!(clause1.is_subset_wrt_predicate(&clause2, |l| !l.signed()));
+    }
+
+    #[test]
+    fn clause_equal_wrt_predicate() {
+        let lit1 = Literal::new(0, false);
+        let lit2 = Literal::new(1, false);
+        let lit3 = Literal::new(2, false);
+        let clause1 = Clause::new(vec![lit1, -lit2, lit3]);
+        let clause2 = Clause::new(vec![lit1, lit3]);
+        assert!(!clause1.is_equal(&clause2));
+        assert!(clause1.is_equal_wrt_predicate(&clause2, |l| !l.signed()));
     }
 
     #[test]

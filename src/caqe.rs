@@ -221,8 +221,10 @@ impl ScopeSolverData {
 
     fn new_universal(&mut self, matrix: &QMatrix, scope: &Scope) {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
-        for (clause_id, clause) in matrix.clauses.iter().enumerate() {
+        'next: for (clause_id, clause) in matrix.clauses.iter().enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
+
+            let clause_id = clause_id as ClauseId;
 
             let mut scopes = MinMax::new();
 
@@ -243,6 +245,32 @@ impl ScopeSolverData {
             }
             let (min_scope, max_scope) = scopes.get();
 
+            // We check whether the clause is equal to a prior clause w.r.t. outer and current variables.
+            // In this case, we can re-use the b-literal from other clause (and can omit t-literal all together).
+            if false && single_literal.is_some()
+                && (num_scope_variables > 1 || min_scope < scope.id)
+            {
+                let literal = single_literal.unwrap();
+                // iterate only over prior clauses
+                for &other_clause_id in matrix
+                    .occurrences(literal)
+                    .filter(|&&id| id < clause_id as ClauseId)
+                {
+                    let other_clause = &matrix.clauses[other_clause_id as usize];
+                    if clause.is_equal_wrt_predicate(other_clause, |l| {
+                        let info = matrix.prefix.get(l.variable());
+                        info.scope <= scope.id
+                    }) {
+                        let pos = self.b_literals
+                            .binary_search_by(|elem| elem.0.cmp(&other_clause_id))
+                            .unwrap();
+                        let sat_var = self.b_literals[pos].1;
+                        self.b_literals.push((clause_id as ClauseId, sat_var));
+                        continue 'next;
+                    }
+                }
+            }
+
             let sat_var;
 
             // there is a single literal and no outer variables, replace t-literal by literal
@@ -262,7 +290,7 @@ impl ScopeSolverData {
                 }
             } else {
                 // no variable of current scope
-                // do not add t-literal nor b-literal, we adapt abstraction during siolv
+                // do not add t-literal nor b-literal, we adapt abstraction during solving if needed
                 continue;
             }
 
@@ -283,7 +311,7 @@ impl ScopeSolverData {
             }
 
             if min_scope == scope.id {
-                self.max_clauses.set(clause_id, true);
+                self.max_clauses.set(clause_id as usize, true);
             }
         }
 
@@ -748,7 +776,7 @@ impl ScopeSolverData {
         let next = next.as_ref().unwrap();
 
         // add a new sat variable for every variable in inner scope
-        for (&variable, _) in next.data.variable_to_sat.iter() {
+        for &variable in next.data.variables.iter() {
             self.expansion_renaming.insert(variable, self.sat.new_var());
         }
 
