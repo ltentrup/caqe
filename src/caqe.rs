@@ -50,6 +50,7 @@ pub struct CaqeSolverOptions {
     pub strong_unsat_refinement: bool,
     pub expansion_refinement: bool,
     pub refinement_literal_subsumption: bool,
+    pub abstraction_literal_optimization: bool,
 }
 
 impl CaqeSolverOptions {
@@ -58,6 +59,7 @@ impl CaqeSolverOptions {
             strong_unsat_refinement: true,
             expansion_refinement: true,
             refinement_literal_subsumption: true,
+            abstraction_literal_optimization: true,
         }
     }
 }
@@ -150,12 +152,19 @@ impl ScopeSolverData {
             debug_assert!(sat_clause.is_empty());
 
             let mut contains_variables = false;
+            let mut outer = None;
+            let mut inner = None;
             let mut scopes = MinMax::new();
 
             for &literal in clause.iter() {
                 let var_scope = matrix.prefix.get(literal.variable()).scope;
                 scopes.update(var_scope);
                 if var_scope != scope.id {
+                    if var_scope < scope.id {
+                        outer = Some(literal);
+                    } else if var_scope > scope.id {
+                        inner = Some(literal);
+                    }
                     continue;
                 }
                 contains_variables = true;
@@ -169,23 +178,81 @@ impl ScopeSolverData {
             let need_t_lit = contains_variables && min_scope < scope.id && scope.id <= max_scope;
             let need_b_lit = contains_variables && min_scope <= scope.id && scope.id < max_scope;
 
+            let mut outer_equal_to = None;
+            let mut inner_equal_to = None;
+
             if !contains_variables {
                 debug_assert!(!need_t_lit);
                 debug_assert!(!need_b_lit);
                 debug_assert!(sat_clause.is_empty());
                 continue;
+            } else {
+                if self.options.abstraction_literal_optimization && outer.is_some() {
+                    for &other_clause_id in matrix
+                        .occurrences(outer.unwrap())
+                        .filter(|&&id| id < clause_id as ClauseId)
+                    {
+                        let other_clause = &matrix.clauses[other_clause_id as usize];
+                        if clause.is_equal_wrt_predicate(other_clause, |l| {
+                            let info = matrix.prefix.get(l.variable());
+                            info.scope < scope.id
+                        }) {
+                            //println!("c{} = c{}", clause_id, other_clause_id);
+                            debug_assert!(need_t_lit);
+                            let pos = self.t_literals
+                                .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
+                            if pos.is_ok() {
+                                let sat_var = self.t_literals[pos.unwrap()].1;
+                                outer_equal_to = Some(sat_var);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if self.options.abstraction_literal_optimization && inner.is_some() {
+                    for &other_clause_id in matrix
+                        .occurrences(inner.unwrap())
+                        .filter(|&&id| id < clause_id as ClauseId)
+                    {
+                        let other_clause = &matrix.clauses[other_clause_id as usize];
+                        if clause.is_equal_wrt_predicate(other_clause, |l| {
+                            let info = matrix.prefix.get(l.variable());
+                            info.scope > scope.id
+                        }) {
+                            debug_assert!(need_b_lit);
+                            let pos = self.b_literals
+                                .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
+                            if pos.is_ok() {
+                                let sat_var = self.b_literals[pos.unwrap()].1;
+                                inner_equal_to = Some(sat_var);
+                                break;
+                            }
+                        }
+                    }
+                }
             }
 
             if need_t_lit {
-                let t_lit = self.sat.new_var();
-                sat_clause.push(t_lit);
-                self.t_literals.push((clause_id as ClauseId, t_lit));
-                self.reverse_t_literals
-                    .insert(t_lit.var(), clause_id as ClauseId);
+                if outer_equal_to.is_none() {
+                    let t_lit = self.sat.new_var();
+                    sat_clause.push(t_lit);
+                    self.t_literals.push((clause_id as ClauseId, t_lit));
+                    self.reverse_t_literals
+                        .insert(t_lit.var(), clause_id as ClauseId);
+                } else {
+                    let t_lit = outer_equal_to.unwrap();
+                    sat_clause.push(t_lit);
+                    self.t_literals.push((clause_id as ClauseId, t_lit));
+                }
             }
 
             if need_b_lit {
-                let b_lit = self.sat.new_var();
+                let b_lit;
+                if inner_equal_to.is_none() {
+                    b_lit = self.sat.new_var();
+                } else {
+                    b_lit = inner_equal_to.unwrap();
+                }
                 sat_clause.push(!b_lit);
                 self.b_literals.push((clause_id as ClauseId, b_lit));
             }
@@ -221,7 +288,7 @@ impl ScopeSolverData {
 
     fn new_universal(&mut self, matrix: &QMatrix, scope: &Scope) {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
-        'next: for (clause_id, clause) in matrix.clauses.iter().enumerate() {
+        'next_clause: for (clause_id, clause) in matrix.clauses.iter().enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
 
             let clause_id = clause_id as ClauseId;
@@ -247,7 +314,7 @@ impl ScopeSolverData {
 
             // We check whether the clause is equal to a prior clause w.r.t. outer and current variables.
             // In this case, we can re-use the b-literal from other clause (and can omit t-literal all together).
-            if false && single_literal.is_some()
+            if self.options.abstraction_literal_optimization && single_literal.is_some()
                 && (num_scope_variables > 1 || min_scope < scope.id)
             {
                 let literal = single_literal.unwrap();
@@ -266,7 +333,7 @@ impl ScopeSolverData {
                             .unwrap();
                         let sat_var = self.b_literals[pos].1;
                         self.b_literals.push((clause_id as ClauseId, sat_var));
-                        continue 'next;
+                        continue 'next_clause;
                     }
                 }
             }
@@ -274,7 +341,9 @@ impl ScopeSolverData {
             let sat_var;
 
             // there is a single literal and no outer variables, replace t-literal by literal
-            if num_scope_variables == 1 && min_scope == scope.id {
+            if self.options.abstraction_literal_optimization && num_scope_variables == 1
+                && min_scope == scope.id
+            {
                 let literal = single_literal.unwrap();
                 sat_var = !self.lit_to_sat_lit(literal);
             } else if num_scope_variables > 0 {

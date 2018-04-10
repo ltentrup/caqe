@@ -37,6 +37,7 @@ mod utils;
 pub struct Config {
     pub filename: String,
     pub verbosity: LevelFilter,
+    pub options: CaqeSolverOptions,
 }
 
 impl Config {
@@ -47,9 +48,14 @@ impl Config {
 
         let mut verbosity = LevelFilter::Info;
         let mut filename = None;
+        let mut options = CaqeSolverOptions::new();
         for arg in args {
             match arg.as_ref() {
                 "-v" => verbosity = LevelFilter::Trace,
+                "-alo" => {
+                    options.abstraction_literal_optimization =
+                        !options.abstraction_literal_optimization
+                }
                 _ => {
                     if arg.starts_with("-") {
                         return Err("unknown argument");
@@ -68,6 +74,7 @@ impl Config {
         Ok(Config {
             filename,
             verbosity,
+            options,
         })
     }
 }
@@ -91,11 +98,11 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
         return Ok(SolverResult::Unsatisfiable);
     }
 
-    let mut solver = CaqeSolver::new(&matrix);
+    let mut solver = CaqeSolver::new_with_options(&matrix, config.options);
 
     let result = solver.solve();
 
-    #[cfg(feature="statistics")]
+    #[cfg(feature = "statistics")]
     solver.print_statistics();
 
     Ok(result)
