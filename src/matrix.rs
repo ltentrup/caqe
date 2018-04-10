@@ -75,6 +75,15 @@ impl VariableInfo {
     pub fn is_bound(&self) -> bool {
         self.scope >= 0
     }
+
+    pub fn is_universal(&self) -> bool {
+        debug_assert!(self.is_bound());
+        self.scope % 2 == 1
+    }
+
+    pub fn is_existential(&self) -> bool {
+        return !self.is_universal();
+    }
 }
 
 #[derive(Debug)]

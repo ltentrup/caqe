@@ -62,6 +62,56 @@ impl Clause {
     pub fn iter(&self) -> std::slice::Iter<Literal> {
         self.literals.iter()
     }
+
+    /// Returns true, if the literals contained in `self` are a subset of the literals in `other`.
+    /// Only literals satisfying the predicate are considered.
+    /// Note that literals in clauses are sorted.
+    pub fn is_subset_wrt_predicate<P>(&self, other: &Clause, predicate: P) -> bool
+    where
+        P: Fn(&Literal) -> bool,
+    {
+        // iterate over all literals in lhs and try to match it to the literals in rhs
+        let mut lhs = self.iter().filter(|l| predicate(l));
+        let mut rhs = other.iter().filter(|l| predicate(l));
+        let mut rhs_literal = match rhs.next() {
+            None => {
+                // check that there are no remaining literals in lhs
+                return lhs.next().is_none();
+            }
+            Some(l) => l,
+        };
+        while let Some(lhs_literal) = lhs.next() {
+            if lhs_literal < rhs_literal {
+                // have not found a matching literal in rhs
+                return false;
+            }
+            debug_assert!(lhs_literal >= rhs_literal);
+            while lhs_literal > rhs_literal {
+                rhs_literal = match rhs.next() {
+                    None => return false,
+                    Some(l) => l,
+                }
+            }
+            if lhs_literal == rhs_literal {
+                // same literal, proceed with both
+                rhs_literal = match rhs.next() {
+                    None => {
+                        // check that there are no remaining literals in lhs
+                        return lhs.next().is_none();
+                    }
+                    Some(l) => l,
+                };
+                continue;
+            } else {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn is_subset(&self, other: &Clause) -> bool {
+        self.is_subset_wrt_predicate(other, |_| true)
+    }
 }
 
 #[cfg(test)]
@@ -117,5 +167,16 @@ mod tests {
         clause1.reduce_universal_qbf(&prefix);
         let clause2 = Clause::new(vec![lit1]);
         assert_eq!(clause1, clause2);
+    }
+
+    #[test]
+    fn clause_subset_wrt_predicate() {
+        let lit1 = Literal::new(0, false);
+        let lit2 = Literal::new(1, false);
+        let lit3 = Literal::new(2, false);
+        let clause1 = Clause::new(vec![lit1, -lit2, lit3]);
+        let clause2 = Clause::new(vec![lit1, lit2, lit3]);
+        assert!(!clause1.is_subset(&clause2));
+        assert!(clause1.is_subset_wrt_predicate(&clause2, |l| !l.signed()));
     }
 }

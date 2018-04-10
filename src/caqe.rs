@@ -22,10 +22,14 @@ pub struct CaqeSolver<'a> {
 
 impl<'a> CaqeSolver<'a> {
     pub fn new(matrix: &QMatrix) -> CaqeSolver {
+        Self::new_with_options(matrix, CaqeSolverOptions::new())
+    }
+
+    pub fn new_with_options(matrix: &QMatrix, options: CaqeSolverOptions) -> CaqeSolver {
         debug_assert!(!matrix.conflict());
         CaqeSolver {
             matrix: matrix,
-            abstraction: ScopeRecursiveSolver::init_abstraction_recursively(matrix, 0),
+            abstraction: ScopeRecursiveSolver::init_abstraction_recursively(matrix, options, 0),
         }
     }
 
@@ -38,6 +42,19 @@ impl<'a> CaqeSolver<'a> {
 impl<'a> super::Solver for CaqeSolver<'a> {
     fn solve(&mut self) -> SolverResult {
         self.abstraction.as_mut().solve_recursive(self.matrix)
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct CaqeSolverOptions {
+    pub strong_unsat_refinement: bool,
+}
+
+impl CaqeSolverOptions {
+    pub fn new() -> CaqeSolverOptions {
+        CaqeSolverOptions {
+            strong_unsat_refinement: true,
+        }
     }
 }
 
@@ -81,12 +98,18 @@ struct ScopeSolverData {
     is_universal: bool,
     scope_id: ScopeId,
 
+    options: CaqeSolverOptions,
+
+    // stores for clause-ids whether there is astrong-unsat optimized lit
+    strong_unsat_cache: HashMap<ClauseId, (Lit, bool)>,
+    conjunction: Vec<Lit>,
+
     #[cfg(feature = "statistics")]
     statistics: TimingStats<SolverScopeEvents>,
 }
 
 impl ScopeSolverData {
-    fn new(matrix: &QMatrix, scope: &Scope) -> ScopeSolverData {
+    fn new(matrix: &QMatrix, options: CaqeSolverOptions, scope: &Scope) -> ScopeSolverData {
         let mut s = cryptominisat::Solver::new();
         s.set_num_threads(1);
         ScopeSolverData {
@@ -102,19 +125,23 @@ impl ScopeSolverData {
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
             scope_id: scope.id,
+            options: options,
+            strong_unsat_cache: HashMap::new(),
+            conjunction: Vec::new(),
             #[cfg(feature = "statistics")]
             statistics: TimingStats::new(),
         }
     }
 
     fn new_existential(&mut self, matrix: &QMatrix, scope: &Scope) {
+        let mut sat_clause = Vec::new();
+
         // build SAT instance for existential quantifier: abstract all literals that are not contained in quantifier into b- and t-literals
         for (clause_id, clause) in matrix.clauses.iter().enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
+            debug_assert!(sat_clause.is_empty());
 
             let mut contains_variables = false;
-
-            let mut sat_clause = Vec::new();
             let mut scopes = MinMax::new();
 
             for &literal in clause.iter() {
@@ -157,6 +184,7 @@ impl ScopeSolverData {
 
             debug_assert!(!sat_clause.is_empty());
             self.sat.add_clause(sat_clause.as_ref());
+            sat_clause.clear();
 
             if max_scope == scope.id {
                 self.max_clauses.set(clause_id, true);
@@ -518,37 +546,139 @@ impl ScopeSolverData {
         }
     }
 
-    fn refine(&mut self, next: &mut Box<ScopeRecursiveSolver>) {
+    fn refine(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
         trace!("refine");
+
+        if !self.is_universal && self.options.strong_unsat_refinement
+            && self.strong_unsat_refinement(matrix, next)
+        {
+            return;
+        }
+
         let entry = &next.data.entry;
-        let mut sat_clause = Vec::new();
+        let blocking_clause = &mut self.sat_solver_assumptions;
+        blocking_clause.clear();
 
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
-        for (i, val) in entry.iter().enumerate() {
-            if !val {
-                continue;
-            }
+        for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause_id = i as ClauseId;
-            let b_lit = self.add_b_lit_and_adapt_abstraction(clause_id);
-            sat_clause.push(b_lit);
+            let b_lit = Self::add_b_lit_and_adapt_abstraction(
+                clause_id,
+                &mut self.sat,
+                &self.b_literals,
+                &mut self.t_literals,
+                &mut self.reverse_t_literals,
+            );
+            blocking_clause.push(b_lit);
 
             #[cfg(debug_assertions)]
             debug_print.push_str(&format!(" b{}", clause_id));
         }
-        self.sat.add_clause(sat_clause.as_ref());
+        self.sat.add_clause(blocking_clause.as_ref());
 
         #[cfg(debug_assertions)]
         debug!("refinement: {}", debug_print);
     }
 
-    fn add_b_lit_and_adapt_abstraction(&mut self, clause_id: ClauseId) -> Lit {
-        let sat = &mut self.sat;
-        let b_literals = &mut self.b_literals;
-        let t_literals = &mut self.t_literals;
-        let reverse_t_literals = &mut self.reverse_t_literals;
+    /// Implements the strong unsat refinement operation.
+    /// If successful, it can reduce the number of iterations needed.
+    /// Returns true, if the optimization was applied, false otherwise.
+    fn strong_unsat_refinement(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut Box<ScopeRecursiveSolver>,
+    ) -> bool {
+        trace!("strong_unsat_refinement");
+        debug_assert!(!self.is_universal);
+        let mut applied = false;
 
+        // re-use sat-solver-assumptions vector
+        let blocking_clause = &mut self.sat_solver_assumptions;
+        blocking_clause.clear();
+
+        let entry = &next.data.entry;
+        let scope_id = self.scope_id;
+
+        // was the clause processed before?
+        for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
+            let clause_id = i as ClauseId;
+            match self.strong_unsat_cache.get(&clause_id) {
+                Some(&(literal, opt)) => {
+                    if opt {
+                        applied = true;
+                    }
+                    blocking_clause.push(literal);
+                }
+                None => {}
+            }
+
+            // TODO: for implementation of stronger unsat rule (see "On Expansion and Resolution in CEGAR Based QBF Solving"),
+            // we have to collect all universal variables from all failed clauses.
+            // This means espacially that we cannot use our current hashing anymore
+
+            // Get some random existential occurrence from clause, so we can use
+            // the occurrence list to iterate over clauses
+            let clause = &matrix.clauses[i];
+            self.conjunction.clear();
+            for &literal in clause.iter() {
+                let info = matrix.prefix.get(literal.variable());
+                if info.scope <= self.scope_id {
+                    continue;
+                }
+                // Iterate over occurrence list and add equivalent clauses
+                for &other_clause_id in matrix.occurrences(literal) {
+                    let other_clause = &matrix.clauses[other_clause_id as usize];
+                    // check if clause is subset w.r.t. inner variables
+                    if clause_id == other_clause_id
+                        || other_clause.is_subset_wrt_predicate(clause, |l| {
+                            matrix.prefix.get(l.variable()).scope > scope_id
+                        }) {
+                        self.conjunction.push(Self::add_b_lit_and_adapt_abstraction(
+                            other_clause_id,
+                            &mut self.sat,
+                            &self.b_literals,
+                            &mut self.t_literals,
+                            &mut self.reverse_t_literals,
+                        ));
+                    }
+                }
+            }
+
+            debug_assert!(self.conjunction.len() > 0);
+            if self.conjunction.len() == 1 {
+                // do not need auxilliary variable
+                let sat_lit = self.conjunction[0];
+                blocking_clause.push(sat_lit);
+                self.strong_unsat_cache.insert(clause_id, (sat_lit, false));
+            } else {
+                // build the conjunction using an auxilliary variable
+                let aux_var = self.sat.new_var();
+                blocking_clause.push(aux_var);
+                self.strong_unsat_cache.insert(clause_id, (aux_var, true));
+
+                for &sat_lit in self.conjunction.iter() {
+                    self.sat.add_clause(&[!aux_var, sat_lit]);
+                }
+                applied = true;
+            }
+        }
+
+        if applied {
+            self.sat.add_clause(blocking_clause.as_ref());
+        }
+
+        applied
+    }
+
+    fn add_b_lit_and_adapt_abstraction(
+        clause_id: ClauseId,
+        sat: &mut cryptominisat::Solver,
+        b_literals: &Vec<(ClauseId, Lit)>,
+        t_literals: &mut Vec<(ClauseId, Lit)>,
+        reverse_t_literals: &mut HashMap<u32, Variable>,
+    ) -> Lit {
         // first check if there is a b-literal for clause
         // if yes, just return it (the currents scope influences clause since there is at least one variable contained)
         // if no, we continue
@@ -614,12 +744,13 @@ struct ScopeRecursiveSolver {
 impl ScopeRecursiveSolver {
     fn new(
         matrix: &QMatrix,
+        options: CaqeSolverOptions,
         scope: &Scope,
         quantifier: Quantifier,
         next: Option<Box<ScopeRecursiveSolver>>,
     ) -> ScopeRecursiveSolver {
         let mut candidate = ScopeRecursiveSolver {
-            data: ScopeSolverData::new(matrix, scope),
+            data: ScopeSolverData::new(matrix, options, scope),
             next: next,
         };
 
@@ -641,17 +772,23 @@ impl ScopeRecursiveSolver {
 
     fn init_abstraction_recursively(
         matrix: &QMatrix,
+        options: CaqeSolverOptions,
         scope_id: ScopeId,
     ) -> Box<ScopeRecursiveSolver> {
         let prev;
         if scope_id < matrix.prefix.last_scope() {
-            prev = Some(Self::init_abstraction_recursively(matrix, scope_id + 1));
+            prev = Some(Self::init_abstraction_recursively(
+                matrix,
+                options.clone(),
+                scope_id + 1,
+            ));
         } else {
             prev = None;
         }
         let scope = &matrix.prefix.scopes[scope_id as usize];
         let result = Box::new(ScopeRecursiveSolver::new(
             matrix,
+            options,
             scope,
             Quantifier::from(scope_id),
             prev,
@@ -789,7 +926,7 @@ impl ScopeRecursiveSolver {
                     } else {
                         debug_assert!(result == bad_result);
 
-                        current.refine(next);
+                        current.refine(matrix, next);
                         continue;
                     }
                 }
@@ -992,5 +1129,23 @@ e 3 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+    }
+
+    #[test]
+    fn test_strong_unsat_crash() {
+        let instance = "c
+c This instance crashed with strong unsat refinement
+p cnf 4 3
+a 2 0
+e 1 0
+a 4 0
+e 3 0
+1 3 0
+-3 -2 0
+3 -4 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 }
