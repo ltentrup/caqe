@@ -48,12 +48,14 @@ impl<'a> super::Solver for CaqeSolver<'a> {
 #[derive(Debug, Copy, Clone)]
 pub struct CaqeSolverOptions {
     pub strong_unsat_refinement: bool,
+    pub refinement_literal_subsumption: bool,
 }
 
 impl CaqeSolverOptions {
     pub fn new() -> CaqeSolverOptions {
         CaqeSolverOptions {
             strong_unsat_refinement: true,
+            refinement_literal_subsumption: true,
         }
     }
 }
@@ -529,7 +531,7 @@ impl ScopeSolverData {
             }
         }
 
-        // TODO: remove if not needed
+        #[cfg(debug_assertions)]
         for (i, val) in self.entry.iter().enumerate() {
             if !val {
                 continue;
@@ -553,6 +555,10 @@ impl ScopeSolverData {
             && self.strong_unsat_refinement(matrix, next)
         {
             return;
+        }
+        // important: refinement literal subsumption has to be after strong unsat refinement
+        if self.options.refinement_literal_subsumption {
+            self.refinement_literal_subsumption_optimization(matrix);
         }
 
         let entry = &next.data.entry;
@@ -670,6 +676,61 @@ impl ScopeSolverData {
         }
 
         applied
+    }
+
+    /// Tries to reduce the size of refinements.
+    /// If a clause is subsumed by another clause in refinement, it can be removed.
+    /// This does not change the number of iterations, but may make the job of SAT solver easier.
+    ///
+    /// Returns true if the refinement clause could be reduced.
+    fn refinement_literal_subsumption_optimization(&mut self, matrix: &QMatrix) -> bool {
+        let mut successful = false;
+        'outer: for i in 0..self.entry.len() {
+            if !self.entry[i] {
+                continue;
+            }
+            let clause_id = i as ClauseId;
+            let clause = &matrix.clauses[i];
+            for &literal in clause.iter() {
+                let info = matrix.prefix.get(literal.variable());
+                if info.scope > self.scope_id {
+                    continue;
+                }
+                // iterate over occurrence list
+                for &other_clause_id in matrix.occurrences(literal) {
+                    if clause_id == other_clause_id {
+                        continue;
+                    }
+                    if !self.entry[other_clause_id as usize] {
+                        // not in entry, thus not interesting
+                        continue;
+                    }
+                    let other_clause = &matrix.clauses[other_clause_id as usize];
+                    let current_scope = self.scope_id;
+                    // check if other clause subsumes current
+                    if self.is_universal {
+                        if other_clause.is_subset_wrt_predicate(clause, |l| {
+                            let info = matrix.prefix.get(l.variable());
+                            info.scope >= current_scope
+                        }) {
+                            self.entry.set(clause_id as usize, false);
+                            successful = true;
+                            continue 'outer;
+                        }
+                    } else {
+                        if clause.is_subset_wrt_predicate(other_clause, |l| {
+                            let info = matrix.prefix.get(l.variable());
+                            info.scope >= current_scope
+                        }) {
+                            self.entry.set(clause_id as usize, false);
+                            successful = true;
+                            continue 'outer;
+                        }
+                    }
+                }
+            }
+        }
+        successful
     }
 
     fn add_b_lit_and_adapt_abstraction(
