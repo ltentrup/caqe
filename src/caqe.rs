@@ -48,6 +48,7 @@ impl<'a> super::Solver for CaqeSolver<'a> {
 #[derive(Debug, Copy, Clone)]
 pub struct CaqeSolverOptions {
     pub strong_unsat_refinement: bool,
+    pub expansion_refinement: bool,
     pub refinement_literal_subsumption: bool,
 }
 
@@ -55,6 +56,7 @@ impl CaqeSolverOptions {
     pub fn new() -> CaqeSolverOptions {
         CaqeSolverOptions {
             strong_unsat_refinement: true,
+            expansion_refinement: false,
             refinement_literal_subsumption: true,
         }
     }
@@ -551,6 +553,10 @@ impl ScopeSolverData {
     fn refine(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
         trace!("refine");
 
+        if self.options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
+            self.expansion_refinement(matrix, next);
+        }
+
         if !self.is_universal && self.options.strong_unsat_refinement
             && self.strong_unsat_refinement(matrix, next)
         {
@@ -558,7 +564,7 @@ impl ScopeSolverData {
         }
         // important: refinement literal subsumption has to be after strong unsat refinement
         if self.options.refinement_literal_subsumption {
-            self.refinement_literal_subsumption_optimization(matrix);
+            self.refinement_literal_subsumption_optimization(matrix, next);
         }
 
         let entry = &next.data.entry;
@@ -683,10 +689,11 @@ impl ScopeSolverData {
     /// This does not change the number of iterations, but may make the job of SAT solver easier.
     ///
     /// Returns true if the refinement clause could be reduced.
-    fn refinement_literal_subsumption_optimization(&mut self, matrix: &QMatrix) -> bool {
+    fn refinement_literal_subsumption_optimization(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>,) -> bool {
         let mut successful = false;
-        'outer: for i in 0..self.entry.len() {
-            if !self.entry[i] {
+        let entry = &mut next.data.entry;
+        'outer: for i in 0..entry.len() {
+            if !entry[i] {
                 continue;
             }
             let clause_id = i as ClauseId;
@@ -701,7 +708,7 @@ impl ScopeSolverData {
                     if clause_id == other_clause_id {
                         continue;
                     }
-                    if !self.entry[other_clause_id as usize] {
+                    if !entry[other_clause_id as usize] {
                         // not in entry, thus not interesting
                         continue;
                     }
@@ -713,7 +720,7 @@ impl ScopeSolverData {
                             let info = matrix.prefix.get(l.variable());
                             info.scope >= current_scope
                         }) {
-                            self.entry.set(clause_id as usize, false);
+                            entry.set(clause_id as usize, false);
                             successful = true;
                             continue 'outer;
                         }
@@ -722,7 +729,7 @@ impl ScopeSolverData {
                             let info = matrix.prefix.get(l.variable());
                             info.scope >= current_scope
                         }) {
-                            self.entry.set(clause_id as usize, false);
+                            entry.set(clause_id as usize, false);
                             successful = true;
                             continue 'outer;
                         }
@@ -732,6 +739,21 @@ impl ScopeSolverData {
         }
         successful
     }
+
+    fn is_expansion_refinement_applicable(&self, next: &mut Box<ScopeRecursiveSolver>,) -> bool {
+        if self.is_universal {
+            return false
+        }
+        debug_assert!(next.next.is_some());
+        return next.next.as_ref().unwrap().next.is_none();
+    }
+
+    fn expansion_refinement(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut Box<ScopeRecursiveSolver>,) {
+            panic!("expansion refinement is not implemented");
+        }
 
     fn add_b_lit_and_adapt_abstraction(
         clause_id: ClauseId,
@@ -1208,5 +1230,25 @@ e 3 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+        #[test]
+    fn test_refinement_literal_failure() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions due to refinement literal optimization
+p cnf 5 5
+a 5 0
+e 3 0
+a 1 0
+e 2 4 0
+-2 0
+4 5 0
+-4 -5 0
+-4 -5 -1 0
+2 3 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
     }
 }
