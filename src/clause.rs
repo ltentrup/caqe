@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::HashMap;
+
 #[derive(PartialEq, Eq, Debug)]
 pub struct Clause {
     literals: Vec<Literal>,
@@ -112,6 +114,26 @@ impl Clause {
     pub fn is_subset(&self, other: &Clause) -> bool {
         self.is_subset_wrt_predicate(other, |_| true)
     }
+
+    pub fn is_satisfied_by_assignment(&self, assignment: &HashMap<Variable, bool>) -> bool {
+        self.literals.iter().fold(false, |satisifed, &l| {
+            if satisifed {
+                return satisifed;
+            }
+            match assignment.get(&l.variable()) {
+                None => return satisifed,
+                Some(&value) => {
+                    if l.signed() && !value {
+                        return true;
+                    } else if !l.signed() && value {
+                        return true;
+                    } else {
+                        return satisifed;
+                    }
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -178,5 +200,21 @@ mod tests {
         let clause2 = Clause::new(vec![lit1, lit2, lit3]);
         assert!(!clause1.is_subset(&clause2));
         assert!(clause1.is_subset_wrt_predicate(&clause2, |l| !l.signed()));
+    }
+
+    #[test]
+    fn clause_is_satisifed() {
+        let lit1 = Literal::new(0, false);
+        let lit2 = Literal::new(1, false);
+        let lit3 = Literal::new(2, false);
+        let clause = Clause::new(vec![lit1, -lit2, lit3]);
+        let mut assignment = HashMap::new();
+        assignment.insert(1, true);
+        assignment.insert(2, false);
+        assert!(!clause.is_satisfied_by_assignment(&assignment));
+        assignment.insert(0, true);
+        assert!(clause.is_satisfied_by_assignment(&assignment));
+        assignment.insert(0, false);
+        assert!(!clause.is_satisfied_by_assignment(&assignment));
     }
 }

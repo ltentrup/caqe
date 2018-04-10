@@ -56,7 +56,7 @@ impl CaqeSolverOptions {
     pub fn new() -> CaqeSolverOptions {
         CaqeSolverOptions {
             strong_unsat_refinement: true,
-            expansion_refinement: false,
+            expansion_refinement: true,
             refinement_literal_subsumption: true,
         }
     }
@@ -104,9 +104,12 @@ struct ScopeSolverData {
 
     options: CaqeSolverOptions,
 
-    // stores for clause-ids whether there is astrong-unsat optimized lit
+    /// stores for clause-ids whether there is astrong-unsat optimized lit
     strong_unsat_cache: HashMap<ClauseId, (Lit, bool)>,
     conjunction: Vec<Lit>,
+
+    /// expansion related data structures
+    expansion_renaming: HashMap<Variable, Lit>,
 
     #[cfg(feature = "statistics")]
     statistics: TimingStats<SolverScopeEvents>,
@@ -132,6 +135,7 @@ impl ScopeSolverData {
             options: options,
             strong_unsat_cache: HashMap::new(),
             conjunction: Vec::new(),
+            expansion_renaming: HashMap::new(),
             #[cfg(feature = "statistics")]
             statistics: TimingStats::new(),
         }
@@ -419,22 +423,7 @@ impl ScopeSolverData {
 
                 // assumption literal was set, but it may be still true that the clause is satisfied
                 let clause = &matrix.clauses[clause_id as usize];
-                let mut is_satisfied = false;
-                for literal in clause.iter() {
-                    if !self.variable_to_sat.contains_key(&literal.variable()) {
-                        // not a variable of current level
-                        continue;
-                    }
-                    let value = self.assignments[&literal.variable()];
-                    if value && !literal.signed() {
-                        is_satisfied = true;
-                        break;
-                    } else if !value && literal.signed() {
-                        is_satisfied = true;
-                        break;
-                    }
-                }
-                if is_satisfied {
+                if clause.is_satisfied_by_assignment(&self.assignments) {
                     assumptions.set(clause_id as usize, true);
                     continue;
                 }
@@ -755,7 +744,63 @@ impl ScopeSolverData {
     }
 
     fn expansion_refinement(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
-        panic!("expansion refinement is not implemented");
+        let (data, next) = next.split();
+        let next = next.as_ref().unwrap();
+
+        // add a new sat variable for every variable in inner scope
+        for (&variable, _) in next.data.variable_to_sat.iter() {
+            self.expansion_renaming.insert(variable, self.sat.new_var());
+        }
+
+        debug_assert!(next.next.is_none());
+
+        let sat_clause = &mut self.sat_solver_assumptions;
+
+        // create the refinement clauses
+        for (i, clause) in matrix.clauses.iter().enumerate() {
+            sat_clause.clear();
+
+            // check if the universal assignment satisfies the clause
+            if clause.is_satisfied_by_assignment(&data.assignments) {
+                continue;
+            }
+
+            // add the clause to the abstraction
+            // variables bound by inner existential quantifier have to be renamed
+            let mut contains_variables = false;
+            let mut need_b_lit = false;
+            for &literal in clause.iter() {
+                let info = matrix.prefix.get(literal.variable());
+                if info.scope <= data.scope_id {
+                    if info.scope > self.scope_id {
+                        need_b_lit = true;
+                    }
+                    continue;
+                }
+                debug_assert!(info.scope == next.data.scope_id);
+                contains_variables = true;
+
+                let mut sat_var = self.expansion_renaming[&literal.variable()];
+                if literal.signed() {
+                    sat_var = !sat_var;
+                }
+                sat_clause.push(sat_var);
+            }
+            if need_b_lit || contains_variables {
+                let clause_id = i as ClauseId;
+                let sat_lit = Self::add_b_lit_and_adapt_abstraction(
+                    clause_id,
+                    &mut self.sat,
+                    &self.b_literals,
+                    &mut self.t_literals,
+                    &mut self.reverse_t_literals,
+                );
+                sat_clause.push(sat_lit);
+            }
+            if !sat_clause.is_empty() {
+                self.sat.add_clause(sat_clause.as_ref());
+            }
+        }
     }
 
     fn add_b_lit_and_adapt_abstraction(
@@ -1033,6 +1078,10 @@ impl ScopeRecursiveSolver {
             Some(ref next) => next.print_statistics(),
             _ => (),
         }
+    }
+
+    fn split(&mut self) -> (&mut ScopeSolverData, &mut Option<Box<ScopeRecursiveSolver>>) {
+        (&mut self.data, &mut self.next)
     }
 }
 
