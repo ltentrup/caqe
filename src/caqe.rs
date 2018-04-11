@@ -240,7 +240,7 @@ impl ScopeSolverData {
             } else {
                 // check if the clause is equal to another clause w.r.t. variables bound at the current level or outer
                 // in this case, we do not need to add a clause to SAT solver, but rather just need an entry in b-literals
-                if self.options.abstraction_literal_optimization && current.is_some() {
+                if self.options.abstraction_literal_optimization && need_b_lit && current.is_some() {
                     for &other_clause_id in matrix
                         .occurrences(current.unwrap())
                         .filter(|&&id| id < clause_id as ClauseId)
@@ -1552,5 +1552,25 @@ e 1 0
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output(), "s cnf 1 4 3\nV -2 0\nV 3 0\n");
+    }
+
+    #[test]
+    fn test_fuzz_unsat() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 5 5
+e 1 5 0
+a 4 0
+e 2 3 0
+-5 1 3 0
+1 -5 0
+-1 0
+-2 4 0
+5 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 0 5 5\n");
     }
 }
