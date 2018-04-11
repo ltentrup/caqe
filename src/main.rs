@@ -11,7 +11,7 @@ fn main() {
         process::exit(1);
     });
 
-    println!("{:?}", config);
+    println!("c {:?}", config);
 
     let result = qbf::run(config).unwrap_or_else(|err| {
         eprintln!(
@@ -22,6 +22,6 @@ fn main() {
         process::exit(1);
     });
 
-    println!("{:?}", result);
+    println!("c {:?}", result);
     process::exit(result as i32);
 }

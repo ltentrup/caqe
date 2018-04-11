@@ -31,6 +31,9 @@ mod qdimacs;
 
 mod utils;
 
+#[cfg(feature = "statistics")]
+use utils::statistics::TimingStats;
+
 // Command line parsing
 
 #[derive(Debug)]
@@ -38,6 +41,7 @@ pub struct Config {
     pub filename: String,
     pub verbosity: LevelFilter,
     pub options: CaqeSolverOptions,
+    pub qdimacs_output: bool,
 }
 
 impl Config {
@@ -49,13 +53,15 @@ impl Config {
         let mut verbosity = LevelFilter::Info;
         let mut filename = None;
         let mut options = CaqeSolverOptions::new();
+        let mut qdimacs_output = false;
         for arg in args {
             match arg.as_ref() {
                 "-v" => verbosity = LevelFilter::Trace,
-                "-alo" => {
+                "--alo" => {
                     options.abstraction_literal_optimization =
                         !options.abstraction_literal_optimization
                 }
+                "--qdo" => qdimacs_output = true,
                 _ => {
                     if arg.starts_with("-") {
                         return Err("unknown argument");
@@ -75,8 +81,16 @@ impl Config {
             filename,
             verbosity,
             options,
+            qdimacs_output,
         })
     }
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+enum SolverPhases {
+    Parsing,
+    Initializing,
+    Solving,
 }
 
 pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
@@ -90,7 +104,16 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
         //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
     ]).unwrap();
 
+    #[cfg(feature = "statistics")]
+    let statistics = TimingStats::new();
+
+    #[cfg(feature = "statistics")]
+    let mut timer = statistics.start(SolverPhases::Parsing);
+
     let matrix = qdimacs::parse(&contents)?;
+
+    #[cfg(feature = "statistics")]
+    timer.stop();
 
     //println!("{}", matrix.dimacs());
 
@@ -98,12 +121,36 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
         return Ok(SolverResult::Unsatisfiable);
     }
 
+    #[cfg(feature = "statistics")]
+    let mut timer = statistics.start(SolverPhases::Initializing);
+
     let mut solver = CaqeSolver::new_with_options(&matrix, config.options);
+
+    #[cfg(feature = "statistics")]
+    timer.stop();
+
+    #[cfg(feature = "statistics")]
+    let mut timer = statistics.start(SolverPhases::Solving);
 
     let result = solver.solve();
 
     #[cfg(feature = "statistics")]
-    solver.print_statistics();
+    timer.stop();
+
+    #[cfg(feature = "statistics")]
+    {
+        println!("Parsing took {:?}", statistics.sum(SolverPhases::Parsing));
+        println!(
+            "Initializing took {:?}",
+            statistics.sum(SolverPhases::Initializing)
+        );
+        println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
+        solver.print_statistics();
+    }
+
+    if config.qdimacs_output {
+        println!("{}", solver.qdimacs_output());
+    }
 
     Ok(result)
 }

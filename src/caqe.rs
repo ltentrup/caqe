@@ -17,6 +17,7 @@ type QMatrix = Matrix<HierarchicalPrefix>;
 
 pub struct CaqeSolver<'a> {
     matrix: &'a QMatrix,
+    result: SolverResult,
     abstraction: Box<ScopeRecursiveSolver>,
 }
 
@@ -29,6 +30,7 @@ impl<'a> CaqeSolver<'a> {
         debug_assert!(!matrix.conflict());
         CaqeSolver {
             matrix: matrix,
+            result: SolverResult::Unknown,
             abstraction: ScopeRecursiveSolver::init_abstraction_recursively(matrix, options, 0),
         }
     }
@@ -37,11 +39,58 @@ impl<'a> CaqeSolver<'a> {
     pub fn print_statistics(&self) {
         self.abstraction.print_statistics();
     }
+
+    pub fn qdimacs_output(&self) -> String {
+        let mut output = String::new();
+        output.push_str(&format!(
+            "s cnf {} {} {}\n",
+            self.result.dimacs(),
+            self.matrix.prefix.num_variables(),
+            self.matrix.clauses.len()
+        ));
+
+        if self.result == SolverResult::Unknown {
+            return output;
+        }
+
+        // get the first scope that contains variables (the scope 0 may be empty)
+        let top_level;
+        if self.matrix.prefix.scopes[0].variables.is_empty() {
+            let next = &self.abstraction.next;
+            match next {
+                // CNF without variables
+                &None => return output,
+                &Some(ref abstraction) => top_level = &abstraction.data,
+            }
+        } else {
+            top_level = &self.abstraction.data;
+        }
+
+        // output the variable assignment if possible
+        if self.result == SolverResult::Satisfiable && top_level.is_universal
+            || self.result == SolverResult::Unsatisfiable && !top_level.is_universal
+        {
+            return output;
+        }
+
+        for variable in top_level.variables.iter() {
+            let value = top_level.assignments[variable];
+            if value {
+                output.push_str(&format!("V {} 0\n", variable));
+            } else {
+                output.push_str(&format!("V -{} 0\n", variable));
+            }
+        }
+
+        output
+    }
 }
 
 impl<'a> super::Solver for CaqeSolver<'a> {
     fn solve(&mut self) -> SolverResult {
-        self.abstraction.as_mut().solve_recursive(self.matrix)
+        let result = self.abstraction.as_mut().solve_recursive(self.matrix);
+        self.result = result;
+        result
     }
 }
 
@@ -720,17 +769,27 @@ impl ScopeSolverData {
             // the occurrence list to iterate over clauses
             let clause = &matrix.clauses[i];
             self.conjunction.clear();
+            self.conjunction.push(Self::add_b_lit_and_adapt_abstraction(
+                clause_id,
+                &mut self.sat,
+                &self.b_literals,
+                &mut self.t_literals,
+                &mut self.reverse_t_literals,
+            ));
             for &literal in clause.iter() {
                 let info = matrix.prefix.get(literal.variable());
-                if info.scope <= self.scope_id {
+                if info.scope != self.scope_id {
                     continue;
                 }
                 // Iterate over occurrence list and add equivalent clauses
                 for &other_clause_id in matrix.occurrences(literal) {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     // check if clause is subset w.r.t. inner variables
-                    if clause_id == other_clause_id
-                        || other_clause.is_subset_wrt_predicate(clause, |l| {
+                    // this check has to be careful:
+                    // 1) the clause-id must be strictly different (since clause_id is already contained in self.conjunction and we know that subset is reflexive)
+                    // 2) the clause must actually contain inner variables (test with `self.max_clauses`)
+                    if clause_id != other_clause_id && !self.max_clauses[other_clause_id as usize]
+                        && other_clause.is_subset_wrt_predicate(clause, |l| {
                             matrix.prefix.get(l.variable()).scope > scope_id
                         }) {
                         self.conjunction.push(Self::add_b_lit_and_adapt_abstraction(
@@ -1245,6 +1304,7 @@ mod tests {
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 0 0\n");
     }
 
     #[test]
@@ -1261,6 +1321,7 @@ e 3 4 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 4 4\n");
     }
 
     #[test]
@@ -1277,6 +1338,7 @@ e 3 4 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 4\nV -1 0\nV -2 0\n");
     }
 
     #[test]
@@ -1315,6 +1377,7 @@ e 4 5 6 7 8 9 10 11 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 11 24\n");
     }
 
     #[test]
@@ -1333,6 +1396,7 @@ e 2 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 4 0\n");
     }
 
     #[test]
@@ -1346,6 +1410,7 @@ p cnf 1 2
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 0 1 2\n");
     }
 
     #[test]
@@ -1361,6 +1426,7 @@ e 3 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 3 2\n");
     }
 
     #[test]
@@ -1379,6 +1445,7 @@ e 3 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 2 0\n");
     }
 
     #[test]
@@ -1399,6 +1466,7 @@ e 2 4 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 5 5\n");
     }
 
     #[test]
@@ -1417,5 +1485,44 @@ e 2 0
         let matrix = qdimacs::parse(&instance).unwrap();
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 4 0\n");
+    }
+
+    #[test]
+    fn test_abstraction_literal_optimization_vs_strong_unsat() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions due to abstraction literal optimization
+p cnf 3 4
+e 3 0
+a 1 0
+e 2 0
+-2 -1 0
+-2 0
+-2 3 0
+3 2 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 3 4\nV 3 0\n");
+    }
+
+    #[test]
+    fn test_strong_unsat_failure() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions due to strong unsat refinement.
+c The strong unsat refinement can only applied to clauses which actually contains inner variables.
+p cnf 4 3
+e 2 3 0
+a 4 0
+e 1 0
+-1 0
+-2 3 0
+3 1 -4 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 4 3\nV -2 0\nV 3 0\n");
     }
 }

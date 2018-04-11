@@ -138,8 +138,13 @@ impl From<ScopeId> for Quantifier {
 
 impl Prefix for HierarchicalPrefix {
     fn new(num_variables: usize) -> Self {
+        let mut variables = Vec::with_capacity(num_variables + 1);
+        variables.push(VariableInfo {
+            scope: -1,
+            is_universal: false,
+        });
         HierarchicalPrefix {
-            variables: Vec::with_capacity(num_variables + 1),
+            variables: variables,
             scopes: vec![
                 Scope {
                     id: 0,
