@@ -39,7 +39,7 @@ dependencies = [
 [[package]]
 name = "cryptominisat"
 version = "5.0.1"
-source = "git+https://github.com/ltentrup/cryptominisat-rs.git#258758d1f58c902848fc163058e20595584df871"
+source = "git+https://github.com/ltentrup/cryptominisat-rs.git#6ba1ea939d14d7e0cf333fe6ec9ffc5ee27c536a"
 dependencies = [
  "cmake 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.40 (registry+https://github.com/rust-lang/crates.io-index)",

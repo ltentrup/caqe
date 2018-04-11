@@ -196,13 +196,14 @@ impl ScopeSolverData {
         let mut sat_clause = Vec::new();
 
         // build SAT instance for existential quantifier: abstract all literals that are not contained in quantifier into b- and t-literals
-        for (clause_id, clause) in matrix.clauses.iter().enumerate() {
+        'next_clause: for (clause_id, clause) in matrix.clauses.iter().enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
             debug_assert!(sat_clause.is_empty());
 
             let mut contains_variables = false;
             let mut outer = None;
             let mut inner = None;
+            let mut current = None;
             let mut scopes = MinMax::new();
 
             for &literal in clause.iter() {
@@ -216,6 +217,7 @@ impl ScopeSolverData {
                     }
                     continue;
                 }
+                current = Some(literal);
                 contains_variables = true;
                 sat_clause.push(self.lit_to_sat_lit(literal));
             }
@@ -236,6 +238,30 @@ impl ScopeSolverData {
                 debug_assert!(sat_clause.is_empty());
                 continue;
             } else {
+                // check if the clause is equal to another clause w.r.t. variables bound at the current level or outer
+                // in this case, we do not need to add a clause to SAT solver, but rather just need an entry in b-literals
+                if self.options.abstraction_literal_optimization && current.is_some() {
+                    for &other_clause_id in matrix
+                        .occurrences(current.unwrap())
+                        .filter(|&&id| id < clause_id as ClauseId)
+                    {
+                        let other_clause = &matrix.clauses[other_clause_id as usize];
+                        if clause.is_equal_wrt_predicate(other_clause, |l| {
+                            let info = matrix.prefix.get(l.variable());
+                            info.scope <= scope.id
+                        }) {
+                            debug_assert!(need_b_lit);
+                            let pos = self.b_literals
+                                .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
+                            if pos.is_ok() {
+                                let sat_var = self.b_literals[pos.unwrap()].1;
+                                self.b_literals.push((clause_id as ClauseId, sat_var));
+                                sat_clause.clear();
+                                continue 'next_clause;
+                            }
+                        }
+                    }
+                }
                 if self.options.abstraction_literal_optimization && outer.is_some() {
                     for &other_clause_id in matrix
                         .occurrences(outer.unwrap())
@@ -246,7 +272,6 @@ impl ScopeSolverData {
                             let info = matrix.prefix.get(l.variable());
                             info.scope < scope.id
                         }) {
-                            //println!("c{} = c{}", clause_id, other_clause_id);
                             debug_assert!(need_t_lit);
                             let pos = self.t_literals
                                 .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
@@ -291,7 +316,9 @@ impl ScopeSolverData {
                 } else {
                     let t_lit = outer_equal_to.unwrap();
                     sat_clause.push(t_lit);
-                    self.t_literals.push((clause_id as ClauseId, t_lit));
+                    // we don't need to add it to t-literals since it will be already assumed by earlier clause
+                    // otherwise, we would assume twice
+                    //self.t_literals.push((clause_id as ClauseId, t_lit));
                 }
             }
 
@@ -420,6 +447,7 @@ impl ScopeSolverData {
 
             if need_t_lit {
                 self.t_literals.push((clause_id as ClauseId, sat_var));
+                debug_assert!(!self.reverse_t_literals.contains_key(&sat_var.var()));
                 self.reverse_t_literals
                     .insert(sat_var.var(), clause_id as ClauseId);
             }
@@ -1085,7 +1113,7 @@ impl ScopeRecursiveSolver {
         {
             // check consistency of interface literals
             // for every b_lit in abstraction, there is a corresponding t_lit in one of its inner abstractions
-            for &(clause_id, _b_lit) in result.data.b_literals.iter() {
+            /*for &(clause_id, _b_lit) in result.data.b_literals.iter() {
                 let mut current = &result;
                 let mut found = false;
                 while let Some(next) = current.next.as_ref() {
@@ -1105,7 +1133,7 @@ impl ScopeRecursiveSolver {
                         clause_id, scope.id
                     );
                 }
-            }
+            }*/
 
             if scope_id == 0 {
                 let mut abstractions = Vec::new();
