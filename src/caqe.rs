@@ -107,7 +107,7 @@ impl CaqeSolverOptions {
         CaqeSolverOptions {
             strong_unsat_refinement: true,
             expansion_refinement: true,
-            refinement_literal_subsumption: true,
+            refinement_literal_subsumption: false,
             abstraction_literal_optimization: true,
         }
     }
@@ -116,12 +116,14 @@ impl CaqeSolverOptions {
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum SolverScopeEvents {
     SolveScopeAbstraction,
+    Refinement,
 }
 
 impl fmt::Display for SolverScopeEvents {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
+            &SolverScopeEvents::Refinement => write!(f, "Refinement"),
         }
     }
 }
@@ -262,7 +264,7 @@ impl ScopeSolverData {
                         }
                     }
                 }
-                if self.options.abstraction_literal_optimization && outer.is_some() {
+                if false && self.options.abstraction_literal_optimization && outer.is_some() {
                     for &other_clause_id in matrix
                         .occurrences(outer.unwrap())
                         .filter(|&&id| id < clause_id as ClauseId)
@@ -283,7 +285,7 @@ impl ScopeSolverData {
                         }
                     }
                 }
-                if self.options.abstraction_literal_optimization && inner.is_some() {
+                if false && self.options.abstraction_literal_optimization && inner.is_some() {
                     for &other_clause_id in matrix
                         .occurrences(inner.unwrap())
                         .filter(|&&id| id < clause_id as ClauseId)
@@ -785,6 +787,7 @@ impl ScopeSolverData {
                         applied = true;
                     }
                     blocking_clause.push(literal);
+                    continue;
                 }
                 None => {}
             }
@@ -806,20 +809,21 @@ impl ScopeSolverData {
             ));
             for &literal in clause.iter() {
                 let info = matrix.prefix.get(literal.variable());
-                if info.scope != self.scope_id {
+
+                // Consider only existential variables that have a lower level
+                if info.is_universal() || info.scope <= self.scope_id {
                     continue;
                 }
+
                 // Iterate over occurrence list and add equivalent clauses
                 for &other_clause_id in matrix.occurrences(literal) {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     // check if clause is subset w.r.t. inner variables
-                    // this check has to be careful:
-                    // 1) the clause-id must be strictly different (since clause_id is already contained in self.conjunction and we know that subset is reflexive)
-                    // 2) the clause must actually contain inner variables (test with `self.max_clauses`)
-                    if clause_id != other_clause_id && !self.max_clauses[other_clause_id as usize]
+                    if clause_id != other_clause_id
                         && other_clause.is_subset_wrt_predicate(clause, |l| {
                             matrix.prefix.get(l.variable()).scope > scope_id
                         }) {
+                        debug_assert!(!self.max_clauses[other_clause_id as usize]);
                         self.conjunction.push(Self::add_b_lit_and_adapt_abstraction(
                             other_clause_id,
                             &mut self.sat,
@@ -1230,6 +1234,11 @@ impl ScopeRecursiveSolver {
 
                     let result = next.solve_recursive(matrix);
 
+                    #[cfg(feature = "statistics")]
+                    let mut timer = current
+                        .statistics
+                        .start(SolverScopeEvents::Refinement);
+
                     if result == good_result {
                         current.entry.clone_from(&next.data.entry);
                         if current.is_universal {
@@ -1257,6 +1266,7 @@ impl ScopeRecursiveSolver {
 
     #[cfg(feature = "statistics")]
     pub fn print_statistics(&self) {
+        println!("level {}", self.data.scope_id);
         self.data.statistics.print();
         match self.next {
             Some(ref next) => next.print_statistics(),
@@ -1572,5 +1582,24 @@ e 2 3 0
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output(), "s cnf 0 5 5\n");
+    }
+
+        #[test]
+    fn test_fuzz_sat() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 4 4
+e 2 0
+a 4 0
+e 1 3 0
+1 0
+2 1 0
+3 -4 0
+-3 2 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output(), "s cnf 1 4 4\nV 2 0\n");
     }
 }

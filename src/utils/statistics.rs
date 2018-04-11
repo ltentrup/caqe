@@ -148,7 +148,7 @@ impl<E: Eq + Hash + Copy + fmt::Display> TimingStats<E> {
             let min = self.min(stat);
             let max = self.max(stat);
             println!(
-                "{} count {}  sum {}.{}  avg: {}.{}  min {}.{}  max {}.{}",
+                "  {} count {}  sum {}.{}  avg: {}.{}  min {}.{}  max {}.{}",
                 stat,
                 self.count(stat),
                 sum.as_secs(),
