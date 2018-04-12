@@ -57,6 +57,11 @@ impl Config {
         for arg in args {
             match arg.as_ref() {
                 "-v" => verbosity = LevelFilter::Trace,
+                "--sur" => options.strong_unsat_refinement = !options.strong_unsat_refinement,
+                "--er" => options.expansion_refinement = !options.expansion_refinement,
+                "--rls" => {
+                    options.refinement_literal_subsumption = !options.refinement_literal_subsumption
+                }
                 "--alo" => {
                     options.abstraction_literal_optimization =
                         !options.abstraction_literal_optimization
