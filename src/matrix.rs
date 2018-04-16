@@ -270,8 +270,10 @@ impl Prefix for TreePrefix {
 impl Matrix<HierarchicalPrefix> {
     fn unprenex_by_miniscoping(matrix: Self) -> Matrix<TreePrefix> {
         let prefix = matrix.prefix;
-        let variables = prefix.variables;
+        let mut variables = prefix.variables;
         let mut scopes = prefix.scopes;
+        let mut clauses = matrix.clauses;
+        let mut occurrences = matrix.occurrences;
 
         // we store for each variable the variable it is connected to
         // we compact this by using the smallest variable as characteristic element
@@ -286,7 +288,7 @@ impl Matrix<HierarchicalPrefix> {
             match quantifier {
                 Quantifier::Existential => {
                     Self::union_over_connecting_sets(
-                        &matrix.clauses,
+                        &clauses,
                         &scope,
                         &mut partitions,
                         &variables,
@@ -295,7 +297,7 @@ impl Matrix<HierarchicalPrefix> {
                         Self::partition_scopes(scope, &mut partitions, &variables, prev_scopes);
                 }
                 Quantifier::Universal => {
-                    prev_scopes = Self::split_universal(scope, prev_scopes);
+                    prev_scopes = Self::split_universal(scope, &partitions, prev_scopes, &mut variables, &mut clauses, &mut occurrences);
                 }
             }
 
@@ -308,8 +310,8 @@ impl Matrix<HierarchicalPrefix> {
         };
         Matrix {
             prefix: tree_prefix,
-            clauses: matrix.clauses,
-            occurrences: matrix.occurrences,
+            clauses: clauses,
+            occurrences: occurrences,
             conflict: matrix.conflict,
         }
     }
@@ -368,7 +370,7 @@ impl Matrix<HierarchicalPrefix> {
             }
         }
         // last compactify
-        for i in 0..partitions.len() {
+        for i in 1..partitions.len() {
             loop {
                 let characteristic_elem = partitions[i] as usize;
                 partitions[i] = partitions[characteristic_elem];
@@ -391,7 +393,7 @@ impl Matrix<HierarchicalPrefix> {
 
         let mut remaining_next = next;
 
-        /// maps characteristic variables to index of scopes vector
+        // maps characteristic variables to index of scopes vector
         let mut groups = HashMap::new();
 
         for i in 1..partitions.len() {
@@ -453,20 +455,81 @@ impl Matrix<HierarchicalPrefix> {
     }
 
     /// Makes a copy of `scope` for every element in `next`.
-    /// Strictly speaking, we need to rename the universal variables for consistency,
-    /// but this is not needed for solving.
-    fn split_universal(scope: Scope, next: Vec<Box<ScopeNode>>) -> Vec<Box<ScopeNode>> {
+    /// Renames universal variables if needed
+    fn split_universal(scope: Scope, partitions: &Vec<Variable>, next: Vec<Box<ScopeNode>>, variables: &mut Vec<VariableInfo>, clauses: &mut Vec<Clause>, occurrences: &mut HashMap<Literal, Vec<ClauseId>>) -> Vec<Box<ScopeNode>> {
         debug_assert!(!next.is_empty());
 
-        let mut scopes = Vec::new();
-        for next_scope in next {
+        if next.len() == 1 {
+            // do not need to copy and rename
             let mut node = Box::new(ScopeNode {
                 scope: Scope::new(scope.id),
-                group: next_scope.group,
-                next: Vec::new(),
+                group: next[0].group,
+                next: next,
             });
-            node.next.push(next_scope);
             node.scope.variables.extend(scope.variables.clone());
+            return vec![node];
+        }
+
+        // more than one successor, have to rename variables
+        debug_assert!(next.len() > 1);
+        let mut scopes = Vec::new();
+        for next_scope in next {
+            let mut new_scope = Scope::new(scope.id);
+            
+            let mut renaming = HashMap::new();
+            for var in scope.variables.iter() {
+                // make a copy if var
+                variables.push(VariableInfo {
+                    scope: scope.id,
+                    is_universal: true,
+                });
+                let new_var = (variables.len() - 1) as Variable;
+                renaming.insert(var, new_var);
+                new_scope.variables.push(new_var);
+            }
+
+            // update clauses and occurrence list
+            for (i, ref mut clause) in clauses.iter_mut().enumerate() {
+                let clause_id = i as ClauseId;
+                let needs_renaming = clause.iter().fold(false, |val, &literal| {
+                    let info = &variables[literal.variable() as usize];
+                    if info.is_universal() {
+                        return val;
+                    }
+                    if info.scope < scope.id {
+                        return val;
+                    }
+                    if partitions[literal.variable() as usize] == next_scope.group {
+                        return true;
+                    } else {
+                        return val;
+                    }
+                });
+                if needs_renaming {
+                    for ref mut literal in clause.iter_mut() {
+                        let &new_var = match renaming.get(&literal.variable()) {
+                            None => continue,
+                            Some(new) => new,
+                        };
+                        {
+                        let entry = occurrences.entry(**literal).or_insert_with(|| panic!("inconsistent state"));
+                        // remove old occurrence
+                        entry.iter()
+                             .position(|&other_clause_id| other_clause_id == clause_id)
+                             .map(|index| entry.remove(index));
+                        }
+                        **literal = Literal::new(new_var, literal.signed());
+                        let entry = occurrences.entry(**literal).or_insert(Vec::new());
+                        entry.push(clause_id);
+                    }
+                }
+            }
+
+            let mut node = Box::new(ScopeNode {
+                scope: new_scope,
+                group: next_scope.group,
+                next: vec![next_scope],
+            });
             scopes.push(node);
         }
         scopes

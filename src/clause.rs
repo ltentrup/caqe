@@ -65,6 +65,10 @@ impl Clause {
         self.literals.iter()
     }
 
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<Literal> {
+        self.literals.iter_mut()
+    }
+
     /// Returns true, if the literals contained in `self` are a subset of the literals in `other`.
     /// Only literals satisfying the predicate are considered.
     /// Note that literals in clauses are sorted.
