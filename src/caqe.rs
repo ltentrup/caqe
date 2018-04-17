@@ -45,7 +45,9 @@ impl<'a> CaqeSolver<'a> {
 
     #[cfg(feature = "statistics")]
     pub fn print_statistics(&self) {
-        self.abstraction.print_statistics();
+        for ref abstraction in self.abstraction.iter() {
+            abstraction.print_statistics();
+        }
     }
 
     pub fn qdimacs_output(&self) -> String {
@@ -1321,9 +1323,8 @@ impl ScopeRecursiveSolver {
     pub fn print_statistics(&self) {
         println!("level {}", self.data.scope_id);
         self.data.statistics.print();
-        match self.next {
-            Some(ref next) => next.print_statistics(),
-            _ => (),
+        for ref next in self.next.iter() {
+            next.print_statistics()
         }
     }
 
