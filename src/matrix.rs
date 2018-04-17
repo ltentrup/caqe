@@ -287,17 +287,19 @@ impl Matrix<HierarchicalPrefix> {
         while let Some(scope) = scopes.pop() {
             match quantifier {
                 Quantifier::Existential => {
-                    Self::union_over_connecting_sets(
-                        &clauses,
-                        &scope,
-                        &mut partitions,
-                        &variables,
-                    );
+                    Self::union_over_connecting_sets(&clauses, &scope, &mut partitions, &variables);
                     prev_scopes =
                         Self::partition_scopes(scope, &mut partitions, &variables, prev_scopes);
                 }
                 Quantifier::Universal => {
-                    prev_scopes = Self::split_universal(scope, &partitions, prev_scopes, &mut variables, &mut clauses, &mut occurrences);
+                    prev_scopes = Self::split_universal(
+                        scope,
+                        &partitions,
+                        prev_scopes,
+                        &mut variables,
+                        &mut clauses,
+                        &mut occurrences,
+                    );
                 }
             }
 
@@ -456,7 +458,14 @@ impl Matrix<HierarchicalPrefix> {
 
     /// Makes a copy of `scope` for every element in `next`.
     /// Renames universal variables if needed
-    fn split_universal(scope: Scope, partitions: &Vec<Variable>, next: Vec<Box<ScopeNode>>, variables: &mut Vec<VariableInfo>, clauses: &mut Vec<Clause>, occurrences: &mut HashMap<Literal, Vec<ClauseId>>) -> Vec<Box<ScopeNode>> {
+    fn split_universal(
+        scope: Scope,
+        partitions: &Vec<Variable>,
+        next: Vec<Box<ScopeNode>>,
+        variables: &mut Vec<VariableInfo>,
+        clauses: &mut Vec<Clause>,
+        occurrences: &mut HashMap<Literal, Vec<ClauseId>>,
+    ) -> Vec<Box<ScopeNode>> {
         debug_assert!(!next.is_empty());
 
         if next.len() == 1 {
@@ -475,7 +484,7 @@ impl Matrix<HierarchicalPrefix> {
         let mut scopes = Vec::new();
         for next_scope in next {
             let mut new_scope = Scope::new(scope.id);
-            
+
             let mut renaming = HashMap::new();
             for var in scope.variables.iter() {
                 // make a copy if var
@@ -512,11 +521,14 @@ impl Matrix<HierarchicalPrefix> {
                             Some(new) => new,
                         };
                         {
-                        let entry = occurrences.entry(**literal).or_insert_with(|| panic!("inconsistent state"));
-                        // remove old occurrence
-                        entry.iter()
-                             .position(|&other_clause_id| other_clause_id == clause_id)
-                             .map(|index| entry.remove(index));
+                            let entry = occurrences
+                                .entry(**literal)
+                                .or_insert_with(|| panic!("inconsistent state"));
+                            // remove old occurrence
+                            entry
+                                .iter()
+                                .position(|&other_clause_id| other_clause_id == clause_id)
+                                .map(|index| entry.remove(index));
                         }
                         **literal = Literal::new(new_var, literal.signed());
                         let entry = occurrences.entry(**literal).or_insert(Vec::new());
