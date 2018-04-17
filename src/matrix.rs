@@ -8,6 +8,8 @@ pub trait Prefix {
     fn new(num_variables: usize) -> Self;
 
     fn num_variables(&self) -> usize;
+
+    fn get(&self, variable: Variable) -> &VariableInfo;
 }
 
 #[derive(Debug)]
@@ -172,10 +174,8 @@ impl Prefix for HierarchicalPrefix {
     fn num_variables(&self) -> usize {
         self.variables.len() - 1
     }
-}
 
-impl HierarchicalPrefix {
-    pub fn get(&self, variable: Variable) -> &VariableInfo {
+    fn get(&self, variable: Variable) -> &VariableInfo {
         let index = variable as usize;
         if index >= self.variables.len() {
             // variable was not bound prior
@@ -186,7 +186,9 @@ impl HierarchicalPrefix {
         }
         &self.variables[index]
     }
+}
 
+impl HierarchicalPrefix {
     /// Creates a new scope with given quantification type
     pub fn new_scope(&mut self, quantifier: Quantifier) -> ScopeId {
         let last_scope: ScopeId = self.last_scope();
@@ -239,14 +241,14 @@ impl HierarchicalPrefix {
 #[derive(Debug)]
 pub struct TreePrefix {
     variables: Vec<VariableInfo>,
-    roots: Vec<Box<ScopeNode>>,
+    pub roots: Vec<Box<ScopeNode>>,
 }
 
 #[derive(Debug)]
 pub struct ScopeNode {
-    scope: Scope,
+    pub scope: Scope,
     group: Variable,
-    next: Vec<Box<ScopeNode>>,
+    pub next: Vec<Box<ScopeNode>>,
 }
 
 impl Prefix for TreePrefix {
@@ -265,10 +267,22 @@ impl Prefix for TreePrefix {
     fn num_variables(&self) -> usize {
         self.variables.len() - 1
     }
+
+    fn get(&self, variable: Variable) -> &VariableInfo {
+        let index = variable as usize;
+        if index >= self.variables.len() {
+            // variable was not bound prior
+            return &VariableInfo {
+                scope: -1,
+                is_universal: false,
+            };
+        }
+        &self.variables[index]
+    }
 }
 
 impl Matrix<HierarchicalPrefix> {
-    fn unprenex_by_miniscoping(matrix: Self) -> Matrix<TreePrefix> {
+    pub fn unprenex_by_miniscoping(matrix: Self) -> Matrix<TreePrefix> {
         let prefix = matrix.prefix;
         let mut variables = prefix.variables;
         let mut scopes = prefix.scopes;

@@ -126,6 +126,8 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
         return Ok(SolverResult::Unsatisfiable);
     }
 
+    let matrix = Matrix::unprenex_by_miniscoping(matrix);
+
     #[cfg(feature = "statistics")]
     let mut timer = statistics.start(SolverPhases::Initializing);
 

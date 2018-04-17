@@ -13,7 +13,7 @@ use std::fmt;
 #[cfg(feature = "statistics")]
 use super::utils::statistics::TimingStats;
 
-type QMatrix = Matrix<HierarchicalPrefix>;
+type QMatrix = Matrix<TreePrefix>;
 
 pub struct CaqeSolver<'a> {
     matrix: &'a QMatrix,
@@ -27,11 +27,19 @@ impl<'a> CaqeSolver<'a> {
     }
 
     pub fn new_with_options(matrix: &QMatrix, options: CaqeSolverOptions) -> CaqeSolver {
+        let mut abstractions = Vec::new();
+        for scope_node in matrix.prefix.roots.iter() {
+            abstractions.push(ScopeRecursiveSolver::init_abstraction_recursively(
+                matrix,
+                options,
+                scope_node,
+            ));
+        }
         debug_assert!(!matrix.conflict());
         CaqeSolver {
             matrix: matrix,
             result: SolverResult::Unknown,
-            abstraction: ScopeRecursiveSolver::init_abstraction_recursively(matrix, options, 0),
+            abstraction: abstractions,
         }
     }
 
@@ -156,6 +164,9 @@ struct ScopeSolverData {
     /// the current, or some inner, scope.
     max_clauses: BitVec,
 
+    /// Stores the clauses which are relevant, i.e., belong to the current branch in quantifier prefix tree
+    relevant_clauses: BitVec,
+
     /// stores the assumptions given to sat solver
     sat_solver_assumptions: Vec<Lit>,
 
@@ -179,7 +190,12 @@ struct ScopeSolverData {
 }
 
 impl ScopeSolverData {
-    fn new(matrix: &QMatrix, options: CaqeSolverOptions, scope: &Scope) -> ScopeSolverData {
+    fn new(
+        matrix: &QMatrix,
+        options: CaqeSolverOptions,
+        scope: &Scope,
+        relevant_clauses: BitVec,
+    ) -> ScopeSolverData {
         let mut s = cryptominisat::Solver::new();
         s.set_num_threads(1);
         ScopeSolverData {
@@ -192,6 +208,7 @@ impl ScopeSolverData {
             assignments: HashMap::new(),
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
+            relevant_clauses: relevant_clauses,
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.id % 2 != 0,
             scope_id: scope.id,
@@ -222,7 +239,7 @@ impl ScopeSolverData {
             for &literal in clause.iter() {
                 let var_scope = matrix.prefix.get(literal.variable()).scope;
                 scopes.update(var_scope);
-                if var_scope != scope.id {
+                if !self.variable_to_sat.contains_key(&literal.variable()) {
                     if var_scope < scope.id {
                         outer = Some(literal);
                     } else if var_scope > scope.id {
@@ -230,6 +247,7 @@ impl ScopeSolverData {
                     }
                     continue;
                 }
+                self.relevant_clauses.set(clause_id as usize, true);
                 current = Some(literal);
                 contains_variables = true;
                 sat_clause.push(self.lit_to_sat_lit(literal));
@@ -392,9 +410,10 @@ impl ScopeSolverData {
             for &literal in clause.iter() {
                 let var_scope = matrix.prefix.get(literal.variable()).scope;
                 scopes.update(var_scope);
-                if var_scope != scope.id {
+                if !self.variable_to_sat.contains_key(&literal.variable()) {
                     continue;
                 }
+                self.relevant_clauses.set(clause_id as usize, true);
                 num_scope_variables += 1;
                 if single_literal.is_none() {
                     single_literal = Some(literal);
@@ -440,8 +459,7 @@ impl ScopeSolverData {
                 // build abstraction
                 sat_var = self.sat.new_var();
                 for &literal in clause.iter() {
-                    let var_scope = matrix.prefix.get(literal.variable()).scope;
-                    if var_scope != scope.id {
+                    if !self.variable_to_sat.contains_key(&literal.variable()) {
                         continue;
                     }
                     let lit = self.lit_to_sat_lit(literal);
@@ -452,6 +470,8 @@ impl ScopeSolverData {
                 // do not add t-literal nor b-literal, we adapt abstraction during solving if needed
                 continue;
             }
+
+            debug_assert!(self.relevant_clauses[clause_id as usize]);
 
             let need_t_lit = min_scope < scope.id && scope.id <= max_scope;
             let need_b_lit = min_scope <= scope.id && scope.id <= max_scope;
@@ -506,6 +526,7 @@ impl ScopeSolverData {
 
     fn check_candidate_exists(&mut self, next: &mut Vec<Box<ScopeRecursiveSolver>>) -> Lbool {
         // we need to reset abstraction entries for next scopes, since some entries may be pushed down
+        self.entry.intersect(&self.relevant_clauses);
         for ref mut scope in next {
             scope.data.entry.clone_from(&self.entry);
         }
@@ -963,12 +984,16 @@ impl ScopeSolverData {
 
         // create the refinement clauses
         for (i, clause) in matrix.clauses.iter().enumerate() {
-            sat_clause.clear();
+            if !next.data.relevant_clauses[i] {
+                continue;
+            }
 
             // check if the universal assignment satisfies the clause
             if clause.is_satisfied_by_assignment(&data.assignments) {
                 continue;
             }
+
+            sat_clause.clear();
 
             // add the clause to the abstraction
             // variables bound by inner existential quantifier have to be renamed
@@ -1085,8 +1110,19 @@ impl ScopeRecursiveSolver {
         quantifier: Quantifier,
         next: Vec<Box<ScopeRecursiveSolver>>,
     ) -> ScopeRecursiveSolver {
+        let mut relevant_clauses = BitVec::from_elem(matrix.clauses.len(), false);
+        for ref next_scope in next.iter() {
+            #[cfg(debug_assertions)]
+            {
+                // the branches have pairwise disjoint relevant clauses
+                let mut copy = relevant_clauses.clone();
+                copy.intersect(&next_scope.data.relevant_clauses);
+                assert!(copy.none());
+            }
+            relevant_clauses.union(&next_scope.data.relevant_clauses);
+        }
         let mut candidate = ScopeRecursiveSolver {
-            data: ScopeSolverData::new(matrix, options, scope),
+            data: ScopeSolverData::new(matrix, options, scope, relevant_clauses),
             next: next,
         };
 
@@ -1109,20 +1145,22 @@ impl ScopeRecursiveSolver {
     fn init_abstraction_recursively(
         matrix: &QMatrix,
         options: CaqeSolverOptions,
-        scope_id: ScopeId,
-    ) -> Vec<Box<ScopeRecursiveSolver>> {
-        let prev;
-        if scope_id < matrix.prefix.last_scope() {
-            prev = Self::init_abstraction_recursively(matrix, options.clone(), scope_id + 1);
-        } else {
-            prev = Vec::new();
+        scope_node: &Box<ScopeNode>,
+    ) -> Box<ScopeRecursiveSolver> {
+        let mut prev = Vec::new();
+        for ref child_node in scope_node.next.iter() {
+            prev.push(Self::init_abstraction_recursively(
+                matrix,
+                options.clone(),
+                child_node,
+            ))
         }
-        let scope = &matrix.prefix.scopes[scope_id as usize];
+        let scope = &scope_node.scope;
         let result = Box::new(ScopeRecursiveSolver::new(
             matrix,
             options,
             scope,
-            Quantifier::from(scope_id),
+            Quantifier::from(scope.id),
             prev,
         ));
 
@@ -1158,7 +1196,7 @@ impl ScopeRecursiveSolver {
             }*/
         }
 
-        vec![result]
+        result
     }
 
     /*#[cfg(debug_assertions)]
@@ -1238,8 +1276,8 @@ impl ScopeRecursiveSolver {
                     #[cfg(feature = "statistics")]
                     timer.stop();
 
+                    current.sub_result = good_result;
                     for ref mut scope in next.iter_mut() {
-                        current.sub_result = good_result;
                         let result = scope.solve_recursive(matrix);
                         if result == bad_result {
                             debug_assert!(result == bad_result);
@@ -1355,6 +1393,7 @@ mod tests {
     fn test_true() {
         let instance = "p cnf 0 0";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 0 0\n");
@@ -1372,6 +1411,7 @@ e 3 4 0
 -1 2 4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 4 4\n");
@@ -1389,6 +1429,7 @@ e 3 4 0
 1 2 4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 0 4 4\nV -1 0\nV -2 0\n");
@@ -1428,6 +1469,7 @@ e 4 5 6 7 8 9 10 11 0
 11 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 11 24\n");
@@ -1447,6 +1489,7 @@ e 2 0
 -2 -1 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 4 0\n");
@@ -1461,6 +1504,7 @@ p cnf 1 2
 1 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 0 1 2\n");
@@ -1477,6 +1521,7 @@ e 3 0
 -3 -1 2 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 3 2\n");
@@ -1496,6 +1541,7 @@ e 3 0
 3 -4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 2 0\n");
@@ -1517,6 +1563,7 @@ e 2 4 0
 2 3 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 5 5\n");
@@ -1536,6 +1583,7 @@ e 2 0
 -1 -4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 4 0\n");
@@ -1555,6 +1603,7 @@ e 2 0
 3 2 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 3 4\nV 3 0\n");
@@ -1574,6 +1623,7 @@ e 1 0
 3 1 -4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 4 3\nV -2 0\nV 3 0\n");
@@ -1594,6 +1644,7 @@ e 2 3 0
 5 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 0 5 5\n");
@@ -1613,8 +1664,29 @@ e 1 3 0
 -3 2 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         //assert_eq!(solver.qdimacs_output(), "s cnf 1 4 4\nV 2 0\n");
+    }
+
+    #[test]
+    fn test_wrong_unsat_miniscoping() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 4 4
+e 4 0
+a 2 0
+e 1 3 0
+4 1 0
+-1 0
+4 -3 0
+1 2 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        //assert_eq!(solver.qdimacs_output(), "s cnf 0 4 4\n");
     }
 }
