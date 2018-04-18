@@ -1,0 +1,48 @@
+\documentclass[11pt,twocolumn]{article}
+
+\title{CAQE at QBFEval 2018}
+\author{Leander Tentrup, Saarland University}
+\date{}
+
+\usepackage{amsmath}
+
+\newcommand{\caqe}{\text{CAQE}}
+
+\begin{document}
+  \maketitle
+  
+\section{Introduction}
+
+This paper presents the QBF solver $\caqe$~\cite{conf/fmcad/RabeT15} as submitted to QBFEval 2018.
+$\caqe$ aims to be a high performance QBF solver by carefully mixing orthogonal solving techniques and using optimized data structures.
+
+\section{Major Improvements}
+
+\paragraph{New Implementation.}
+
+The new version of $\caqe$ is implemented in the programming language Rust.
+The previous C implementation accumulated much cruft originating to the initial implementation from 2013.
+The new implementation optimizes data structures and avoided bottlenecks that we discovered over the years.
+
+\paragraph{Expansion and Strong Unsat Refinement}
+
+As last years version, $\caqe$ implements two additional refinement methods as described in~\cite{conf/cav/Tentrup17}.
+\emph{Expansion refinement} does partial expansion for the innermost quantifier alternation similar to RAReQS.
+\emph{Strong unsat refinement} improves on the standard disjunctive refinement by excluding a conjunction subsumed clauses.
+
+\paragraph{Abstraction Optimization}
+
+\paragraph{Preprocessing}
+
+\paragraph{QDIMACS Output}
+
+
+\section{Thanks}
+
+This work was supported by the European Research Council (ERC) Grant OSARES (No. 683300).
+
+
+\bibliographystyle{plain}
+\bibliography{main}
+
+\end{document}
