@@ -50,7 +50,7 @@ impl Config {
             return Err("expect file name");
         }
 
-        let mut verbosity = LevelFilter::Info;
+        let mut verbosity = LevelFilter::Warn;
         let mut filename = None;
         let mut options = CaqeSolverOptions::new();
         let mut qdimacs_output = false;

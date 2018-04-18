@@ -9,6 +9,8 @@ pub trait Prefix {
 
     fn num_variables(&self) -> usize;
 
+    fn orig_num_variables(&self) -> usize;
+
     fn get(&self, variable: Variable) -> &VariableInfo;
 }
 
@@ -18,6 +20,7 @@ pub struct Matrix<P: Prefix> {
     pub clauses: Vec<Clause>,
     occurrences: HashMap<Literal, Vec<ClauseId>>,
     conflict: bool,
+    pub orig_clause_num: usize,
 }
 
 impl<P: Prefix> Matrix<P> {
@@ -27,6 +30,7 @@ impl<P: Prefix> Matrix<P> {
             clauses: Vec::with_capacity(num_clauses),
             occurrences: HashMap::new(),
             conflict: false,
+            orig_clause_num: num_clauses,
         }
     }
 
@@ -71,6 +75,7 @@ pub type ScopeId = i32;
 pub struct VariableInfo {
     pub scope: ScopeId,
     pub is_universal: bool,
+    pub copy_of: Variable,
 }
 
 impl VariableInfo {
@@ -113,6 +118,7 @@ impl Scope {
 pub struct HierarchicalPrefix {
     variables: Vec<VariableInfo>,
     pub scopes: Vec<Scope>,
+    orig_var_num: usize,
 }
 
 #[derive(Eq, PartialEq)]
@@ -159,6 +165,7 @@ impl Prefix for HierarchicalPrefix {
         variables.push(VariableInfo {
             scope: -1,
             is_universal: false,
+            copy_of: 0,
         });
         HierarchicalPrefix {
             variables: variables,
@@ -168,11 +175,16 @@ impl Prefix for HierarchicalPrefix {
                     variables: Vec::new(),
                 },
             ],
+            orig_var_num: num_variables,
         }
     }
 
     fn num_variables(&self) -> usize {
         self.variables.len() - 1
+    }
+
+    fn orig_num_variables(&self) -> usize {
+        self.orig_var_num
     }
 
     fn get(&self, variable: Variable) -> &VariableInfo {
@@ -182,6 +194,7 @@ impl Prefix for HierarchicalPrefix {
             return &VariableInfo {
                 scope: -1,
                 is_universal: false,
+                copy_of: 0,
             };
         }
         &self.variables[index]
@@ -214,6 +227,7 @@ impl HierarchicalPrefix {
                 VariableInfo {
                     scope: -1,
                     is_universal: false,
+                    copy_of: 0,
                 },
             )
         }
@@ -242,6 +256,7 @@ impl HierarchicalPrefix {
 pub struct TreePrefix {
     variables: Vec<VariableInfo>,
     pub roots: Vec<Box<ScopeNode>>,
+    orig_var_num: usize,
 }
 
 #[derive(Debug)]
@@ -257,15 +272,21 @@ impl Prefix for TreePrefix {
         variables.push(VariableInfo {
             scope: -1,
             is_universal: false,
+            copy_of: 0,
         });
         TreePrefix {
             variables: variables,
             roots: Vec::new(),
+            orig_var_num: num_variables,
         }
     }
 
     fn num_variables(&self) -> usize {
         self.variables.len() - 1
+    }
+
+    fn orig_num_variables(&self) -> usize {
+        self.orig_var_num
     }
 
     fn get(&self, variable: Variable) -> &VariableInfo {
@@ -275,6 +296,7 @@ impl Prefix for TreePrefix {
             return &VariableInfo {
                 scope: -1,
                 is_universal: false,
+                copy_of: 0,
             };
         }
         &self.variables[index]
@@ -323,12 +345,14 @@ impl Matrix<HierarchicalPrefix> {
         let tree_prefix = TreePrefix {
             variables,
             roots: prev_scopes,
+            orig_var_num: prefix.orig_var_num,
         };
         Matrix {
             prefix: tree_prefix,
             clauses: clauses,
             occurrences: occurrences,
             conflict: matrix.conflict,
+            orig_clause_num: matrix.orig_clause_num,
         }
     }
 
@@ -505,6 +529,7 @@ impl Matrix<HierarchicalPrefix> {
                 variables.push(VariableInfo {
                     scope: scope.id,
                     is_universal: true,
+                    copy_of: *var,
                 });
                 let new_var = (variables.len() - 1) as Variable;
                 renaming.insert(var, new_var);
