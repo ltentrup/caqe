@@ -21,23 +21,38 @@ $\caqe$ aims to be a high performance QBF solver by carefully mixing orthogonal 
 \paragraph{New Implementation.}
 
 The new version of $\caqe$ is implemented in the programming language Rust.
-The previous C implementation accumulated much cruft originating to the initial implementation from 2013.
+The previous C implementation accumulated much cruft originating back to the initial implementation from 2013.
 The new implementation optimizes data structures and avoided bottlenecks that we discovered over the years.
+As the underlying SAT solver, we use CryptoMiniSat~\cite{conf/sat/SoosNC09} in version 5.5.
 
-\paragraph{Expansion and Strong Unsat Refinement}
+\paragraph{Preprocessing.}
 
-As last years version, $\caqe$ implements two additional refinement methods as described in~\cite{conf/cav/Tentrup17}.
+Preprocessing is an important factor in the performance of $\caqe$.
+We submitted two configurations of $\caqe$, one using Bloqqer~\cite{conf/cade/BiereLS11} (version 031) and one using HQSPre~\cite{conf/tacas/WimmerRM017}.
+
+\paragraph{Expansion and Strong Unsat Refinement.}
+
+As last years version, $\caqe$ implements two additional refinement methods~\cite{conf/cav/Tentrup17}.
 \emph{Expansion refinement} does partial expansion for the innermost quantifier alternation similar to RAReQS.
 \emph{Strong unsat refinement} improves on the standard disjunctive refinement by excluding a conjunction subsumed clauses.
 
-\paragraph{Abstraction Optimization}
+\paragraph{Tree-shaped Quantifier Prefix.}
+$\caqe$ does recursion on the quantifier prefix of the QBF.
+From the linear quantifier prefix, we try to reconstruct a tree-shaped prefix by applying the miniscoping rules. 
 
-\paragraph{Preprocessing}
+\paragraph{Abstraction Optimization.}
 
-\paragraph{QDIMACS Output}
+We implemented an extension of the abstraction minimization techniques~\cite{conf/sat/BalabanovJSMB16}.
+For universal abstractions, we use the universal variable as $t$-literal if it is the only universal variable in the clause (and the outermost quantified variable in clause).
+For both polarities, we do only generate one (abstraction) clause if two clauses are equal with respect to variables bound $\leq$ current level.
+We also implemented refinement literal subsumption, but in our experiments this did not improve solving time.
+
+\paragraph{QDIMACS Output.}
+
+$\caqe$ now supports the QDIMACS output format.
 
 
-\section{Thanks}
+\section{Acknowledgments}
 
 This work was supported by the European Research Council (ERC) Grant OSARES (No. 683300).
 
