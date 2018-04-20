@@ -1,7 +1,7 @@
 \documentclass[11pt,twocolumn]{article}
 
 \title{CAQE at QBFEval 2018}
-\author{Leander Tentrup, Saarland University}
+\author{Leander Tentrup, Saarland University \and Markus N. Rabe, University of California, Berkeley}
 \date{}
 
 \usepackage{amsmath}
@@ -24,14 +24,14 @@ $\caqe$ aims to be a high performance QBF solver by carefully mixing orthogonal 
 \paragraph{New Implementation.}
 
 The new version of $\caqe$ is implemented in the programming language Rust.
-The previous C implementation accumulated much cruft originating back to the initial implementation from 2013.
+The previous C implementation accumulated much cruft originating back to the initial implementation from 2014.
 The new implementation optimizes data structures and avoided bottlenecks that we discovered over the years.
 As the underlying SAT solver, we use CryptoMiniSat~\cite{conf/sat/SoosNC09} in version 5.5.
 
 \paragraph{Preprocessing.}
 
 Preprocessing is an important factor in the performance of $\caqe$.
-We submitted two configurations of $\caqe$, one using Bloqqer~\cite{conf/cade/BiereLS11} (version 031) and one using HQSPre~\cite{conf/tacas/WimmerRM017}.
+We submitted two configurations of $\caqe$, one using Bloqqer~\cite{conf/cade/BiereLS11} and one using HQSPre~\cite{conf/tacas/WimmerRM017}.
 
 \paragraph{Expansion and Strong Unsat Refinement.}
 
@@ -41,7 +41,7 @@ As last years version, $\caqe$ implements two additional refinement methods~\cit
 
 \paragraph{Tree-shaped Quantifier Prefix.}
 $\caqe$ does recursion on the quantifier prefix of the QBF.
-From the linear quantifier prefix, we try to reconstruct a tree-shaped prefix by applying the miniscoping rules. 
+From the linear quantifier prefix, we try to reconstruct a tree-shaped prefix by applying the mini-scoping rules. 
 
 \paragraph{Abstraction Optimization.}
 
@@ -53,6 +53,7 @@ We also implemented refinement literal subsumption, but in our experiments this 
 \paragraph{QDIMACS Output.}
 
 $\caqe$ now supports the QDIMACS output format.
+Using the partial assignments from Bloqqer~\cite{conf/date/SeidlK14}, $\caqe$ can provide complete assignments even in case of preprocessing.
 
 
 \section{Acknowledgments}
