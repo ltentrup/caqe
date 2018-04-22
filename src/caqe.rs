@@ -50,17 +50,15 @@ impl<'a> CaqeSolver<'a> {
         }
     }
 
-    pub fn qdimacs_output(&self) -> String {
-        let mut output = String::new();
-        output.push_str(&format!(
-            "s cnf {} {} {}\n",
-            self.result.dimacs(),
+    pub fn qdimacs_output(&self) -> qdimacs::PartialQDIMACSCertificate {
+        let mut certificate = qdimacs::PartialQDIMACSCertificate::new(
+            self.result,
             self.matrix.prefix.orig_num_variables(),
             self.matrix.orig_clause_num,
-        ));
+        );
 
         if self.result == SolverResult::Unknown {
-            return output;
+            return certificate;
         }
 
         // get the first scope that contains variables (the scope 0 may be empty)
@@ -86,7 +84,7 @@ impl<'a> CaqeSolver<'a> {
         if self.result == SolverResult::Satisfiable && is_universal
             || self.result == SolverResult::Unsatisfiable && !is_universal
         {
-            return output;
+            return certificate;
         }
 
         // go thorough all scopes in the level
@@ -108,11 +106,7 @@ impl<'a> CaqeSolver<'a> {
                 } else {
                     orig_variable = *variable;
                 }
-                if value {
-                    output.push_str(&format!("V {} 0\n", orig_variable));
-                } else {
-                    output.push_str(&format!("V -{} 0\n", orig_variable));
-                }
+                certificate.add_assignment(Literal::new(orig_variable, !value));
             }
 
             if self.result == SolverResult::Unsatisfiable {
@@ -121,7 +115,7 @@ impl<'a> CaqeSolver<'a> {
             }
         }
 
-        output
+        certificate
     }
 }
 
@@ -1426,7 +1420,7 @@ mod tests {
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 0 0\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 0 0\n");
     }
 
     #[test]
@@ -1444,7 +1438,7 @@ e 3 4 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 4 4\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\n");
     }
 
     #[test]
@@ -1462,7 +1456,10 @@ e 3 4 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 4\nV -1 0\nV -2 0\n");
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 0 4 4\nV -1 0\nV -2 0\n"
+        );
     }
 
     #[test]
@@ -1502,7 +1499,7 @@ e 4 5 6 7 8 9 10 11 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 11 24\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 11 24\n");
     }
 
     #[test]
@@ -1522,7 +1519,7 @@ e 2 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 4 0\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
     }
 
     #[test]
@@ -1537,7 +1534,7 @@ p cnf 1 2
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 0 1 2\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 1 2\n");
     }
 
     #[test]
@@ -1554,7 +1551,7 @@ e 3 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 3 2\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 2\n");
     }
 
     #[test]
@@ -1574,7 +1571,7 @@ e 3 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 2 0\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 2 0\n");
     }
 
     #[test]
@@ -1596,7 +1593,7 @@ e 2 4 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 5 5\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 5\n");
     }
 
     #[test]
@@ -1616,7 +1613,7 @@ e 2 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 3\nV 4 0\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
     }
 
     #[test]
@@ -1636,7 +1633,7 @@ e 2 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 3 4\nV 3 0\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 4\nV 3 0\n");
     }
 
     #[test]
@@ -1656,7 +1653,10 @@ e 1 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 4 3\nV -2 0\nV 3 0\n");
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 4 3\nV -2 0\nV 3 0\n"
+        );
     }
 
     #[test]
@@ -1677,7 +1677,7 @@ e 2 3 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 0 5 5\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 5 5\n");
     }
 
     #[test]
@@ -1697,7 +1697,7 @@ e 1 3 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 1 4 4\nV 2 0\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\nV 2 0\n");
     }
 
     #[test]
@@ -1717,6 +1717,6 @@ e 1 3 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
-        assert_eq!(solver.qdimacs_output(), "s cnf 0 4 4\n");
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 4\n");
     }
 }

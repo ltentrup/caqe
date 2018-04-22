@@ -8,6 +8,8 @@ cryptominisat = "5.0.1"
 log = "0.4"
 simplelog = "^0.5.0"
 bit-vec = "0.4.4"
+tempfile = "3.0.1"  # for first running preprocessor and piping result to temporary
+text_io = "0.1.7"   # parsing qdimacs output
 
 [patch.crates-io]
 cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git" }

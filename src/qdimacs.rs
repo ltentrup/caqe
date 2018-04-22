@@ -1,6 +1,7 @@
 use super::*;
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
@@ -214,6 +215,100 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
     Ok(matrix)
 }
 
+/// A partial QDIMACS certifciate is an assignment to the outermost quantifiers in the QBF
+#[derive(Debug, PartialEq, Eq)]
+pub struct PartialQDIMACSCertificate {
+    pub result: SolverResult,
+    pub num_variables: usize,
+    pub num_clauses: usize,
+    assignments: Vec<Literal>,
+}
+
+impl PartialQDIMACSCertificate {
+    pub fn new(
+        result: SolverResult,
+        num_variables: usize,
+        num_clauses: usize,
+    ) -> PartialQDIMACSCertificate {
+        PartialQDIMACSCertificate {
+            result,
+            num_variables,
+            num_clauses,
+            assignments: Vec::new(),
+        }
+    }
+
+    pub fn add_assignment(&mut self, assignment: Literal) {
+        self.assignments.push(assignment);
+        self.assignments.sort();
+    }
+}
+
+impl FromStr for PartialQDIMACSCertificate {
+    type Err = Box<ParseError>;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut lines = s.lines();
+        let mut certificate = None;
+        while let Some(line) = lines.next() {
+            if line.starts_with("c") || line.is_empty() {
+                // comment or empty line
+                continue;
+            } else if !line.starts_with("s cnf") {
+                return Err(ParseError::ExpectHeaderOrComment(String::from(line)).into());
+            }
+            // read header line
+            let result: i32;
+            let num_variables: usize;
+            let num_clauses: usize;
+            let i: i32;
+            scan!(line.bytes() => "s cnf {} {} {}", result, num_variables, num_clauses);
+            let result = if result == 0 {
+                SolverResult::Unsatisfiable
+            } else if result == 1 {
+                SolverResult::Satisfiable
+            } else {
+                SolverResult::Unknown
+            };
+            certificate = Some(PartialQDIMACSCertificate::new(
+                result,
+                num_variables,
+                num_clauses,
+            ));
+            break;
+        }
+        let mut certificate = match certificate {
+            None => return Err(ParseError::NoHeaderFound.into()),
+            Some(c) => c,
+        };
+        while let Some(line) = lines.next() {
+            if line.is_empty() {
+                // skip empty lines
+                continue;
+            }
+            // line has the form `V [-]var 0\n`
+            let literal: i32 = read!("V {} 0", line.bytes());
+            certificate.add_assignment(Literal::from(literal));
+        }
+        Ok(certificate)
+    }
+}
+
+impl Dimacs for PartialQDIMACSCertificate {
+    fn dimacs(&self) -> String {
+        let mut dimacs = String::new();
+        dimacs.push_str(&format!(
+            "s cnf {} {} {}\n",
+            self.result.dimacs(),
+            self.num_variables,
+            self.num_clauses,
+        ));
+        for literal in self.assignments.iter() {
+            dimacs.push_str(&format!("V {} 0\n", literal.dimacs()));
+        }
+        dimacs
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -345,6 +440,20 @@ mod tests {
             let result = parse(instance);
             debug_assert!(result.is_ok(), instance);
         }
+    }
+
+    #[test]
+    fn test_qdimacs_output() {
+        let certificate = PartialQDIMACSCertificate {
+            result: SolverResult::Satisfiable,
+            num_variables: 4,
+            num_clauses: 3,
+            assignments: vec![Literal::new(2, true), Literal::new(3, false)],
+        };
+        let dimacs_output = certificate.dimacs();
+        assert_eq!(dimacs_output.as_str(), "s cnf 1 4 3\nV -2 0\nV 3 0\n");
+        let parsed: PartialQDIMACSCertificate = dimacs_output.parse().unwrap();
+        assert_eq!(certificate, parsed);
     }
 
 }

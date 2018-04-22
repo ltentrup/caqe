@@ -1,13 +1,19 @@
+// extern crates
 #[macro_use]
 extern crate log;
 extern crate simplelog;
+#[macro_use]
+extern crate text_io;
+extern crate tempfile;
 
 use simplelog::*;
 
-use std::error::Error;
-use std::fs::File;
-use std::io::prelude::*;
+use tempfile::tempfile;
 
+// Rust stdlib
+use std::error::Error;
+
+// modules
 mod literal;
 use literal::*;
 pub use self::literal::Literal; // re-export literals
@@ -27,11 +33,13 @@ use dimacs::*;
 mod solver;
 use solver::*;
 
+mod preprocessor;
+use preprocessor::*;
+
 mod qdimacs;
 
 mod utils;
 
-#[cfg(feature = "statistics")]
 use utils::statistics::TimingStats;
 
 // Command line parsing
@@ -42,6 +50,7 @@ pub struct Config {
     pub verbosity: LevelFilter,
     pub options: CaqeSolverOptions,
     pub qdimacs_output: bool,
+    pub preprocessor: Option<QBFPreprocessor>,
 }
 
 impl Config {
@@ -54,6 +63,7 @@ impl Config {
         let mut filename = None;
         let mut options = CaqeSolverOptions::new();
         let mut qdimacs_output = false;
+        let mut preprocessor = None;
         for arg in args {
             match arg.as_ref() {
                 "-v" => verbosity = LevelFilter::Trace,
@@ -67,6 +77,7 @@ impl Config {
                         !options.abstraction_literal_optimization
                 }
                 "--qdo" => qdimacs_output = true,
+                "--bloqqer" => preprocessor = Some(QBFPreprocessor::Bloqqer),
                 _ => {
                     if arg.starts_with("-") {
                         return Err("unknown argument");
@@ -87,22 +98,19 @@ impl Config {
             verbosity,
             options,
             qdimacs_output,
+            preprocessor,
         })
     }
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum SolverPhases {
-    Parsing,
+    Preprocessing,
     Initializing,
     Solving,
 }
 
 pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
-    let mut f = File::open(config.filename)?;
-    let mut contents = String::new();
-    f.read_to_string(&mut contents)?;
-
     #[cfg(debug_assertions)]
     CombinedLogger::init(vec![
         TermLogger::new(config.verbosity, simplelog::Config::default()).unwrap(),
@@ -113,9 +121,9 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     let statistics = TimingStats::new();
 
     #[cfg(feature = "statistics")]
-    let mut timer = statistics.start(SolverPhases::Parsing);
+    let mut timer = statistics.unwrap().start(SolverPhases::Preprocessing);
 
-    let matrix = qdimacs::parse(&contents)?;
+    let (matrix, partial_qdo) = preprocess(&config)?;
 
     #[cfg(feature = "statistics")]
     timer.stop();
@@ -156,7 +164,7 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     }
 
     if config.qdimacs_output {
-        println!("{}", solver.qdimacs_output());
+        println!("{}", solver.qdimacs_output().dimacs());
     }
 
     Ok(result)
