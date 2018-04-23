@@ -53,6 +53,7 @@ pub struct Config {
     pub verbosity: LevelFilter,
     pub options: CaqeSolverOptions,
     pub qdimacs_output: bool,
+    pub statistics: bool,
     pub preprocessor: Option<QBFPreprocessor>,
 }
 
@@ -65,7 +66,7 @@ impl Config {
             false => "0",
         };
 
-        let matches = App::new("CAQE")
+        let mut flags = App::new("CAQE")
             .version(env!("CARGO_PKG_VERSION"))
             .author(env!("CARGO_PKG_AUTHORS"))
             .about("CAQE is a solver for quantified Boolean formulas given in QDIMACS file format")
@@ -83,12 +84,6 @@ impl Config {
                     .possible_values(QBFPreprocessor::values()),
             )
             .arg(
-                Arg::with_name("v")
-                    .short("v")
-                    .multiple(true)
-                    .help("Sets the level of verbosity"),
-            )
-            .arg(
                 Arg::with_name("qdimacs-output")
                     .long("--qdo")
                     .help("Prints QDIMACS output (partial assignment) after solving"),
@@ -100,6 +95,7 @@ impl Config {
                     .value_name("bool")
                     .takes_value(true)
                     .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
                     .help("Controls whether strong unsat refinement should be used"),
             )
             .arg(
@@ -109,6 +105,7 @@ impl Config {
                     .value_name("bool")
                     .takes_value(true)
                     .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
                     .help("Controls whether expansion refinement should be used"),
             )
             .arg(
@@ -118,6 +115,7 @@ impl Config {
                     .value_name("bool")
                     .takes_value(true)
                     .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
                     .help(
                         "Controls whether refinements are minimized according to subsumption rules",
                     ),
@@ -129,11 +127,30 @@ impl Config {
                     .value_name("bool")
                     .takes_value(true)
                     .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
                     .help(
                         "Controls whether abstractions should be optimized using subsumption rules",
                     ),
+            );
+
+        #[cfg(debug_assertions)]
+        {
+            flags = flags.arg(
+                Arg::with_name("v")
+                    .short("v")
+                    .multiple(true)
+                    .help("Sets the level of verbosity"),
+            );
+        }
+        #[cfg(feature = "statistics")]
+        {
+            flags = flags.arg(
+                Arg::with_name("statistics")
+                    .long("--statistics")
+                    .help("Enables collection and printing of solving statistics"),
             )
-            .get_matches_from(args);
+        }
+        let matches = flags.get_matches_from(args);
 
         // file name is mandatory
         let filename = String::from(matches.value_of("INPUT").unwrap());
@@ -146,6 +163,8 @@ impl Config {
         };
 
         let qdimacs_output = matches.is_present("qdimacs-output");
+
+        let statistics = matches.is_present("statistics");
 
         let preprocessor = match matches.value_of("preprocessor") {
             None => None,
@@ -169,6 +188,7 @@ impl Config {
             verbosity,
             options,
             qdimacs_output,
+            statistics,
             preprocessor,
         })
     }
@@ -192,7 +212,7 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     let statistics = TimingStats::new();
 
     #[cfg(feature = "statistics")]
-    let mut timer = statistics.unwrap().start(SolverPhases::Preprocessing);
+    let mut timer = statistics.start(SolverPhases::Preprocessing);
 
     let (matrix, partial_qdo) = preprocess(&config)?;
 
@@ -241,13 +261,18 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
 
     #[cfg(feature = "statistics")]
     {
-        println!("Parsing took {:?}", statistics.sum(SolverPhases::Parsing));
-        println!(
-            "Initializing took {:?}",
-            statistics.sum(SolverPhases::Initializing)
-        );
-        println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-        solver.print_statistics();
+        if config.statistics {
+            println!(
+                "Preprocessing took {:?}",
+                statistics.sum(SolverPhases::Preprocessing)
+            );
+            println!(
+                "Initializing took {:?}",
+                statistics.sum(SolverPhases::Initializing)
+            );
+            println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
+            solver.print_statistics();
+        }
     }
 
     if config.qdimacs_output {
