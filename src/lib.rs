@@ -131,6 +131,11 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     //println!("{}", matrix.dimacs());
 
     if matrix.conflict() {
+        if config.qdimacs_output {
+            if let Some(partial_qdo) = partial_qdo {
+                println!("{}", partial_qdo.dimacs());
+            }
+        }
         return Ok(SolverResult::Unsatisfiable);
     }
 
@@ -164,7 +169,15 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     }
 
     if config.qdimacs_output {
-        println!("{}", solver.qdimacs_output().dimacs());
+        let mut solver_qdo = solver.qdimacs_output();
+        if let Some(partial_qdo) = partial_qdo {
+            solver_qdo.num_clauses = partial_qdo.num_clauses;
+            solver_qdo.num_variables = solver_qdo.num_variables;
+            if partial_qdo.result == solver_qdo.result {
+                solver_qdo.extend_assignments(partial_qdo);
+            }
+        }
+        println!("{}", solver_qdo.dimacs());
     }
 
     Ok(result)

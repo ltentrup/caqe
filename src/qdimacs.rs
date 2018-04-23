@@ -239,8 +239,15 @@ impl PartialQDIMACSCertificate {
     }
 
     pub fn add_assignment(&mut self, assignment: Literal) {
+        assert!(self.assignments.binary_search(&assignment).is_err());
         self.assignments.push(assignment);
         self.assignments.sort();
+    }
+
+    pub fn extend_assignments(&mut self, qdo: PartialQDIMACSCertificate) {
+        for assignment in qdo.assignments {
+            self.add_assignment(assignment);
+        }
     }
 }
 

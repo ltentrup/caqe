@@ -19,8 +19,8 @@ impl Literal {
     /// # Examples
     ///
     /// ```
-    /// assert!(qbf::Literal::new(0, true).signed());
-    /// assert!(!qbf::Literal::new(0, false).signed());
+    /// assert!(caqe::Literal::new(0, true).signed());
+    /// assert!(!caqe::Literal::new(0, false).signed());
     /// ```
     pub fn signed(&self) -> bool {
         (self.x & 1) != 0
