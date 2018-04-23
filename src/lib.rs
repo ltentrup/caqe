@@ -4,14 +4,17 @@ extern crate log;
 extern crate simplelog;
 #[macro_use]
 extern crate text_io;
+extern crate clap;
 extern crate tempfile;
 
 use simplelog::*;
 
 use tempfile::tempfile;
+use clap::{App, Arg, SubCommand};
 
 // Rust stdlib
 use std::error::Error;
+use std::str::FromStr;
 
 // modules
 mod literal;
@@ -55,43 +58,111 @@ pub struct Config {
 
 impl Config {
     pub fn new(args: &[String]) -> Result<Config, &'static str> {
-        if args.len() < 2 {
-            return Err("expect file name");
-        }
-
-        let mut verbosity = LevelFilter::Warn;
-        let mut filename = None;
         let mut options = CaqeSolverOptions::new();
-        let mut qdimacs_output = false;
-        let mut preprocessor = None;
-        for arg in args {
-            match arg.as_ref() {
-                "-v" => verbosity = LevelFilter::Trace,
-                "--sur" => options.strong_unsat_refinement = !options.strong_unsat_refinement,
-                "--er" => options.expansion_refinement = !options.expansion_refinement,
-                "--rls" => {
-                    options.refinement_literal_subsumption = !options.refinement_literal_subsumption
-                }
-                "--alo" => {
-                    options.abstraction_literal_optimization =
-                        !options.abstraction_literal_optimization
-                }
-                "--qdo" => qdimacs_output = true,
-                "--bloqqer" => preprocessor = Some(QBFPreprocessor::Bloqqer),
-                _ => {
-                    if arg.starts_with("-") {
-                        return Err("unknown argument");
-                    } else {
-                        filename = Some(arg.clone());
-                    }
-                }
-            }
-        }
 
-        let filename = match filename {
-            None => return Err("no filename given"),
-            Some(f) => f,
+        let default = |val| match val {
+            true => "1",
+            false => "0",
         };
+
+        let matches = App::new("CAQE")
+            .version(env!("CARGO_PKG_VERSION"))
+            .author(env!("CARGO_PKG_AUTHORS"))
+            .about("CAQE is a solver for quantified Boolean formulas given in QDIMACS file format")
+            .arg(
+                Arg::with_name("INPUT")
+                    .help("Sets the input file to use")
+                    .required(true)
+                    .index(1),
+            )
+            .arg(
+                Arg::with_name("preprocessor")
+                    .help("Sets the preprocessor to use")
+                    .long("--preprocessor")
+                    .takes_value(true)
+                    .possible_values(QBFPreprocessor::values()),
+            )
+            .arg(
+                Arg::with_name("v")
+                    .short("v")
+                    .multiple(true)
+                    .help("Sets the level of verbosity"),
+            )
+            .arg(
+                Arg::with_name("qdimacs-output")
+                    .long("--qdo")
+                    .help("Prints QDIMACS output (partial assignment) after solving"),
+            )
+            .arg(
+                Arg::with_name("strong-unsat-refinement")
+                    .long("--strong-unsat-refinement")
+                    .default_value(default(options.strong_unsat_refinement))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .help("Controls whether strong unsat refinement should be used"),
+            )
+            .arg(
+                Arg::with_name("expansion-refinement")
+                    .long("--expansion-refinement")
+                    .default_value(default(options.expansion_refinement))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .help("Controls whether expansion refinement should be used"),
+            )
+            .arg(
+                Arg::with_name("refinement-literal-subsumption")
+                    .long("--refinement-literal-subsumption")
+                    .default_value(default(options.refinement_literal_subsumption))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .help(
+                        "Controls whether refinements are minimized according to subsumption rules",
+                    ),
+            )
+            .arg(
+                Arg::with_name("abstraction-literal-optimization")
+                    .long("--abstraction-literal-optimization")
+                    .default_value(default(options.abstraction_literal_optimization))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .help(
+                        "Controls whether abstractions should be optimized using subsumption rules",
+                    ),
+            )
+            .get_matches_from(args);
+
+        // file name is mandatory
+        let filename = String::from(matches.value_of("INPUT").unwrap());
+
+        let verbosity = match matches.occurrences_of("v") {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            3 | _ => LevelFilter::Trace,
+        };
+
+        let qdimacs_output = matches.is_present("qdimacs-output");
+
+        let preprocessor = match matches.value_of("preprocessor") {
+            None => None,
+            Some(ref s) => Some(QBFPreprocessor::from_str(s).unwrap()),
+        };
+
+        options.strong_unsat_refinement =
+            matches.value_of("strong-unsat-refinement").unwrap() == "1";
+
+        options.expansion_refinement = matches.value_of("expansion-refinement").unwrap() == "1";
+
+        options.refinement_literal_subsumption =
+            matches.value_of("refinement-literal-subsumption").unwrap() == "1";
+
+        options.abstraction_literal_optimization = matches
+            .value_of("abstraction-literal-optimization")
+            .unwrap() == "1";
 
         Ok(Config {
             filename,

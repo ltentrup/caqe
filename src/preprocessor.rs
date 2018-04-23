@@ -4,11 +4,29 @@ use std::fs::File;
 use std::io::SeekFrom;
 use std::io::prelude::*;
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 
 #[derive(Debug)]
 pub enum QBFPreprocessor {
     Bloqqer,
     HQSPre,
+}
+
+impl FromStr for QBFPreprocessor {
+    type Err = Box<Error>;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "bloqqer" => Ok(QBFPreprocessor::Bloqqer),
+            "hqspre" => Ok(QBFPreprocessor::HQSPre),
+            _ => panic!("unknown value {} for QBFPreprocessor", s),
+        }
+    }
+}
+
+impl QBFPreprocessor {
+    pub fn values() -> &'static [&'static str] {
+        &["bloqqer", "hqspre"]
+    }
 }
 
 pub fn preprocess(
