@@ -204,7 +204,18 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     if matrix.conflict() {
         if config.qdimacs_output {
             if let Some(partial_qdo) = partial_qdo {
-                println!("{}", partial_qdo.dimacs());
+                if partial_qdo.result == SolverResult::Unsatisfiable {
+                    println!("{}", partial_qdo.dimacs());
+                } else {
+                    println!(
+                        "{}",
+                        qdimacs::PartialQDIMACSCertificate::new(
+                            SolverResult::Unsatisfiable,
+                            partial_qdo.num_variables,
+                            partial_qdo.num_clauses
+                        ).dimacs()
+                    );
+                }
             }
         }
         return Ok(SolverResult::Unsatisfiable);
