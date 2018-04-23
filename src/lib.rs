@@ -10,7 +10,7 @@ extern crate tempfile;
 use simplelog::*;
 
 use tempfile::tempfile;
-use clap::{App, Arg, SubCommand};
+use clap::{App, Arg};
 
 // Rust stdlib
 use std::error::Error;

@@ -267,7 +267,6 @@ impl FromStr for PartialQDIMACSCertificate {
             let result: i32;
             let num_variables: usize;
             let num_clauses: usize;
-            let i: i32;
             scan!(line.bytes() => "s cnf {} {} {}", result, num_variables, num_clauses);
             let result = if result == 0 {
                 SolverResult::Unsatisfiable

@@ -1593,7 +1593,10 @@ e 2 4 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 5\n");
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 5 5\nV -2 0\nV 3 0\n"
+        );
     }
 
     #[test]
@@ -1697,7 +1700,10 @@ e 1 3 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\nV 2 0\n");
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 4 4\nV 1 0\nV 2 0\n"
+        );
     }
 
     #[test]

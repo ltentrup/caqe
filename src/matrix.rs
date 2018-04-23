@@ -325,7 +325,7 @@ impl Matrix<HierarchicalPrefix> {
                 Quantifier::Existential => {
                     Self::union_over_connecting_sets(&clauses, &scope, &mut partitions, &variables);
                     prev_scopes =
-                        Self::partition_scopes(scope, &mut partitions, &variables, prev_scopes);
+                        Self::partition_scopes(scope, &mut partitions, &mut variables, prev_scopes);
                 }
                 Quantifier::Universal => {
                     prev_scopes = Self::split_universal(
@@ -426,7 +426,7 @@ impl Matrix<HierarchicalPrefix> {
     fn partition_scopes(
         scope: Scope,
         partitions: &mut Vec<Variable>,
-        variables: &Vec<VariableInfo>,
+        variables: &mut Vec<VariableInfo>,
         next: Vec<Box<ScopeNode>>,
     ) -> Vec<Box<ScopeNode>> {
         let mut scopes = Vec::new();
@@ -438,15 +438,18 @@ impl Matrix<HierarchicalPrefix> {
 
         for i in 1..partitions.len() {
             let variable = i as Variable;
-            let info = &variables[i];
-            if !info.is_bound() {
-                continue;
-            }
-            if info.is_universal() {
-                continue;
-            }
-            if info.scope < scope.id {
-                continue;
+            {
+                // we later access variables mutably
+                let info = &variables[i];
+                if !info.is_bound() {
+                    continue;
+                }
+                if info.is_universal() {
+                    continue;
+                }
+                if info.scope < scope.id {
+                    continue;
+                }
             }
 
             let partition = partitions[i];
@@ -468,8 +471,19 @@ impl Matrix<HierarchicalPrefix> {
                 while j != remaining_next.len() {
                     if partitions[remaining_next[j].group as usize] == partition {
                         // scope belongs to this branch of tree
-                        let next = remaining_next.remove(j);
-                        node.next.push(next);
+                        let mut next = remaining_next.remove(j);
+                        if next.scope.variables.len() == 0 {
+                            // the universal scope is empty, thus we can merge existential scope afterwards into currents scope
+                            assert!(next.next.len() == 1);
+                            let existential = next.next.pop().unwrap();
+                            for &variable in existential.scope.variables.iter() {
+                                node.scope.variables.push(variable);
+                                variables[variable as usize].scope = node.scope.id;
+                            }
+                            node.next.extend(existential.next);
+                        } else {
+                            node.next.push(next);
+                        }
                     } else {
                         j += 1;
                     }
@@ -497,7 +511,7 @@ impl Matrix<HierarchicalPrefix> {
     /// Makes a copy of `scope` for every element in `next`.
     /// Renames universal variables if needed
     fn split_universal(
-        scope: Scope,
+        mut scope: Scope,
         partitions: &Vec<Variable>,
         next: Vec<Box<ScopeNode>>,
         variables: &mut Vec<VariableInfo>,
@@ -517,28 +531,22 @@ impl Matrix<HierarchicalPrefix> {
             return vec![node];
         }
 
+        scope.variables.sort();
+
         // more than one successor, have to rename variables
         debug_assert!(next.len() > 1);
         let mut scopes = Vec::new();
         for next_scope in next {
             let mut new_scope = Scope::new(scope.id);
 
+            // mapping from old variables to new copy
+            // is modified lazyly below
             let mut renaming = HashMap::new();
-            for var in scope.variables.iter() {
-                // make a copy if var
-                variables.push(VariableInfo {
-                    scope: scope.id,
-                    is_universal: true,
-                    copy_of: *var,
-                });
-                let new_var = (variables.len() - 1) as Variable;
-                renaming.insert(var, new_var);
-                new_scope.variables.push(new_var);
-            }
 
             // update clauses and occurrence list
             for (i, ref mut clause) in clauses.iter_mut().enumerate() {
                 let clause_id = i as ClauseId;
+                // check if clause contains variables of inner group
                 let needs_renaming = clause.iter().fold(false, |val, &literal| {
                     let info = &variables[literal.variable() as usize];
                     if info.is_universal() {
@@ -555,10 +563,23 @@ impl Matrix<HierarchicalPrefix> {
                 });
                 if needs_renaming {
                     for ref mut literal in clause.iter_mut() {
-                        let &new_var = match renaming.get(&literal.variable()) {
-                            None => continue,
-                            Some(new) => new,
-                        };
+                        if scope.variables.binary_search(&literal.variable()).is_err() {
+                            // not a variable of current scope
+                            continue;
+                        }
+                        let var = literal.variable();
+                        if !renaming.contains_key(&var) {
+                            variables.push(VariableInfo {
+                                scope: scope.id,
+                                is_universal: true,
+                                copy_of: var,
+                            });
+                            let new_var = (variables.len() - 1) as Variable;
+                            new_scope.variables.push(new_var);
+                            renaming.insert(var, new_var);
+                        }
+                        let new_var = *renaming.get(&var).unwrap();
+
                         {
                             let entry = occurrences
                                 .entry(**literal)
@@ -575,6 +596,8 @@ impl Matrix<HierarchicalPrefix> {
                     }
                 }
             }
+            // it can happen that we build universal scopes without variables
+            // this gets cleaned-up in the outer existential quantifier
 
             let mut node = Box::new(ScopeNode {
                 scope: new_scope,
