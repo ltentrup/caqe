@@ -667,7 +667,7 @@ e 7 8 9 10 0
 -10 6 -8 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         assert!(matrix.prefix.roots.len() == 2);
     }
 }

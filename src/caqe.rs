@@ -1420,7 +1420,7 @@ mod tests {
     fn test_true() {
         let instance = "p cnf 0 0";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 0 0\n");
@@ -1438,7 +1438,7 @@ e 3 4 0
 -1 2 4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\n");
@@ -1456,7 +1456,7 @@ e 3 4 0
 1 2 4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(
@@ -1499,7 +1499,7 @@ e 4 5 6 7 8 9 10 11 0
 11 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 11 24\n");
@@ -1519,7 +1519,7 @@ e 2 0
 -2 -1 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
@@ -1534,7 +1534,7 @@ p cnf 1 2
 1 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 1 2\n");
@@ -1551,7 +1551,7 @@ e 3 0
 -3 -1 2 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 2\n");
@@ -1571,7 +1571,7 @@ e 3 0
 3 -4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 2 0\n");
@@ -1593,13 +1593,10 @@ e 2 4 0
 2 3 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(
-            solver.qdimacs_output().dimacs(),
-            "s cnf 1 5 5\nV -2 0\nV 3 0\n"
-        );
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 5\n");
     }
 
     #[test]
@@ -1616,7 +1613,7 @@ e 2 0
 -1 -4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
@@ -1636,7 +1633,7 @@ e 2 0
 3 2 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 4\nV 3 0\n");
@@ -1656,7 +1653,7 @@ e 1 0
 3 1 -4 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
@@ -1680,7 +1677,7 @@ e 2 3 0
 5 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 5 5\n");
@@ -1700,13 +1697,10 @@ e 1 3 0
 -3 2 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(
-            solver.qdimacs_output().dimacs(),
-            "s cnf 1 4 4\nV 1 0\nV 2 0\n"
-        );
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\nV 2 0\n");
     }
 
     #[test]
@@ -1723,7 +1717,7 @@ e 1 3 0
 1 2 0
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix);
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 4\n");
