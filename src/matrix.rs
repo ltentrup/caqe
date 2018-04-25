@@ -304,7 +304,10 @@ impl Prefix for TreePrefix {
 }
 
 impl Matrix<HierarchicalPrefix> {
-    pub fn unprenex_by_miniscoping(matrix: Self) -> Matrix<TreePrefix> {
+    pub fn unprenex_by_miniscoping(
+        matrix: Self,
+        collapse_empty_scopes: bool,
+    ) -> Matrix<TreePrefix> {
         let prefix = matrix.prefix;
         let mut variables = prefix.variables;
         let mut scopes = prefix.scopes;
@@ -324,8 +327,13 @@ impl Matrix<HierarchicalPrefix> {
             match quantifier {
                 Quantifier::Existential => {
                     Self::union_over_connecting_sets(&clauses, &scope, &mut partitions, &variables);
-                    prev_scopes =
-                        Self::partition_scopes(scope, &mut partitions, &mut variables, prev_scopes);
+                    prev_scopes = Self::partition_scopes(
+                        scope,
+                        &mut partitions,
+                        &mut variables,
+                        prev_scopes,
+                        collapse_empty_scopes,
+                    );
                 }
                 Quantifier::Universal => {
                     prev_scopes = Self::split_universal(
@@ -428,6 +436,7 @@ impl Matrix<HierarchicalPrefix> {
         partitions: &mut Vec<Variable>,
         variables: &mut Vec<VariableInfo>,
         next: Vec<Box<ScopeNode>>,
+        collapse_empty_scopes: bool,
     ) -> Vec<Box<ScopeNode>> {
         let mut scopes = Vec::new();
 
@@ -472,7 +481,7 @@ impl Matrix<HierarchicalPrefix> {
                     if partitions[remaining_next[j].group as usize] == partition {
                         // scope belongs to this branch of tree
                         let mut next = remaining_next.remove(j);
-                        if next.scope.variables.len() == 0 {
+                        if collapse_empty_scopes && next.scope.variables.len() == 0 {
                             // the universal scope is empty, thus we can merge existential scope afterwards into currents scope
                             assert!(next.next.len() == 1);
                             let existential = next.next.pop().unwrap();

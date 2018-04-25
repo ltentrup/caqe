@@ -131,6 +131,18 @@ impl Config {
                     .help(
                         "Controls whether abstractions should be optimized using subsumption rules",
                     ),
+            )
+            .arg(
+                Arg::with_name("collapse-empty-scopes")
+                    .long("--collapse-empty-scopes")
+                    .default_value(default(options.collapse_empty_scopes))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
+                    .help(
+                        "Controls whether empty universal scopes are collapsed during mini-scoping",
+                    ),
             );
 
         #[cfg(debug_assertions)]
@@ -182,6 +194,8 @@ impl Config {
         options.abstraction_literal_optimization = matches
             .value_of("abstraction-literal-optimization")
             .unwrap() == "1";
+
+        options.collapse_empty_scopes = matches.value_of("collapse-empty-scopes").unwrap() == "1";
 
         Ok(Config {
             filename,
@@ -241,7 +255,7 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
         return Ok(SolverResult::Unsatisfiable);
     }
 
-    let matrix = Matrix::unprenex_by_miniscoping(matrix);
+    let matrix = Matrix::unprenex_by_miniscoping(matrix, config.options.collapse_empty_scopes);
 
     #[cfg(feature = "statistics")]
     let mut timer = statistics.start(SolverPhases::Initializing);

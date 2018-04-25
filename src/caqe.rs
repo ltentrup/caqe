@@ -139,6 +139,8 @@ pub struct CaqeSolverOptions {
     pub expansion_refinement: bool,
     pub refinement_literal_subsumption: bool,
     pub abstraction_literal_optimization: bool,
+    /// flag whether to collpase empty (universal) scopes duging mini-scoping
+    pub collapse_empty_scopes: bool,
 }
 
 impl CaqeSolverOptions {
@@ -148,6 +150,7 @@ impl CaqeSolverOptions {
             expansion_refinement: true,
             refinement_literal_subsumption: false,
             abstraction_literal_optimization: true,
+            collapse_empty_scopes: false,
         }
     }
 }
@@ -1275,7 +1278,7 @@ impl ScopeRecursiveSolver {
 
         loop {
             debug!("");
-            debug!("solve level {}", current.scope_id);
+            info!("solve level {}", current.scope_id);
 
             #[cfg(feature = "statistics")]
             let mut timer = current
