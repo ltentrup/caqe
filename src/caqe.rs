@@ -204,7 +204,7 @@ struct ScopeSolverData {
 
     /// stores for clause-ids whether there is astrong-unsat optimized lit
     strong_unsat_cache: HashMap<ClauseId, (Lit, bool)>,
-    conjunction: Vec<Lit>,
+    conjunction: Vec<ClauseId>,
 
     /// expansion related data structures
     expansion_renaming: HashMap<Variable, Lit>,
@@ -225,6 +225,11 @@ impl ScopeSolverData {
     ) -> ScopeSolverData {
         let mut s = cryptominisat::Solver::new();
         s.set_num_threads(1);
+        // assign all variables initially to zero, need that for expansion refinement
+        let mut assignments = HashMap::new();
+        for &variable in scope.variables.iter() {
+            assignments.insert(variable, false);
+        }
         ScopeSolverData {
             sat: s,
             variables: scope.variables.clone(),
@@ -232,7 +237,7 @@ impl ScopeSolverData {
             t_literals: Vec::with_capacity(matrix.clauses.len()),
             b_literals: Vec::with_capacity(matrix.clauses.len()),
             reverse_t_literals: HashMap::new(),
-            assignments: HashMap::new(),
+            assignments: assignments,
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
             relevant_clauses: relevant_clauses,
@@ -289,6 +294,11 @@ impl ScopeSolverData {
 
             let mut outer_equal_to = None;
             let mut inner_equal_to = None;
+
+            if min_scope > self.scope_id {
+                // remove the clause from relevant clauses as current scope (nor any outer) influence it
+                self.relevant_clauses.set(clause_id as usize, false);
+            }
 
             if !contains_variables {
                 debug_assert!(!need_t_lit);
@@ -865,13 +875,7 @@ impl ScopeSolverData {
             // the occurrence list to iterate over clauses
             let clause = &matrix.clauses[i];
             self.conjunction.clear();
-            self.conjunction.push(Self::add_b_lit_and_adapt_abstraction(
-                clause_id,
-                &mut self.sat,
-                &self.b_literals,
-                &mut self.t_literals,
-                &mut self.reverse_t_literals,
-            ));
+            self.conjunction.push(clause_id);
             for &literal in clause.iter() {
                 let info = matrix.prefix.get(literal.variable());
 
@@ -885,17 +889,19 @@ impl ScopeSolverData {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     // check if clause is subset w.r.t. inner variables
                     if clause_id != other_clause_id
-                        && other_clause.is_subset_wrt_predicate(clause, |l| {
+                        && self.relevant_clauses[other_clause_id as usize]
+                    {
+                        let pos = match self.conjunction.binary_search(&other_clause_id) {
+                            Ok(_) => continue, // already contained, skip
+                            Err(pos) => pos,   // position to insert
+                        };
+
+                        if other_clause.is_subset_wrt_predicate(clause, |l| {
                             matrix.prefix.get(l.variable()).scope > scope_id
                         }) {
-                        debug_assert!(!self.max_clauses[other_clause_id as usize]);
-                        self.conjunction.push(Self::add_b_lit_and_adapt_abstraction(
-                            other_clause_id,
-                            &mut self.sat,
-                            &self.b_literals,
-                            &mut self.t_literals,
-                            &mut self.reverse_t_literals,
-                        ));
+                            debug_assert!(!self.max_clauses[other_clause_id as usize]);
+                            self.conjunction.insert(pos, other_clause_id);
+                        }
                     }
                 }
             }
@@ -903,7 +909,14 @@ impl ScopeSolverData {
             debug_assert!(self.conjunction.len() > 0);
             if self.conjunction.len() == 1 {
                 // do not need auxilliary variable
-                let sat_lit = self.conjunction[0];
+                let clause_id = self.conjunction[0];
+                let sat_lit = Self::add_b_lit_and_adapt_abstraction(
+                    clause_id,
+                    &mut self.sat,
+                    &self.b_literals,
+                    &mut self.t_literals,
+                    &mut self.reverse_t_literals,
+                );
                 blocking_clause.push(sat_lit);
                 self.strong_unsat_cache.insert(clause_id, (sat_lit, false));
             } else {
@@ -912,7 +925,14 @@ impl ScopeSolverData {
                 blocking_clause.push(aux_var);
                 self.strong_unsat_cache.insert(clause_id, (aux_var, true));
 
-                for &sat_lit in self.conjunction.iter() {
+                for &other_clause_id in self.conjunction.iter() {
+                    let sat_lit = Self::add_b_lit_and_adapt_abstraction(
+                        other_clause_id,
+                        &mut self.sat,
+                        &self.b_literals,
+                        &mut self.t_literals,
+                        &mut self.reverse_t_literals,
+                    );
                     self.sat.add_clause(&[!aux_var, sat_lit]);
                 }
                 applied = true;
@@ -992,21 +1012,20 @@ impl ScopeSolverData {
         if self.is_universal {
             return false;
         }
+        //return true;
         debug_assert!(next.next.len() == 1);
         return next.next[0].as_ref().next.is_empty();
     }
 
     fn expansion_refinement(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
+        let universal_assignment = next.get_universal_assignmemnt(HashMap::new());
         let (data, next) = next.split();
         let next = &next[0];
 
-        // add a new sat variable for every variable in inner scope
-        for &variable in next.data.variables.iter() {
-            self.expansion_renaming.insert(variable, self.sat.new_var());
-        }
+        // add a new sat variable for every existential variable in inner scope (updated lazily)
+        self.expansion_renaming.clear();
 
-        debug_assert!(next.next.is_empty());
-
+        let sat = &mut self.sat;
         let sat_clause = &mut self.sat_solver_assumptions;
 
         // create the refinement clauses
@@ -1016,7 +1035,7 @@ impl ScopeSolverData {
             }
 
             // check if the universal assignment satisfies the clause
-            if clause.is_satisfied_by_assignment(&data.assignments) {
+            if clause.is_satisfied_by_assignment(&universal_assignment) {
                 continue;
             }
 
@@ -1025,37 +1044,50 @@ impl ScopeSolverData {
             // add the clause to the abstraction
             // variables bound by inner existential quantifier have to be renamed
             let mut contains_variables = false;
-            let mut need_b_lit = false;
+            let mut contains_outer_variables = false;
             for &literal in clause.iter() {
                 let info = matrix.prefix.get(literal.variable());
                 if info.scope <= data.scope_id {
-                    if info.scope > self.scope_id {
-                        need_b_lit = true;
+                    if info.scope < self.scope_id {
+                        contains_outer_variables = true;
                     }
                     continue;
                 }
-                debug_assert!(info.scope == next.data.scope_id);
+                if info.scope % 2 == 1 {
+                    debug_assert!(universal_assignment.contains_key(&literal.variable()));
+                    continue;
+                }
+                debug_assert!(info.scope > self.scope_id);
                 contains_variables = true;
 
-                let mut sat_var = self.expansion_renaming[&literal.variable()];
+                let entry = self.expansion_renaming
+                    .entry(literal.variable())
+                    .or_insert_with(|| sat.new_var());
+                let mut sat_var = *entry;
                 if literal.signed() {
                     sat_var = !sat_var;
                 }
                 sat_clause.push(sat_var);
             }
-            if need_b_lit || contains_variables {
-                let clause_id = i as ClauseId;
+            let clause_id = i as ClauseId;
+            if self.b_literals
+                .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                .is_ok() || contains_variables && contains_outer_variables
+            {
                 let sat_lit = Self::add_b_lit_and_adapt_abstraction(
                     clause_id,
-                    &mut self.sat,
+                    sat,
                     &self.b_literals,
                     &mut self.t_literals,
                     &mut self.reverse_t_literals,
                 );
                 sat_clause.push(sat_lit);
             }
+            if !contains_variables {
+                continue;
+            }
             if !sat_clause.is_empty() {
-                self.sat.add_clause(sat_clause.as_ref());
+                sat.add_clause(sat_clause.as_ref());
             }
         }
     }
@@ -1356,6 +1388,19 @@ impl ScopeRecursiveSolver {
 
     fn split(&mut self) -> (&mut ScopeSolverData, &mut Vec<Box<ScopeRecursiveSolver>>) {
         (&mut self.data, &mut self.next)
+    }
+
+    fn get_universal_assignmemnt(
+        &self,
+        mut assignment: HashMap<Variable, bool>,
+    ) -> HashMap<Variable, bool> {
+        if self.data.is_universal {
+            assignment.extend(self.data.assignments.iter());
+        }
+        for ref next in self.next.iter() {
+            assignment = next.get_universal_assignmemnt(assignment);
+        }
+        assignment
     }
 }
 
@@ -1721,5 +1766,52 @@ e 1 3 0
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 4\n");
+    }
+
+    #[test]
+    fn test_wrong_expansion_refinement() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+c The first conflict happens at level 2, then expansion refinement did not have universal assignments for level 3
+p cnf 7 6
+e 7 0
+a 4 0
+e 2 6 0
+a 5 0
+e 1 3 0
+-3 5 0
+3 -5 0
+2 0
+6 4 0
+-2 7 0
+-3 -2 -1 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 7 6\nV 7 0\n");
+    }
+
+    #[test]
+    fn test_strong_unsat_failure_2() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 5 4
+e 1 0
+a 3 0
+e 4 0
+a 5 0
+e 2 0
+-2 0
+-2 1 -4 3 -5 0
+4 0
+-4 2 1 3 0
+";
+        let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 4\nV 1 0\n");
     }
 }
