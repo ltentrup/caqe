@@ -5,14 +5,13 @@ use std::collections::HashMap;
 pub type ClauseId = u32;
 
 pub trait Prefix {
+    type V: VariableInfo;
+
     fn new(num_variables: usize) -> Self;
 
-    fn num_variables(&self) -> usize;
-
-    fn orig_num_variables(&self) -> usize;
-
-    fn get(&self, variable: Variable) -> &VariableInfo;
+    fn variables(&self) -> &VariableStore<Self::V>;
 }
+
 
 #[derive(Debug)]
 pub struct Matrix<P: Prefix> {
@@ -62,23 +61,46 @@ impl<P: Prefix> Dimacs for Matrix<P> {
         let mut dimacs = String::new();
         dimacs.push_str(&format!(
             "p cnf {} {}",
-            self.prefix.num_variables(),
+            self.prefix.variables().num_variables(),
             self.clauses.len()
         ));
         dimacs
     }
 }
 
+pub trait VariableInfo: std::clone::Clone {
+    fn new() -> Self;
+    fn unbounded<'a>() -> &'a Self;
+}
+
 pub type ScopeId = i32;
 
 #[derive(Debug, Clone)]
-pub struct VariableInfo {
+pub struct QVariableInfo {
     pub scope: ScopeId,
     pub is_universal: bool,
     pub copy_of: Variable,
 }
 
-impl VariableInfo {
+impl VariableInfo for QVariableInfo {
+    fn new() -> QVariableInfo {
+        QVariableInfo {
+            scope: -1,
+            is_universal: false,
+            copy_of: 0,
+        }
+    }
+
+    fn unbounded<'a>() -> &'a Self {
+        &QVariableInfo {
+            scope: -1,
+            is_universal: false,
+            copy_of: 0,
+        }
+    }
+}
+
+impl QVariableInfo {
     pub fn is_bound(&self) -> bool {
         self.scope >= 0
     }
@@ -115,8 +137,58 @@ impl Scope {
 }
 
 #[derive(Debug)]
+pub struct VariableStore<V: VariableInfo> {
+    variables: Vec<V>,
+    orig_num_variables: usize,
+}
+
+impl<V: VariableInfo> VariableStore<V> {
+    pub fn new(num_variables: usize) -> Self {
+        let mut variables = Vec::with_capacity(num_variables + 1);
+        variables.push(V::new());
+        VariableStore {
+            variables: variables,
+            orig_num_variables: num_variables,
+        }
+    }
+
+    pub fn get(&self, variable: Variable) -> &V {
+        let index = variable as usize;
+        if index >= self.variables.len() {
+            // variable was not bound prior
+            return V::unbounded();
+        }
+        &self.variables[index]
+    }
+
+    pub fn num_variables(&self) -> usize {
+        self.variables.len()
+    }
+
+    pub fn orig_num_variables(&self) -> usize {
+        self.orig_num_variables
+    }
+
+    /// Makes sure variable vector is large enough
+    fn import(&mut self, variable: Variable) {
+        if self.variables.len() <= variable as usize {
+            self.variables.resize(
+                (variable + 1) as usize,
+                V::new()
+            )
+        }
+    }
+
+    fn get_mut(&mut self, variable: Variable) -> &mut V {
+        let index = variable as usize;
+        assert!(index < self.variables.len());
+        &mut self.variables[index]
+    }
+}
+
+#[derive(Debug)]
 pub struct HierarchicalPrefix {
-    variables: Vec<VariableInfo>,
+    variables: VariableStore<QVariableInfo>,
     pub scopes: Vec<Scope>,
     orig_var_num: usize,
 }
@@ -160,15 +232,11 @@ impl From<ScopeId> for Quantifier {
 }
 
 impl Prefix for HierarchicalPrefix {
+    type V = QVariableInfo;
+
     fn new(num_variables: usize) -> Self {
-        let mut variables = Vec::with_capacity(num_variables + 1);
-        variables.push(VariableInfo {
-            scope: -1,
-            is_universal: false,
-            copy_of: 0,
-        });
         HierarchicalPrefix {
-            variables: variables,
+            variables: VariableStore::new(num_variables),
             scopes: vec![
                 Scope {
                     id: 0,
@@ -179,25 +247,8 @@ impl Prefix for HierarchicalPrefix {
         }
     }
 
-    fn num_variables(&self) -> usize {
-        self.variables.len() - 1
-    }
-
-    fn orig_num_variables(&self) -> usize {
-        self.orig_var_num
-    }
-
-    fn get(&self, variable: Variable) -> &VariableInfo {
-        let index = variable as usize;
-        if index >= self.variables.len() {
-            // variable was not bound prior
-            return &VariableInfo {
-                scope: -1,
-                is_universal: false,
-                copy_of: 0,
-            };
-        }
-        &self.variables[index]
+    fn variables(&self) -> &VariableStore<Self::V> {
+        &self.variables
     }
 }
 
@@ -219,32 +270,18 @@ impl HierarchicalPrefix {
         (self.scopes.len() - 1) as ScopeId
     }
 
-    /// Makes sure variable vector is large enough
-    fn import(&mut self, variable: Variable) {
-        if self.variables.len() <= variable as usize {
-            self.variables.resize(
-                (variable + 1) as usize,
-                VariableInfo {
-                    scope: -1,
-                    is_universal: false,
-                    copy_of: 0,
-                },
-            )
-        }
-    }
-
     /// Adds a variable to a given scope
     ///
     /// Panics, if variable is already bound or scope does not exist (use new_scope first)
     pub fn add_variable(&mut self, variable: Variable, scope_id: ScopeId) {
-        self.import(variable);
-        if self.variables[variable as usize].is_bound() {
+        self.variables.import(variable);
+        if self.variables.get(variable).is_bound() {
             panic!("variable cannot be bound twice");
         }
         if scope_id > self.last_scope() {
             panic!("scope does not exists");
         }
-        let variable_info = &mut self.variables[variable as usize];
+        let variable_info = self.variables.get_mut(variable);
         variable_info.scope = scope_id;
         variable_info.is_universal = scope_id % 2 == 1;
         let scope = &mut self.scopes[scope_id as usize];
@@ -254,7 +291,7 @@ impl HierarchicalPrefix {
 
 #[derive(Debug)]
 pub struct TreePrefix {
-    variables: Vec<VariableInfo>,
+    variables: VariableStore<QVariableInfo>,
     pub roots: Vec<Box<ScopeNode>>,
     orig_var_num: usize,
 }
@@ -267,39 +304,18 @@ pub struct ScopeNode {
 }
 
 impl Prefix for TreePrefix {
+    type V = QVariableInfo;
+
     fn new(num_variables: usize) -> Self {
-        let mut variables = Vec::with_capacity(num_variables + 1);
-        variables.push(VariableInfo {
-            scope: -1,
-            is_universal: false,
-            copy_of: 0,
-        });
         TreePrefix {
-            variables: variables,
+            variables: VariableStore::new(num_variables),
             roots: Vec::new(),
             orig_var_num: num_variables,
         }
     }
 
-    fn num_variables(&self) -> usize {
-        self.variables.len() - 1
-    }
-
-    fn orig_num_variables(&self) -> usize {
-        self.orig_var_num
-    }
-
-    fn get(&self, variable: Variable) -> &VariableInfo {
-        let index = variable as usize;
-        if index >= self.variables.len() {
-            // variable was not bound prior
-            return &VariableInfo {
-                scope: -1,
-                is_universal: false,
-                copy_of: 0,
-            };
-        }
-        &self.variables[index]
+    fn variables(&self) -> &VariableStore<Self::V> {
+        &self.variables
     }
 }
 
@@ -316,8 +332,8 @@ impl Matrix<HierarchicalPrefix> {
 
         // we store for each variable the variable it is connected to
         // we compact this by using the smallest variable as characteristic element
-        let mut partitions = Vec::with_capacity(variables.len());
-        for i in 0..variables.len() {
+        let mut partitions = Vec::with_capacity(variables.num_variables());
+        for i in 0..variables.num_variables() {
             partitions.push(i as Variable);
         }
 
@@ -368,13 +384,13 @@ impl Matrix<HierarchicalPrefix> {
         clauses: &Vec<Clause>,
         scope: &Scope,
         partitions: &mut Vec<Variable>,
-        variables: &Vec<VariableInfo>,
+        variables: &VariableStore<QVariableInfo>,
     ) {
         for clause in clauses.iter() {
             let mut connection = None;
             for &literal in clause.iter() {
-                let variable = literal.variable() as usize;
-                let info = &variables[variable as usize];
+                let variable = literal.variable();
+                let info = variables.get(variable);
                 if !info.is_bound() {
                     continue;
                 }
@@ -384,6 +400,8 @@ impl Matrix<HierarchicalPrefix> {
                 if info.scope < scope.id {
                     continue;
                 }
+
+                let variable = variable as usize;
 
                 // Check whether this variable connects some variable sets
                 loop {
@@ -434,7 +452,7 @@ impl Matrix<HierarchicalPrefix> {
     fn partition_scopes(
         scope: Scope,
         partitions: &mut Vec<Variable>,
-        variables: &mut Vec<VariableInfo>,
+        variables: &mut VariableStore<QVariableInfo>,
         next: Vec<Box<ScopeNode>>,
         collapse_empty_scopes: bool,
     ) -> Vec<Box<ScopeNode>> {
@@ -449,7 +467,7 @@ impl Matrix<HierarchicalPrefix> {
             let variable = i as Variable;
             {
                 // we later access variables mutably
-                let info = &variables[i];
+                let info = variables.get(variable);
                 if !info.is_bound() {
                     continue;
                 }
@@ -487,7 +505,7 @@ impl Matrix<HierarchicalPrefix> {
                             let existential = next.next.pop().unwrap();
                             for &variable in existential.scope.variables.iter() {
                                 node.scope.variables.push(variable);
-                                variables[variable as usize].scope = node.scope.id;
+                                variables.get_mut(variable).scope = node.scope.id;
                             }
                             node.next.extend(existential.next);
                         } else {
@@ -523,7 +541,7 @@ impl Matrix<HierarchicalPrefix> {
         mut scope: Scope,
         partitions: &Vec<Variable>,
         next: Vec<Box<ScopeNode>>,
-        variables: &mut Vec<VariableInfo>,
+        variables: &mut VariableStore<QVariableInfo>,
         clauses: &mut Vec<Clause>,
         occurrences: &mut HashMap<Literal, Vec<ClauseId>>,
     ) -> Vec<Box<ScopeNode>> {
@@ -557,7 +575,7 @@ impl Matrix<HierarchicalPrefix> {
                 let clause_id = i as ClauseId;
                 // check if clause contains variables of inner group
                 let needs_renaming = clause.iter().fold(false, |val, &literal| {
-                    let info = &variables[literal.variable() as usize];
+                    let info = variables.get(literal.variable());
                     if info.is_universal() {
                         return val;
                     }
@@ -578,12 +596,12 @@ impl Matrix<HierarchicalPrefix> {
                         }
                         let var = literal.variable();
                         if !renaming.contains_key(&var) {
-                            variables.push(VariableInfo {
+                            variables.variables.push(QVariableInfo {
                                 scope: scope.id,
                                 is_universal: true,
                                 copy_of: var,
                             });
-                            let new_var = (variables.len() - 1) as Variable;
+                            let new_var = (variables.num_variables() - 1) as Variable;
                             new_scope.variables.push(new_var);
                             renaming.insert(var, new_var);
                         }

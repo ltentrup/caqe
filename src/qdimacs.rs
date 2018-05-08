@@ -196,7 +196,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
                 let l = Literal::from(literal);
                 literals.push(l);
                 // check of variable is bounded
-                if !matrix.prefix.get(l.variable()).is_bound() {
+                if !matrix.prefix.variables().get(l.variable()).is_bound() {
                     matrix.prefix.add_variable(l.variable(), 0);
                 }
             }

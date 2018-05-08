@@ -46,9 +46,9 @@ impl Clause {
     pub fn reduce_universal_qbf(&mut self, prefix: &HierarchicalPrefix) {
         let max = self.literals
             .iter()
-            .filter(|l| !prefix.get(l.variable()).is_universal)
+            .filter(|l| !prefix.variables().get(l.variable()).is_universal)
             .fold(0, |max, l| {
-                let level = prefix.get(l.variable()).scope;
+                let level = prefix.variables().get(l.variable()).scope;
                 if level > max {
                     level
                 } else {
@@ -56,7 +56,7 @@ impl Clause {
                 }
             });
         self.literals.retain(|l| {
-            let info = prefix.get(l.variable());
+            let info = prefix.variables().get(l.variable());
             !info.is_universal || info.scope < max
         });
     }

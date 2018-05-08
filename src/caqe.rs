@@ -53,7 +53,7 @@ impl<'a> CaqeSolver<'a> {
     pub fn qdimacs_output(&self) -> qdimacs::PartialQDIMACSCertificate {
         let mut certificate = qdimacs::PartialQDIMACSCertificate::new(
             self.result,
-            self.matrix.prefix.orig_num_variables(),
+            self.matrix.prefix.variables().orig_num_variables(),
             self.matrix.orig_clause_num,
         );
 
@@ -99,7 +99,7 @@ impl<'a> CaqeSolver<'a> {
 
             for variable in scope.data.variables.iter() {
                 let value = scope.data.assignments[variable];
-                let info = &self.matrix.prefix.get(*variable);
+                let info = &self.matrix.prefix.variables().get(*variable);
                 let mut orig_variable;
                 if info.copy_of != 0 {
                     orig_variable = info.copy_of;
@@ -269,7 +269,7 @@ impl ScopeSolverData {
             let mut scopes = MinMax::new();
 
             for &literal in clause.iter() {
-                let var_scope = matrix.prefix.get(literal.variable()).scope;
+                let var_scope = matrix.prefix.variables().get(literal.variable()).scope;
                 scopes.update(var_scope);
                 if !self.variable_to_sat.contains_key(&literal.variable()) {
                     if var_scope < scope.id {
@@ -316,7 +316,7 @@ impl ScopeSolverData {
                     {
                         let other_clause = &matrix.clauses[other_clause_id as usize];
                         if clause.is_equal_wrt_predicate(other_clause, |l| {
-                            let info = matrix.prefix.get(l.variable());
+                            let info = matrix.prefix.variables().get(l.variable());
                             info.scope <= scope.id
                         }) {
                             debug_assert!(need_b_lit);
@@ -338,7 +338,7 @@ impl ScopeSolverData {
                     {
                         let other_clause = &matrix.clauses[other_clause_id as usize];
                         if clause.is_equal_wrt_predicate(other_clause, |l| {
-                            let info = matrix.prefix.get(l.variable());
+                            let info = matrix.prefix.variables().get(l.variable());
                             info.scope < scope.id
                         }) {
                             debug_assert!(need_t_lit);
@@ -359,7 +359,7 @@ impl ScopeSolverData {
                     {
                         let other_clause = &matrix.clauses[other_clause_id as usize];
                         if clause.is_equal_wrt_predicate(other_clause, |l| {
-                            let info = matrix.prefix.get(l.variable());
+                            let info = matrix.prefix.variables().get(l.variable());
                             info.scope > scope.id
                         }) {
                             debug_assert!(need_b_lit);
@@ -445,7 +445,7 @@ impl ScopeSolverData {
             let mut single_literal = None;
             let mut num_scope_variables = 0;
             for &literal in clause.iter() {
-                let var_scope = matrix.prefix.get(literal.variable()).scope;
+                let var_scope = matrix.prefix.variables().get(literal.variable()).scope;
                 scopes.update(var_scope);
                 if !self.variable_to_sat.contains_key(&literal.variable()) {
                     continue;
@@ -471,7 +471,7 @@ impl ScopeSolverData {
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     if clause.is_equal_wrt_predicate(other_clause, |l| {
-                        let info = matrix.prefix.get(l.variable());
+                        let info = matrix.prefix.variables().get(l.variable());
                         info.scope <= scope.id
                     }) {
                         let pos = self.b_literals
@@ -781,7 +781,7 @@ impl ScopeSolverData {
             let clause = &matrix.clauses[i];
             let mut min = ScopeId::max_value();
             for &literal in clause.iter() {
-                let otherscope = matrix.prefix.get(literal.variable()).scope;
+                let otherscope = matrix.prefix.variables().get(literal.variable()).scope;
                 if otherscope < min {
                     min = otherscope;
                 }
@@ -877,7 +877,7 @@ impl ScopeSolverData {
             self.conjunction.clear();
             self.conjunction.push(clause_id);
             for &literal in clause.iter() {
-                let info = matrix.prefix.get(literal.variable());
+                let info = matrix.prefix.variables().get(literal.variable());
 
                 // Consider only existential variables that have a lower level
                 if info.is_universal() || info.scope <= self.scope_id {
@@ -897,7 +897,7 @@ impl ScopeSolverData {
                         };
 
                         if other_clause.is_subset_wrt_predicate(clause, |l| {
-                            matrix.prefix.get(l.variable()).scope > scope_id
+                            matrix.prefix.variables().get(l.variable()).scope > scope_id
                         }) {
                             debug_assert!(!self.max_clauses[other_clause_id as usize]);
                             self.conjunction.insert(pos, other_clause_id);
@@ -965,7 +965,7 @@ impl ScopeSolverData {
             let clause_id = i as ClauseId;
             let clause = &matrix.clauses[i];
             for &literal in clause.iter() {
-                let info = matrix.prefix.get(literal.variable());
+                let info = matrix.prefix.variables().get(literal.variable());
                 if info.scope > self.scope_id {
                     // do not consider inner variables
                     continue;
@@ -985,7 +985,7 @@ impl ScopeSolverData {
                     // check is done with respect to current and outer variables
                     if self.is_universal {
                         if other_clause.is_subset_wrt_predicate(clause, |l| {
-                            let info = matrix.prefix.get(l.variable());
+                            let info = matrix.prefix.variables().get(l.variable());
                             info.scope <= current_scope
                         }) {
                             entry.set(clause_id as usize, false);
@@ -994,7 +994,7 @@ impl ScopeSolverData {
                         }
                     } else {
                         if clause.is_subset_wrt_predicate(other_clause, |l| {
-                            let info = matrix.prefix.get(l.variable());
+                            let info = matrix.prefix.variables().get(l.variable());
                             info.scope <= current_scope
                         }) {
                             entry.set(clause_id as usize, false);
@@ -1018,6 +1018,7 @@ impl ScopeSolverData {
     }
 
     fn expansion_refinement(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
+        trace!("expansion_refinement");
         let universal_assignment = next.get_universal_assignmemnt(HashMap::new());
         let (data, next) = next.split();
         let next = &next[0];
@@ -1046,7 +1047,7 @@ impl ScopeSolverData {
             let mut contains_variables = false;
             let mut contains_outer_variables = false;
             for &literal in clause.iter() {
-                let info = matrix.prefix.get(literal.variable());
+                let info = matrix.prefix.variables().get(literal.variable());
                 if info.scope <= data.scope_id {
                     if info.scope < self.scope_id {
                         contains_outer_variables = true;
