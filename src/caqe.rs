@@ -30,9 +30,7 @@ impl<'a> CaqeSolver<'a> {
         let mut abstractions = Vec::new();
         for scope_node in matrix.prefix.roots.iter() {
             abstractions.push(ScopeRecursiveSolver::init_abstraction_recursively(
-                matrix,
-                options,
-                scope_node,
+                matrix, options, scope_node,
             ));
         }
         debug_assert!(!matrix.conflict());
@@ -774,10 +772,7 @@ impl ScopeSolverData {
         }
 
         #[cfg(debug_assertions)]
-        for (i, val) in self.entry.iter().enumerate() {
-            if !val {
-                continue;
-            }
+        for (i, val) in self.entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
             let mut min = ScopeId::max_value();
             for &literal in clause.iter() {
@@ -792,6 +787,26 @@ impl ScopeSolverData {
 
     fn refine(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
         trace!("refine");
+
+        // check if influenced by current scope
+        /*let mut max = 0;
+        for (i, _) in self.entry.iter().enumerate().filter(|&(_, val)| val) {
+            let clause = &matrix.clauses[i];
+
+            for &literal in clause.iter() {
+                let otherscope = matrix.prefix.variables().get(literal.variable()).scope;
+                if otherscope > self.scope_id {
+                    continue;
+                }
+                if otherscope > max {
+                    max = otherscope;
+                }
+            }
+        }
+        if max < self.scope_id && self.scope_id > 1 {
+            println!("{} {}", max, self.scope_id);
+            panic!("a");
+        }*/
 
         if self.options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
             self.expansion_refinement(matrix, next);
