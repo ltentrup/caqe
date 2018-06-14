@@ -12,7 +12,6 @@ pub trait Prefix {
     fn variables(&self) -> &VariableStore<Self::V>;
 }
 
-
 #[derive(Debug)]
 pub struct Matrix<P: Prefix> {
     pub prefix: P,
@@ -172,10 +171,7 @@ impl<V: VariableInfo> VariableStore<V> {
     /// Makes sure variable vector is large enough
     fn import(&mut self, variable: Variable) {
         if self.variables.len() <= variable as usize {
-            self.variables.resize(
-                (variable + 1) as usize,
-                V::new()
-            )
+            self.variables.resize((variable + 1) as usize, V::new())
         }
     }
 
@@ -237,12 +233,10 @@ impl Prefix for HierarchicalPrefix {
     fn new(num_variables: usize) -> Self {
         HierarchicalPrefix {
             variables: VariableStore::new(num_variables),
-            scopes: vec![
-                Scope {
-                    id: 0,
-                    variables: Vec::new(),
-                },
-            ],
+            scopes: vec![Scope {
+                id: 0,
+                variables: Vec::new(),
+            }],
             orig_var_num: num_variables,
         }
     }
@@ -656,7 +650,7 @@ e 3 4 0
         let lit2 = Literal::new(2, false);
         let lit3 = Literal::new(3, false);
         let lit4 = Literal::new(4, false);
-        let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = parsing::qdimacs::parse(&instance).unwrap();
         assert_eq!(matrix.occurrences(lit1).len(), 2);
         assert_eq!(matrix.occurrences(-lit1).len(), 1);
         assert_eq!(matrix.occurrences(lit2).len(), 1);
@@ -684,7 +678,7 @@ e 7 8 9 10 0
 -10 -6 8 0
 -10 6 -8 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
+        let matrix = parsing::qdimacs::parse(&instance).unwrap();
         let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         assert!(matrix.prefix.roots.len() == 2);
     }

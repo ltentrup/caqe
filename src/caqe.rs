@@ -13,6 +13,8 @@ use std::fmt;
 #[cfg(feature = "statistics")]
 use super::utils::statistics::TimingStats;
 
+use super::parsing::qdimacs;
+
 type QMatrix = Matrix<TreePrefix>;
 
 pub struct CaqeSolver<'a> {

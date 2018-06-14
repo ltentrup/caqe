@@ -18,6 +18,11 @@ impl Clause {
         Self::new_normalized(l)
     }
 
+    /// Creates an empty clause
+    pub fn new_empty() -> Clause {
+        Clause { literals: Vec::new() }
+    }
+
     /// Creates a new clause from given literals
     ///
     /// Assumes literals to be already normalized, i.e.,

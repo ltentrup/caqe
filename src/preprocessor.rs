@@ -1,5 +1,7 @@
 use super::*;
 
+use super::parsing::qdimacs;
+
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;

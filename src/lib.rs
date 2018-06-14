@@ -39,8 +39,7 @@ use solver::*;
 mod preprocessor;
 use preprocessor::*;
 
-mod qdimacs;
-
+mod parsing;
 mod utils;
 
 use utils::statistics::TimingStats;
@@ -242,7 +241,7 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
                 } else {
                     println!(
                         "{}",
-                        qdimacs::PartialQDIMACSCertificate::new(
+                        parsing::qdimacs::PartialQDIMACSCertificate::new(
                             SolverResult::Unsatisfiable,
                             partial_qdo.num_variables,
                             partial_qdo.num_clauses
