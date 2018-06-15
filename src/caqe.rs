@@ -1598,6 +1598,7 @@ p cnf 1 2
 ";
         let matrix = qdimacs::parse(&instance).unwrap();
         let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        println!("{}", matrix.dimacs());
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 1 2\n");

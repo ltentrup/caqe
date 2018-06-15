@@ -20,7 +20,9 @@ impl Clause {
 
     /// Creates an empty clause
     pub fn new_empty() -> Clause {
-        Clause { literals: Vec::new() }
+        Clause {
+            literals: Vec::new(),
+        }
     }
 
     /// Creates a new clause from given literals
@@ -172,6 +174,17 @@ impl Clause {
     }
 }
 
+impl Dimacs for Clause {
+    fn dimacs(&self) -> String {
+        let mut dimacs = String::new();
+        for &literal in self.iter() {
+            dimacs.push_str(&format!("{} ", literal.dimacs()));
+        }
+        dimacs.push_str("0");
+        dimacs
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::mem;
@@ -264,4 +277,14 @@ mod tests {
         assignment.insert(0, false);
         assert!(!clause.is_satisfied_by_assignment(&assignment));
     }
+
+    #[test]
+    fn clause_dimacs() {
+        let lit1 = Literal::new(1, false);
+        let lit2 = Literal::new(2, false);
+        let lit3 = Literal::new(3, false);
+        let clause = Clause::new(vec![lit1, -lit2, lit3]);
+        assert_eq!(clause.dimacs(), "1 -2 3 0");
+    }
+
 }

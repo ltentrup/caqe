@@ -1,20 +1,22 @@
+use std::error::Error;
+use std::fmt;
 use std::str::Chars;
 
 use super::super::*;
 
 #[derive(Debug, Eq, PartialEq)]
-enum DimacsToken {
+pub enum DimacsToken {
     /// p cnf header
     Header,
 
     /// A Literal, i.e., a signed or unsigned integer
-    Literal(Literal),
+    Lit(Literal),
 
     /// A zero integer, used as an ending sign
     Zero,
 
     /// Quantification, i.e., `e`, `a`, and `d`
-    Quantifier(QuantifierKind),
+    Quant(QuantKind),
 
     /// End-of-line
     EOL,
@@ -26,22 +28,22 @@ enum DimacsToken {
 impl Into<Literal> for DimacsToken {
     fn into(self) -> Literal {
         match self {
-            DimacsToken::Literal(l) => l,
             DimacsToken::Zero => Literal::new(0, false),
+            DimacsToken::Lit(l) => l,
             _ => panic!("cannot convert {:?} into Literal", self),
         }
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum QuantifierKind {
+pub enum QuantKind {
     Exists,
     Forall,
     Henkin,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct SourcePos {
+pub struct SourcePos {
     line: usize,
     column: usize,
 }
@@ -61,24 +63,46 @@ impl SourcePos {
     }
 }
 
-struct DimacsTokenStream<'a> {
+impl fmt::Display for SourcePos {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.line, self.column)
+    }
+}
+
+pub struct DimacsTokenStream<'a> {
     chars: CharIterator<'a>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct ParseError {
-    msg: String,
-    pos: SourcePos,
+pub struct ParseError {
+    pub msg: String,
+    pub pos: SourcePos,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "parse error: {} at {}", self.description(), self.pos)
+    }
+}
+
+impl Error for ParseError {
+    fn description(&self) -> &str {
+        self.msg.as_str()
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        Some(self)
+    }
 }
 
 impl<'a> DimacsTokenStream<'a> {
-    fn new(content: &'a str) -> DimacsTokenStream<'a> {
+    pub fn new(content: &'a str) -> DimacsTokenStream<'a> {
         DimacsTokenStream {
             chars: CharIterator::new(content),
         }
     }
 
-    fn next(&mut self) -> Result<DimacsToken, ParseError> {
+    pub fn next(&mut self) -> Result<DimacsToken, ParseError> {
         while let Some(c) = self.chars.next() {
             match c {
                 'c' => {
@@ -90,9 +114,9 @@ impl<'a> DimacsTokenStream<'a> {
                     self.chars.expect_str(" cnf ")?;
                     return Ok(DimacsToken::Header);
                 }
-                'e' => return Ok(DimacsToken::Quantifier(QuantifierKind::Exists)),
-                'a' => return Ok(DimacsToken::Quantifier(QuantifierKind::Forall)),
-                'd' => return Ok(DimacsToken::Quantifier(QuantifierKind::Henkin)),
+                'e' => return Ok(DimacsToken::Quant(QuantKind::Exists)),
+                'a' => return Ok(DimacsToken::Quant(QuantKind::Forall)),
+                'd' => return Ok(DimacsToken::Quant(QuantKind::Henkin)),
                 '0' => return Ok(DimacsToken::Zero),
                 '-' => {
                     // negated literal
@@ -116,7 +140,7 @@ impl<'a> DimacsTokenStream<'a> {
         return Ok(DimacsToken::EOF);
     }
 
-    fn expect_next(&mut self, token: DimacsToken) -> Result<(), ParseError> {
+    pub fn expect_next(&mut self, token: DimacsToken) -> Result<(), ParseError> {
         self.next().and_then(|next| {
             if next != token {
                 Err(ParseError {
@@ -129,7 +153,7 @@ impl<'a> DimacsTokenStream<'a> {
         })
     }
 
-    fn pos(&self) -> SourcePos {
+    pub fn pos(&self) -> SourcePos {
         self.chars.pos
     }
 }
@@ -177,7 +201,7 @@ impl<'a> CharIterator<'a> {
             );
         }
         while let Some(c) = self.next() {
-            if c == ' ' {
+            if c.is_ascii_whitespace() {
                 break;
             }
             if let Some(digit) = c.to_digit(10) {
@@ -196,7 +220,7 @@ impl<'a> CharIterator<'a> {
             }
         }
         if let Some(value) = value {
-            return Ok(DimacsToken::Literal(Literal::new(value, signed)));
+            return Ok(DimacsToken::Lit(Literal::new(value, signed)));
         } else {
             assert!(first == '-');
             return Err(ParseError {
@@ -244,12 +268,79 @@ impl<'a> CharIterator<'a> {
     }
 }
 
-fn parse_matrix<P: Prefix>(
+/// Parses the `p cnf NUM NUM` header and returns number of variables and number of clauses
+pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), ParseError> {
+    // first non-EOL token has to be `p cnf ` header
+    loop {
+        match lexer.next()? {
+            DimacsToken::EOL => continue,
+            DimacsToken::Header => break,
+            token => {
+                return Err(ParseError {
+                    msg: format!("Expect `p cnf`, but found `{:?}`", token),
+                    pos: lexer.pos(),
+                });
+            }
+        }
+    }
+    //lexer.expect_next(DimacsToken::EOL);
+    let num_variables = match lexer.next()? {
+        DimacsToken::Zero => 0,
+        DimacsToken::Lit(l) => {
+            if l.signed() {
+                return Err(ParseError {
+                    msg: format!(
+                        "Malformed `p cnf` header, found negative value for number of variables"
+                    ),
+                    pos: lexer.pos(),
+                });
+            }
+            l.variable()
+        }
+        token => {
+            return Err(ParseError {
+                msg: format!(
+                    "Malformed `p cnf` header, expected number of variables, found `{:?}`",
+                    token
+                ),
+                pos: lexer.pos(),
+            })
+        }
+    };
+    let num_clauses = match lexer.next()? {
+        DimacsToken::Zero => 0,
+        DimacsToken::Lit(l) => {
+            if l.signed() {
+                return Err(ParseError {
+                    msg: format!(
+                        "Malformed `p cnf` header, found negative value for number of clauses"
+                    ),
+                    pos: lexer.pos(),
+                });
+            }
+            l.variable()
+        }
+        token => {
+            return Err(ParseError {
+                msg: format!(
+                    "Malformed `p cnf` header, expected number of clauses, found `{:?}`",
+                    token
+                ),
+                pos: lexer.pos(),
+            })
+        }
+    };
+    Ok((num_variables as usize, num_clauses as usize))
+}
+
+pub fn parse_matrix<P: Prefix>(
     lexer: &mut DimacsTokenStream,
     matrix: &mut Matrix<P>,
     mut current: DimacsToken,
+    num_clauses_expected: usize,
 ) -> Result<(), ParseError> {
     let mut literals: Vec<Literal> = Vec::new();
+    let mut num_clauses_read = 0;
 
     loop {
         match current {
@@ -258,8 +349,9 @@ fn parse_matrix<P: Prefix>(
                 lexer.expect_next(DimacsToken::EOL)?;
                 matrix.add(Clause::new(literals));
                 literals = Vec::new();
+                num_clauses_read += 1;
             }
-            DimacsToken::Literal(l) => {
+            DimacsToken::Lit(l) => {
                 literals.push(l);
             }
             DimacsToken::EOL => {
@@ -272,13 +364,21 @@ fn parse_matrix<P: Prefix>(
                         pos: lexer.pos(),
                     });
                 }
-                continue;
             }
             DimacsToken::EOF => {
                 if !literals.is_empty() {
                     // End-of-file during clause read
                     return Err(ParseError {
                         msg: format!("Unexpected end of input while reading clause"),
+                        pos: lexer.pos(),
+                    });
+                }
+                if num_clauses_expected != num_clauses_read {
+                    return Err(ParseError {
+                        msg: format!(
+                            "Expected {} clauses, but found {}",
+                            num_clauses_expected, num_clauses_read
+                        ),
                         pos: lexer.pos(),
                     });
                 }
@@ -318,22 +418,13 @@ mod tests {
         assert_eq!(stream.next(), Ok(DimacsToken::Zero));
         assert_eq!(stream.next(), Ok(DimacsToken::EOL));
 
-        assert_eq!(
-            stream.next(),
-            Ok(DimacsToken::Quantifier(QuantifierKind::Exists))
-        );
-        assert_eq!(
-            stream.next(),
-            Ok(DimacsToken::Quantifier(QuantifierKind::Forall))
-        );
-        assert_eq!(
-            stream.next(),
-            Ok(DimacsToken::Quantifier(QuantifierKind::Henkin))
-        );
+        assert_eq!(stream.next(), Ok(DimacsToken::Quant(QuantKind::Exists)));
+        assert_eq!(stream.next(), Ok(DimacsToken::Quant(QuantKind::Forall)));
+        assert_eq!(stream.next(), Ok(DimacsToken::Quant(QuantKind::Henkin)));
         assert_eq!(stream.next(), Ok(DimacsToken::EOL));
 
-        assert_eq!(stream.next(), Ok(DimacsToken::Literal((-1).into())));
-        assert_eq!(stream.next(), Ok(DimacsToken::Literal(1.into())));
+        assert_eq!(stream.next(), Ok(DimacsToken::Lit((-1).into())));
+        assert_eq!(stream.next(), Ok(DimacsToken::Lit(1.into())));
         assert_eq!(stream.next(), Ok(DimacsToken::Zero));
         assert_eq!(stream.next(), Ok(DimacsToken::EOL));
         assert_eq!(stream.next(), Ok(DimacsToken::EOF));
@@ -359,7 +450,7 @@ mod tests {
         let mut lexer = DimacsTokenStream::new("-1  2 0\n2 -3 -4 0\n");
         let mut matrix = Matrix::<HierarchicalPrefix>::new(4, 2);
         let current = lexer.next().unwrap();
-        assert!(parse_matrix(&mut lexer, &mut matrix, current).is_ok());
+        assert!(parse_matrix(&mut lexer, &mut matrix, current, 2).is_ok());
         let mut clause_iter = matrix.clauses.iter();
         assert_eq!(
             clause_iter.next(),
@@ -370,5 +461,11 @@ mod tests {
             Some(&Clause::new(vec![(2).into(), (-3).into(), (-4).into()]))
         );
         assert_eq!(clause_iter.next(), None);
+    }
+
+    #[test]
+    fn test_parse_header() {
+        let mut lexer = DimacsTokenStream::new("p cnf 2 4\n");
+        assert_eq!(parse_header(&mut lexer), Ok((2, 4)));
     }
 }

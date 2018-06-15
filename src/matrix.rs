@@ -10,6 +10,12 @@ pub trait Prefix {
     fn new(num_variables: usize) -> Self;
 
     fn variables(&self) -> &VariableStore<Self::V>;
+
+    /// This function is called in `Matrix::add` for every literal in clause
+    fn import(&mut self, variable: Variable);
+
+    /// Reduces a clause universally
+    fn reduce_universal(&self, clause: &mut Clause);
 }
 
 #[derive(Debug)]
@@ -32,10 +38,12 @@ impl<P: Prefix> Matrix<P> {
         }
     }
 
-    pub fn add(&mut self, clause: Clause) {
+    pub fn add(&mut self, mut clause: Clause) {
+        self.prefix.reduce_universal(&mut clause);
         for &literal in clause.iter() {
             let occurrences = self.occurrences.entry(literal).or_insert(Vec::new());
             occurrences.push(self.clauses.len() as ClauseId);
+            self.prefix.import(literal.variable());
         }
         if clause.len() == 0 {
             self.conflict = true;
@@ -55,14 +63,22 @@ impl<P: Prefix> Matrix<P> {
     }
 }
 
-impl<P: Prefix> Dimacs for Matrix<P> {
+impl<P: Prefix> Dimacs for Matrix<P>
+where
+    P: Dimacs,
+{
     fn dimacs(&self) -> String {
         let mut dimacs = String::new();
         dimacs.push_str(&format!(
-            "p cnf {} {}",
+            "p cnf {} {}\n",
             self.prefix.variables().num_variables(),
             self.clauses.len()
         ));
+        dimacs.push_str(&format!("{}", self.prefix.dimacs()));
+        for ref clause in self.clauses.iter() {
+            dimacs.push_str(&format!("{}\n", clause.dimacs()));
+        }
+
         dimacs
     }
 }
@@ -135,6 +151,22 @@ impl Scope {
     }
 }
 
+impl Dimacs for Scope {
+    fn dimacs(&self) -> String {
+        let mut dimacs = String::new();
+        if self.id % 2 == 0 {
+            dimacs.push_str("e ");
+        } else {
+            dimacs.push_str("a ");
+        }
+        for &variable in self.variables.iter() {
+            dimacs.push_str(&format!("{} ", variable));
+        }
+        dimacs.push_str("0");
+        dimacs
+    }
+}
+
 #[derive(Debug)]
 pub struct VariableStore<V: VariableInfo> {
     variables: Vec<V>,
@@ -161,7 +193,8 @@ impl<V: VariableInfo> VariableStore<V> {
     }
 
     pub fn num_variables(&self) -> usize {
-        self.variables.len()
+        assert!(self.variables.len() > 0);
+        self.variables.len() - 1
     }
 
     pub fn orig_num_variables(&self) -> usize {
@@ -186,7 +219,6 @@ impl<V: VariableInfo> VariableStore<V> {
 pub struct HierarchicalPrefix {
     variables: VariableStore<QVariableInfo>,
     pub scopes: Vec<Scope>,
-    orig_var_num: usize,
 }
 
 #[derive(Eq, PartialEq)]
@@ -237,12 +269,22 @@ impl Prefix for HierarchicalPrefix {
                 id: 0,
                 variables: Vec::new(),
             }],
-            orig_var_num: num_variables,
         }
     }
 
     fn variables(&self) -> &VariableStore<Self::V> {
         &self.variables
+    }
+
+    fn import(&mut self, variable: Variable) {
+        if !self.variables().get(variable).is_bound() {
+            // bound free variables at top level existential quantifier
+            self.add_variable(variable, 0);
+        }
+    }
+
+    fn reduce_universal(&self, clause: &mut Clause) {
+        clause.reduce_universal_qbf(self);
     }
 }
 
@@ -283,11 +325,23 @@ impl HierarchicalPrefix {
     }
 }
 
+impl Dimacs for HierarchicalPrefix {
+    fn dimacs(&self) -> String {
+        let mut dimacs = String::new();
+        for ref scope in self.scopes.iter() {
+            if scope.id == 0 && scope.variables.len() == 0 {
+                continue;
+            }
+            dimacs.push_str(&format!("{}\n", scope.dimacs()));
+        }
+        dimacs
+    }
+}
+
 #[derive(Debug)]
 pub struct TreePrefix {
     variables: VariableStore<QVariableInfo>,
     pub roots: Vec<Box<ScopeNode>>,
-    orig_var_num: usize,
 }
 
 #[derive(Debug)]
@@ -304,12 +358,51 @@ impl Prefix for TreePrefix {
         TreePrefix {
             variables: VariableStore::new(num_variables),
             roots: Vec::new(),
-            orig_var_num: num_variables,
         }
     }
 
     fn variables(&self) -> &VariableStore<Self::V> {
         &self.variables
+    }
+
+    fn import(&mut self, variable: Variable) {
+        panic!("not implemented");
+    }
+
+    fn reduce_universal(&self, clause: &mut Clause) {
+        panic!("not implemented");
+    }
+}
+
+impl TreePrefix {
+    fn to_hierarchical(&self) -> HierarchicalPrefix {
+        let mut prefix = HierarchicalPrefix::new(self.variables.num_variables());
+        for ref roots in self.roots.iter() {
+            roots.to_hierarchical(0, &mut prefix);
+        }
+        prefix
+    }
+}
+
+impl Dimacs for TreePrefix {
+    fn dimacs(&self) -> String {
+        // convert to hierarchical prefix and print that result
+        self.to_hierarchical().dimacs()
+    }
+}
+
+impl ScopeNode {
+    fn to_hierarchical(&self, depth: usize, prefix: &mut HierarchicalPrefix) {
+        if depth >= prefix.scopes.len() {
+            prefix.new_scope(Quantifier::from(depth));
+            debug_assert!(depth < prefix.scopes.len());
+        }
+        for &variable in self.scope.variables.iter() {
+            prefix.add_variable(variable, depth as ScopeId);
+        }
+        for ref next in self.next.iter() {
+            next.to_hierarchical(depth + 1, prefix);
+        }
     }
 }
 
@@ -326,8 +419,8 @@ impl Matrix<HierarchicalPrefix> {
 
         // we store for each variable the variable it is connected to
         // we compact this by using the smallest variable as characteristic element
-        let mut partitions = Vec::with_capacity(variables.num_variables());
-        for i in 0..variables.num_variables() {
+        let mut partitions = Vec::with_capacity(variables.num_variables() + 1);
+        for i in 0..variables.num_variables() + 1 {
             partitions.push(i as Variable);
         }
 
@@ -363,7 +456,6 @@ impl Matrix<HierarchicalPrefix> {
         let tree_prefix = TreePrefix {
             variables,
             roots: prev_scopes,
-            orig_var_num: prefix.orig_var_num,
         };
         Matrix {
             prefix: tree_prefix,
@@ -595,7 +687,7 @@ impl Matrix<HierarchicalPrefix> {
                                 is_universal: true,
                                 copy_of: var,
                             });
-                            let new_var = (variables.num_variables() - 1) as Variable;
+                            let new_var = variables.num_variables() as Variable;
                             new_scope.variables.push(new_var);
                             renaming.insert(var, new_var);
                         }
@@ -662,6 +754,21 @@ e 3 4 0
     }
 
     #[test]
+    fn test_matrix_dimacs() {
+        let instance = "p cnf 4 4
+a 1 2 0
+e 3 4 0
+1 3 0
+-1 4 0
+-3 -4 0
+1 2 4 0
+";
+        let matrix = parsing::qdimacs::parse(&instance).unwrap();
+        let dimacs = matrix.dimacs();
+        assert_eq!(instance, dimacs);
+    }
+
+    #[test]
     fn test_partitioning() {
         let instance = "c
 p cnf 10 8
@@ -682,4 +789,21 @@ e 7 8 9 10 0
         let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         assert!(matrix.prefix.roots.len() == 2);
     }
+
+    #[test]
+    fn test_matrix_dimacs_tree() {
+        let instance = "p cnf 4 4
+a 1 2 0
+e 3 4 0
+1 3 0
+-1 4 0
+-3 -4 0
+1 2 4 0
+";
+        let matrix = parsing::qdimacs::parse(&instance).unwrap();
+        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let dimacs = matrix.dimacs();
+        assert_eq!(instance, dimacs);
+    }
+
 }
