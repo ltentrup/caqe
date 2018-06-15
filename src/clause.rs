@@ -78,6 +78,10 @@ impl Clause {
         self.literals.iter_mut()
     }
 
+    pub fn retain<P>(&mut self, predicate: P) where P: FnMut(&Literal) -> bool,  {
+        self.literals.retain(predicate);
+    }
+
     /// Returns true, if the literals contained in `self` are a subset of the literals in `other`.
     /// Only literals satisfying the predicate are considered.
     /// Note that literals in clauses are sorted.
