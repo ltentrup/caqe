@@ -15,6 +15,8 @@ use super::utils::statistics::TimingStats;
 
 use super::parsing::qdimacs;
 
+use super::matrix::hierarchical::*;
+
 type QMatrix = Matrix<TreePrefix>;
 
 pub struct CaqeSolver<'a> {

@@ -1,5 +1,6 @@
 use super::*;
 
+use super::matrix::hierarchical::*;
 use super::parsing::qdimacs;
 
 use std::fs::File;

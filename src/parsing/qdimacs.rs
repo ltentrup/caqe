@@ -1,3 +1,4 @@
+use super::super::matrix::hierarchical::*;
 use super::super::*;
 use super::dimacs::*;
 use std::str::FromStr;
@@ -114,51 +115,154 @@ impl PartialQDIMACSCertificate {
     }
 }
 
+/// Parses the `s cnf RESULT NUM NUM` header and returns result, number of variables, and number of clauses
+pub fn parse_qdimacs_certificate_header(
+    lexer: &mut DimacsTokenStream,
+) -> Result<(SolverResult, usize, usize), ParseError> {
+    // first non-EOL token has to be `s cnf ` header
+    loop {
+        match lexer.next()? {
+            DimacsToken::EOL => continue,
+            DimacsToken::SolutionHeader => break,
+            token => {
+                return Err(ParseError {
+                    msg: format!("Expect `s cnf`, but found `{:?}`", token),
+                    pos: lexer.pos(),
+                });
+            }
+        }
+    }
+    let result = match lexer.next()? {
+        DimacsToken::Zero => SolverResult::Unsatisfiable,
+        DimacsToken::Lit(l) => {
+            if l.signed() {
+                return Err(ParseError {
+                    msg: format!(
+                        "Malformed `s cnf` header, found negative value for number of variables"
+                    ),
+                    pos: lexer.pos(),
+                });
+            }
+            if l.variable() == 1 {
+                if l.signed() {
+                    SolverResult::Unknown
+                } else {
+                    SolverResult::Satisfiable
+                }
+            } else {
+                return Err(ParseError {
+                    msg: format!(
+                        "Malformed `s cnf` header, expect `-1`, `0`, or `1` for result, found {}",
+                        l.dimacs()
+                    ),
+                    pos: lexer.pos(),
+                });
+            }
+        }
+        token => {
+            return Err(ParseError {
+                msg: format!(
+                    "Malformed `s cnf` header, expected number of variables, found `{:?}`",
+                    token
+                ),
+                pos: lexer.pos(),
+            })
+        }
+    };
+    let num_variables = match lexer.next()? {
+        DimacsToken::Zero => 0,
+        DimacsToken::Lit(l) => {
+            if l.signed() {
+                return Err(ParseError {
+                    msg: format!(
+                        "Malformed `p cnf` header, found negative value for number of variables"
+                    ),
+                    pos: lexer.pos(),
+                });
+            }
+            l.variable()
+        }
+        token => {
+            return Err(ParseError {
+                msg: format!(
+                    "Malformed `p cnf` header, expected number of variables, found `{:?}`",
+                    token
+                ),
+                pos: lexer.pos(),
+            })
+        }
+    };
+    let num_clauses = match lexer.next()? {
+        DimacsToken::Zero => 0,
+        DimacsToken::Lit(l) => {
+            if l.signed() {
+                return Err(ParseError {
+                    msg: format!(
+                        "Malformed `p cnf` header, found negative value for number of clauses"
+                    ),
+                    pos: lexer.pos(),
+                });
+            }
+            l.variable()
+        }
+        token => {
+            return Err(ParseError {
+                msg: format!(
+                    "Malformed `p cnf` header, expected number of clauses, found `{:?}`",
+                    token
+                ),
+                pos: lexer.pos(),
+            })
+        }
+    };
+    Ok((result, num_variables as usize, num_clauses as usize))
+}
+
 impl FromStr for PartialQDIMACSCertificate {
     type Err = Box<ParseError>;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut lines = s.lines();
-        let mut certificate = None;
-        while let Some(line) = lines.next() {
-            if line.starts_with("c") || line.is_empty() {
-                // comment or empty line
-                continue;
-            } else if !line.starts_with("s cnf") {
-                panic!("todo");
-                //return Err(ParseError::ExpectHeaderOrComment(String::from(line)).into());
+        let mut lexer = DimacsTokenStream::new(s);
+
+        let (result, num_variables, num_clauses) = parse_qdimacs_certificate_header(&mut lexer)?;
+        let mut certificate = PartialQDIMACSCertificate::new(result, num_variables, num_clauses);
+
+        loop {
+            match lexer.next()? {
+                DimacsToken::EOL => {
+                    // ignore empty lines
+                    continue;
+                }
+                DimacsToken::EOF => {
+                    break;
+                }
+                DimacsToken::V => {
+                    // V <literal> 0\n
+                    match lexer.next()? {
+                        DimacsToken::Lit(l) => {
+                            certificate.add_assignment(l);
+                        }
+                        token => {
+                            return Err(ParseError {
+                                msg: format!(
+                                    "Encountered {:?} instead of literal in certificate line",
+                                    token
+                                ),
+                                pos: lexer.pos(),
+                            }.into())
+                        }
+                    }
+                    lexer.expect_next(DimacsToken::Zero)?;
+                    lexer.expect_next(DimacsToken::EOL)?;
+                }
+                token => {
+                    return Err(ParseError {
+                        msg: format!("Certificate line should start with `V`, found {:?}", token),
+                        pos: lexer.pos(),
+                    }.into())
+                }
             }
-            // read header line
-            let result: i32;
-            let num_variables: usize;
-            let num_clauses: usize;
-            scan!(line.bytes() => "s cnf {} {} {}", result, num_variables, num_clauses);
-            let result = if result == 0 {
-                SolverResult::Unsatisfiable
-            } else if result == 1 {
-                SolverResult::Satisfiable
-            } else {
-                SolverResult::Unknown
-            };
-            certificate = Some(PartialQDIMACSCertificate::new(
-                result,
-                num_variables,
-                num_clauses,
-            ));
-            break;
         }
-        let mut certificate = match certificate {
-            None => panic!("todo"), // return Err(ParseError::NoHeaderFound.into()),
-            Some(c) => c,
-        };
-        while let Some(line) = lines.next() {
-            if line.is_empty() {
-                // skip empty lines
-                continue;
-            }
-            // line has the form `V [-]var 0\n`
-            let literal: i32 = read!("V {} 0", line.bytes());
-            certificate.add_assignment(Literal::from(literal));
-        }
+
         Ok(certificate)
     }
 }

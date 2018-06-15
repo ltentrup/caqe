@@ -1,3 +1,4 @@
+use super::super::matrix::hierarchical::*;
 use std::error::Error;
 use std::fmt;
 use std::str::Chars;
@@ -17,6 +18,12 @@ pub enum DimacsToken {
 
     /// Quantification, i.e., `e`, `a`, and `d`
     Quant(QuantKind),
+
+    /// s cnf header
+    SolutionHeader,
+
+    /// First character of certificate line
+    V,
 
     /// End-of-line
     EOL,
@@ -114,6 +121,11 @@ impl<'a> DimacsTokenStream<'a> {
                     self.chars.expect_str(" cnf ")?;
                     return Ok(DimacsToken::Header);
                 }
+                's' => {
+                    // DIMACS solution header
+                    self.chars.expect_str(" cnf ")?;
+                    return Ok(DimacsToken::SolutionHeader);
+                }
                 'e' => return Ok(DimacsToken::Quant(QuantKind::Exists)),
                 'a' => return Ok(DimacsToken::Quant(QuantKind::Forall)),
                 'd' => return Ok(DimacsToken::Quant(QuantKind::Henkin)),
@@ -126,6 +138,7 @@ impl<'a> DimacsTokenStream<'a> {
                     // digit
                     return self.chars.read_literal(c);
                 }
+                'V' => return Ok(DimacsToken::V),
                 '\n' => return Ok(DimacsToken::EOL),
                 ' ' => continue,
                 _ => {

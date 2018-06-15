@@ -2,6 +2,8 @@ use super::*;
 
 use std::collections::HashMap;
 
+use super::matrix::hierarchical::*;
+
 #[derive(PartialEq, Eq, Debug)]
 pub struct Clause {
     literals: Vec<Literal>,
