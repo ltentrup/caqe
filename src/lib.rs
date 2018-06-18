@@ -40,6 +40,7 @@ use preprocessor::*;
 mod parsing;
 mod utils;
 
+#[cfg(feature = "statistics")]
 use utils::statistics::TimingStats;
 
 // Command line parsing
@@ -204,6 +205,7 @@ impl Config {
     }
 }
 
+#[cfg(feature = "statistics")]
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum SolverPhases {
     Preprocessing,

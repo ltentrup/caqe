@@ -8,8 +8,6 @@ use super::*;
 
 use std::collections::HashMap;
 
-use std::fmt;
-
 #[cfg(feature = "statistics")]
 use super::utils::statistics::TimingStats;
 
@@ -157,14 +155,16 @@ impl CaqeSolverOptions {
     }
 }
 
+#[cfg(feature = "statistics")]
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum SolverScopeEvents {
     SolveScopeAbstraction,
     Refinement,
 }
 
-impl fmt::Display for SolverScopeEvents {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+#[cfg(feature = "statistics")]
+impl std::fmt::Display for SolverScopeEvents {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             &SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
             &SolverScopeEvents::Refinement => write!(f, "Refinement"),

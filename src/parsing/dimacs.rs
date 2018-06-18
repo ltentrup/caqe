@@ -1,4 +1,3 @@
-use super::super::matrix::hierarchical::*;
 use std::error::Error;
 use std::fmt;
 use std::str::Chars;
@@ -412,6 +411,7 @@ pub fn parse_matrix<P: Prefix>(
 mod tests {
 
     use super::*;
+    use super::matrix::hierarchical::HierarchicalPrefix;
 
     #[test]
     fn test_lexer_simple() {
