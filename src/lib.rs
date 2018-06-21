@@ -23,21 +23,24 @@ mod clause;
 use clause::*;
 
 mod matrix;
+pub use self::matrix::Matrix;
 use matrix::*;
 
 mod caqe;
+pub use self::caqe::{CaqeSolver, CaqeSolverOptions};
 use caqe::*;
 
 mod dimacs;
-use dimacs::*;
+pub use dimacs::*;
 
 mod solver;
+pub use self::solver::{Solver, SolverResult};
 use solver::*;
 
 mod preprocessor;
 use preprocessor::*;
 
-mod parsing;
+pub mod parsing;
 mod utils;
 
 #[cfg(feature = "statistics")]
