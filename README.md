@@ -11,9 +11,9 @@ To build CAQE, execute `cargo build --release` from the checkout which builds a 
 
 	caqe [FLAGS] [OPTIONS] <INPUT>
 
-`INPUT` should be the path to an instance [QDIMACS](http://www.qbflib.org/qdimacs.html) file format.
+`INPUT` should be the path to an instance in [QDIMACS](http://www.qbflib.org/qdimacs.html) file format.
 See `--help` for more details on `FLAGS` and `OPTIONS`.
-CAQE exits with result code `10` and `20`, for satisfiable and unsatisfiable instances, respectively.
+CAQE exits with result code `10` and `20` for satisfiable and unsatisfiable instances, respectively.
 
 
 
