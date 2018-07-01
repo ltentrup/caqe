@@ -1,8 +1,5 @@
-use std::error::Error;
-use std::fmt;
-use std::str::Chars;
-
 use super::super::*;
+use super::{CharIterator, ParseError, SourcePos};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum DimacsToken {
@@ -48,57 +45,8 @@ pub enum QuantKind {
     Henkin,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SourcePos {
-    line: usize,
-    column: usize,
-}
-
-impl SourcePos {
-    fn new() -> SourcePos {
-        SourcePos { line: 0, column: 0 }
-    }
-
-    fn advance(&mut self, len: usize) {
-        self.column += len;
-    }
-
-    fn newline(&mut self) {
-        self.line += 1;
-        self.column = 0;
-    }
-}
-
-impl fmt::Display for SourcePos {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.column)
-    }
-}
-
 pub struct DimacsTokenStream<'a> {
     chars: CharIterator<'a>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ParseError {
-    pub msg: String,
-    pub pos: SourcePos,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "parse error: {} at {}", self.description(), self.pos)
-    }
-}
-
-impl Error for ParseError {
-    fn description(&self) -> &str {
-        self.msg.as_str()
-    }
-
-    fn cause(&self) -> Option<&Error> {
-        Some(self)
-    }
 }
 
 impl<'a> DimacsTokenStream<'a> {
@@ -131,11 +79,11 @@ impl<'a> DimacsTokenStream<'a> {
                 '0' => return Ok(DimacsToken::Zero),
                 '-' => {
                     // negated literal
-                    return self.chars.read_literal('-');
+                    return Ok(DimacsToken::Lit(self.chars.read_literal('-')?));
                 }
                 c if c.is_ascii_digit() => {
                     // digit
-                    return self.chars.read_literal(c);
+                    return Ok(DimacsToken::Lit(self.chars.read_literal(c)?));
                 }
                 'V' => return Ok(DimacsToken::V),
                 '\n' => return Ok(DimacsToken::EOL),
@@ -167,116 +115,6 @@ impl<'a> DimacsTokenStream<'a> {
 
     pub fn pos(&self) -> SourcePos {
         self.chars.pos
-    }
-}
-
-struct CharIterator<'a> {
-    chars: Chars<'a>,
-    pos: SourcePos,
-}
-
-impl<'a> CharIterator<'a> {
-    fn new(content: &'a str) -> CharIterator<'a> {
-        CharIterator {
-            chars: content.chars(),
-            pos: SourcePos::new(),
-        }
-    }
-
-    fn next(&mut self) -> Option<char> {
-        match self.chars.next() {
-            None => None,
-            Some(c) => {
-                if c == '\n' {
-                    self.pos.newline()
-                } else {
-                    self.pos.advance(1)
-                }
-                Some(c)
-            }
-        }
-    }
-
-    fn read_literal(&mut self, first: char) -> Result<DimacsToken, ParseError> {
-        let signed;
-        let mut value;
-        if first == '-' {
-            signed = true;
-            value = None;
-        } else if let Some(digit) = first.to_digit(10) {
-            signed = false;
-            value = Some(digit);
-        } else {
-            panic!(
-                "Expect first character of literal to be a digit or `-`, were given `{}`",
-                first
-            );
-        }
-        while let Some(c) = self.next() {
-            if c.is_ascii_whitespace() {
-                break;
-            }
-            if let Some(digit) = c.to_digit(10) {
-                value = match value {
-                    None => Some(digit),
-                    Some(prev) => Some(prev * 10 + digit),
-                }
-            } else {
-                return Err(ParseError {
-                    msg: format!(
-                        "Encountered non-digit character `{}` while parsing literal",
-                        c
-                    ),
-                    pos: self.pos,
-                });
-            }
-        }
-        if let Some(value) = value {
-            return Ok(DimacsToken::Lit(Literal::new(value, signed)));
-        } else {
-            assert!(first == '-');
-            return Err(ParseError {
-                msg: format!("Expect digits following `-` character"),
-                pos: self.pos,
-            });
-        }
-    }
-
-    fn expect_char(&mut self, expected: char) -> Result<(), ParseError> {
-        match self.next() {
-            None => Err(ParseError {
-                msg: format!("Unexpected end of input"),
-                pos: self.pos,
-            }),
-            Some(c) => {
-                if c != expected {
-                    Err(ParseError {
-                        msg: format!("Expected character `{}`, but found `{}`", expected, c),
-                        pos: self.pos,
-                    })
-                } else {
-                    Ok(())
-                }
-            }
-        }
-    }
-
-    fn expect_str(&mut self, expected: &str) -> Result<(), ParseError> {
-        for c in expected.chars() {
-            self.expect_char(c)?;
-        }
-        Ok(())
-    }
-
-    fn skip_while<P>(&mut self, predicate: P)
-    where
-        P: Fn(&char) -> bool,
-    {
-        while let Some(c) = self.next() {
-            if !predicate(&c) {
-                break;
-            }
-        }
     }
 }
 
@@ -410,8 +248,8 @@ pub fn parse_matrix<P: Prefix>(
 #[cfg(test)]
 mod tests {
 
-    use super::*;
     use super::matrix::hierarchical::HierarchicalPrefix;
+    use super::*;
 
     #[test]
     fn test_lexer_simple() {

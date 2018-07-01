@@ -1,6 +1,7 @@
 use super::super::matrix::depenendcy::*;
 use super::super::*;
 use super::dimacs::*;
+use super::ParseError;
 use std::collections::HashSet;
 
 /// Parses the QDIMACS string into its matrix representation
@@ -39,7 +40,9 @@ pub fn parse_prefix(
                                         pos: lexer.pos(),
                                     });
                                 }
-                                matrix.prefix.add_existential(l.variable(), &bound_universals);
+                                matrix
+                                    .prefix
+                                    .add_existential(l.variable(), &bound_universals);
                             }
                             DimacsToken::Zero => {
                                 // end of quantifier block

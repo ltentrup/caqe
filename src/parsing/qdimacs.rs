@@ -1,6 +1,7 @@
 use super::super::matrix::hierarchical::*;
 use super::super::*;
 use super::dimacs::*;
+use super::ParseError;
 use std::str::FromStr;
 
 /// Parses the QDIMACS string into its matrix representation
