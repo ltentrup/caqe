@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::hash::Hash;
 use std::cmp::Eq;
+use std::collections::HashMap;
 use std::fmt;
+use std::hash::Hash;
 
 #[derive(Debug)]
 pub struct CountingStats<E>
@@ -28,9 +28,9 @@ impl<E: Hash + Eq> CountingStats<E> {
     }
 }
 
-use std::time::{Duration, Instant};
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 type TimingStatsValues<E> = HashMap<E, Vec<Duration>>;
 

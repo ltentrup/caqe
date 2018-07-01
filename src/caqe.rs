@@ -6,8 +6,6 @@ use self::bit_vec::BitVec;
 
 use super::*;
 
-use std::collections::HashMap;
-
 #[cfg(feature = "statistics")]
 use super::utils::statistics::TimingStats;
 
@@ -175,14 +173,14 @@ impl std::fmt::Display for SolverScopeEvents {
 struct ScopeSolverData {
     sat: cryptominisat::Solver,
     variables: Vec<Variable>,
-    variable_to_sat: HashMap<Variable, Lit>,
+    variable_to_sat: FxHashMap<Variable, Lit>,
     t_literals: Vec<(ClauseId, Lit)>,
     b_literals: Vec<(ClauseId, Lit)>,
 
     /// lookup from sat solver variables to clause id's
-    reverse_t_literals: HashMap<u32, ClauseId>,
+    reverse_t_literals: FxHashMap<u32, ClauseId>,
 
-    assignments: HashMap<Variable, bool>,
+    assignments: FxHashMap<Variable, bool>,
 
     /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
     entry: BitVec,
@@ -205,11 +203,11 @@ struct ScopeSolverData {
     options: CaqeSolverOptions,
 
     /// stores for clause-ids whether there is astrong-unsat optimized lit
-    strong_unsat_cache: HashMap<ClauseId, (Lit, bool)>,
+    strong_unsat_cache: FxHashMap<ClauseId, (Lit, bool)>,
     conjunction: Vec<ClauseId>,
 
     /// expansion related data structures
-    expansion_renaming: HashMap<Variable, Lit>,
+    expansion_renaming: FxHashMap<Variable, Lit>,
 
     /// stores the result of recursive calls to branches
     sub_result: SolverResult,
@@ -228,17 +226,17 @@ impl ScopeSolverData {
         let mut s = cryptominisat::Solver::new();
         s.set_num_threads(1);
         // assign all variables initially to zero, need that for expansion refinement
-        let mut assignments = HashMap::new();
+        let mut assignments = FxHashMap::default();
         for &variable in scope.variables.iter() {
             assignments.insert(variable, false);
         }
         ScopeSolverData {
             sat: s,
             variables: scope.variables.clone(),
-            variable_to_sat: HashMap::new(),
+            variable_to_sat: FxHashMap::default(),
             t_literals: Vec::with_capacity(matrix.clauses.len()),
             b_literals: Vec::with_capacity(matrix.clauses.len()),
-            reverse_t_literals: HashMap::new(),
+            reverse_t_literals: FxHashMap::default(),
             assignments: assignments,
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
@@ -247,9 +245,9 @@ impl ScopeSolverData {
             is_universal: scope.id % 2 != 0,
             scope_id: scope.id,
             options: options,
-            strong_unsat_cache: HashMap::new(),
+            strong_unsat_cache: FxHashMap::default(),
             conjunction: Vec::new(),
-            expansion_renaming: HashMap::new(),
+            expansion_renaming: FxHashMap::default(),
             sub_result: SolverResult::Unknown,
             #[cfg(feature = "statistics")]
             statistics: TimingStats::new(),
@@ -462,7 +460,8 @@ impl ScopeSolverData {
 
             // We check whether the clause is equal to a prior clause w.r.t. outer and current variables.
             // In this case, we can re-use the b-literal from other clause (and can omit t-literal all together).
-            if self.options.abstraction_literal_optimization && single_literal.is_some()
+            if self.options.abstraction_literal_optimization
+                && single_literal.is_some()
                 && (num_scope_variables > 1 || min_scope < scope.id)
             {
                 let literal = single_literal.unwrap();
@@ -489,7 +488,8 @@ impl ScopeSolverData {
             let sat_var;
 
             // there is a single literal and no outer variables, replace t-literal by literal
-            if self.options.abstraction_literal_optimization && num_scope_variables == 1
+            if self.options.abstraction_literal_optimization
+                && num_scope_variables == 1
                 && min_scope == scope.id
             {
                 let literal = single_literal.unwrap();
@@ -816,7 +816,8 @@ impl ScopeSolverData {
             self.expansion_refinement(matrix, next);
         }
 
-        if !self.is_universal && self.options.strong_unsat_refinement
+        if !self.is_universal
+            && self.options.strong_unsat_refinement
             && self.strong_unsat_refinement(matrix, next)
         {
             return;
@@ -1038,7 +1039,7 @@ impl ScopeSolverData {
 
     fn expansion_refinement(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
         trace!("expansion_refinement");
-        let universal_assignment = next.get_universal_assignmemnt(HashMap::new());
+        let universal_assignment = next.get_universal_assignmemnt(FxHashMap::default());
         let (data, next) = next.split();
         let next = &next[0];
 
@@ -1117,7 +1118,7 @@ impl ScopeSolverData {
         sat: &mut cryptominisat::Solver,
         b_literals: &Vec<(ClauseId, Lit)>,
         t_literals: &mut Vec<(ClauseId, Lit)>,
-        reverse_t_literals: &mut HashMap<u32, Variable>,
+        reverse_t_literals: &mut FxHashMap<u32, Variable>,
     ) -> Lit {
         // first check if there is a b-literal for clause
         // if yes, just return it (the currents scope influences clause since there is at least one variable contained)
@@ -1412,8 +1413,8 @@ impl ScopeRecursiveSolver {
 
     fn get_universal_assignmemnt(
         &self,
-        mut assignment: HashMap<Variable, bool>,
-    ) -> HashMap<Variable, bool> {
+        mut assignment: FxHashMap<Variable, bool>,
+    ) -> FxHashMap<Variable, bool> {
         if self.data.is_universal {
             assignment.extend(self.data.assignments.iter());
         }

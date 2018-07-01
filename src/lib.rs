@@ -2,6 +2,7 @@
 #[macro_use]
 extern crate log;
 extern crate clap;
+extern crate rustc_hash;
 extern crate simplelog;
 extern crate tempfile;
 
@@ -9,6 +10,8 @@ use simplelog::*;
 
 use clap::{App, Arg};
 use tempfile::tempfile;
+
+use rustc_hash::FxHashMap;
 
 // Rust stdlib
 use std::error::Error;

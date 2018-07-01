@@ -403,7 +403,7 @@ impl Matrix<HierarchicalPrefix> {
         let mut remaining_next = next;
 
         // maps characteristic variables to index of scopes vector
-        let mut groups = HashMap::new();
+        let mut groups = FxHashMap::default();
 
         for i in 1..partitions.len() {
             let variable = i as Variable;
@@ -485,7 +485,7 @@ impl Matrix<HierarchicalPrefix> {
         next: Vec<Box<ScopeNode>>,
         variables: &mut VariableStore<QVariableInfo>,
         clauses: &mut Vec<Clause>,
-        occurrences: &mut HashMap<Literal, Vec<ClauseId>>,
+        occurrences: &mut FxHashMap<Literal, Vec<ClauseId>>,
     ) -> Vec<Box<ScopeNode>> {
         debug_assert!(!next.is_empty());
 
@@ -510,7 +510,7 @@ impl Matrix<HierarchicalPrefix> {
 
             // mapping from old variables to new copy
             // is modified lazyly below
-            let mut renaming = HashMap::new();
+            let mut renaming = FxHashMap::default();
 
             // update clauses and occurrence list
             for (i, ref mut clause) in clauses.iter_mut().enumerate() {

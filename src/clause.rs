@@ -1,7 +1,5 @@
 use super::*;
 
-use std::collections::HashMap;
-
 use super::matrix::hierarchical::*;
 
 #[derive(PartialEq, Eq, Debug)]
@@ -78,7 +76,10 @@ impl Clause {
         self.literals.iter_mut()
     }
 
-    pub fn retain<P>(&mut self, predicate: P) where P: FnMut(&Literal) -> bool,  {
+    pub fn retain<P>(&mut self, predicate: P)
+    where
+        P: FnMut(&Literal) -> bool,
+    {
         self.literals.retain(predicate);
     }
 
@@ -159,7 +160,7 @@ impl Clause {
         self.is_equal_wrt_predicate(other, |_| true)
     }
 
-    pub fn is_satisfied_by_assignment(&self, assignment: &HashMap<Variable, bool>) -> bool {
+    pub fn is_satisfied_by_assignment(&self, assignment: &FxHashMap<Variable, bool>) -> bool {
         self.literals.iter().fold(false, |satisifed, &l| {
             if satisifed {
                 return satisifed;
@@ -274,7 +275,7 @@ mod tests {
         let lit2 = Literal::new(1, false);
         let lit3 = Literal::new(2, false);
         let clause = Clause::new(vec![lit1, -lit2, lit3]);
-        let mut assignment = HashMap::new();
+        let mut assignment = FxHashMap::default();
         assignment.insert(1, true);
         assignment.insert(2, false);
         assert!(!clause.is_satisfied_by_assignment(&assignment));

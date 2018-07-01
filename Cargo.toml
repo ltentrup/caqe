@@ -8,8 +8,9 @@ cryptominisat = "5.0.1"
 log = "0.4"
 simplelog = "^0.5.0"
 bit-vec = "0.4.4"
-tempfile = "3.0.1"  # for first running preprocessor and piping result to temporary
-clap = "2.31.2"     # parsing command line arguments
+tempfile = "3.0.1"    # for first running preprocessor and piping result to temporary
+clap = "2.31.2"       # parsing command line arguments
+rustc-hash = "1.0.1"  # fast, non-randomized HashMap/HashSet
 
 [patch.crates-io]
 cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git" }

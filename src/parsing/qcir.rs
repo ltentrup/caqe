@@ -1,6 +1,5 @@
 use super::super::*;
 use super::{CharIterator, ParseError, SourcePos};
-use std::collections::HashMap;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum QCIRQuantKind {
@@ -69,14 +68,14 @@ type SymbolId = u32;
 
 struct QCIRLexer<'a> {
     chars: CharIterator<'a>,
-    symboltable: HashMap<String, SymbolId>,
+    symboltable: FxHashMap<String, SymbolId>,
 }
 
 impl<'a> QCIRLexer<'a> {
     fn new(content: &'a str) -> QCIRLexer<'a> {
         QCIRLexer {
             chars: CharIterator::new(content),
-            symboltable: HashMap::new(),
+            symboltable: FxHashMap::default(),
         }
     }
 

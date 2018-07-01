@@ -3,8 +3,6 @@ use super::*;
 pub mod depenendcy;
 pub mod hierarchical;
 
-use std::collections::HashMap;
-
 pub type ClauseId = u32;
 
 pub trait Prefix {
@@ -25,7 +23,7 @@ pub trait Prefix {
 pub struct Matrix<P: Prefix> {
     pub prefix: P,
     pub clauses: Vec<Clause>,
-    occurrences: HashMap<Literal, Vec<ClauseId>>,
+    occurrences: FxHashMap<Literal, Vec<ClauseId>>,
     conflict: bool,
     pub orig_clause_num: usize,
 }
@@ -35,7 +33,7 @@ impl<P: Prefix> Matrix<P> {
         Matrix {
             prefix: P::new(num_variables),
             clauses: Vec::with_capacity(num_clauses),
-            occurrences: HashMap::new(),
+            occurrences: FxHashMap::default(),
             conflict: false,
             orig_clause_num: num_clauses,
         }
