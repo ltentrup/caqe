@@ -29,22 +29,18 @@ mod matrix;
 pub use self::matrix::Matrix;
 use matrix::*;
 
-mod caqe;
-pub use self::caqe::{CaqeSolver, CaqeSolverOptions};
-use caqe::*;
-
 mod dimacs;
 pub use dimacs::*;
-
-mod solver;
-pub use self::solver::{Solver, SolverResult};
-use solver::*;
 
 mod preprocessor;
 use preprocessor::*;
 
-pub mod parsing;
+pub mod parse;
 mod utils;
+
+pub mod solve;
+pub use solve::caqe::{CaqeSolver, CaqeSolverOptions};
+pub use solve::{Solver, SolverResult};
 
 #[cfg(feature = "statistics")]
 use utils::statistics::TimingStats;
@@ -247,7 +243,7 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
                 } else {
                     println!(
                         "{}",
-                        parsing::qdimacs::PartialQDIMACSCertificate::new(
+                        parse::qdimacs::PartialQDIMACSCertificate::new(
                             SolverResult::Unsatisfiable,
                             partial_qdo.num_variables,
                             partial_qdo.num_clauses

@@ -13,7 +13,7 @@ use test::Bencher;
 fn endtoend_bench_arbiter_05_comp_error01_qbf_hardness_depth_8_qdimacs(b: &mut Bencher) {
     b.iter(|| {
         let instance = &instances::ARBITER_05_COMP_ERROR01_QBF_HARDNESS_DEPTH_8_QDIMACS;
-        let matrix = parsing::qdimacs::parse(instance).unwrap();
+        let matrix = parse::qdimacs::parse(instance).unwrap();
         let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);

@@ -1,7 +1,7 @@
 use super::*;
 
 use super::matrix::hierarchical::*;
-use super::parsing::qdimacs;
+use super::parse::qdimacs;
 
 use std::fs::File;
 use std::io::prelude::*;

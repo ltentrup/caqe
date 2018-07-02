@@ -4,14 +4,14 @@ use self::cryptominisat::*;
 extern crate bit_vec;
 use self::bit_vec::BitVec;
 
-use super::*;
+use super::super::*;
 
 #[cfg(feature = "statistics")]
-use super::utils::statistics::TimingStats;
+use super::super::utils::statistics::TimingStats;
 
-use super::parsing::qdimacs;
+use super::super::parse::qdimacs;
 
-use super::matrix::hierarchical::*;
+use super::super::matrix::hierarchical::*;
 
 type QMatrix = Matrix<TreePrefix>;
 
@@ -1473,7 +1473,7 @@ impl MinMax {
 mod tests {
 
     use super::*;
-    use solver::Solver;
+    use solve::Solver;
 
     #[test]
     fn test_false() {
