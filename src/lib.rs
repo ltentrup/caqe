@@ -15,6 +15,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 // Rust stdlib
 use std::error::Error;
+use std::fs::File;
+use std::io::Read;
 use std::str::FromStr;
 
 // modules
@@ -40,6 +42,7 @@ mod utils;
 
 pub mod solve;
 pub use solve::caqe::{CaqeSolver, CaqeSolverOptions};
+pub use solve::dcaqe::DCaqeSolver;
 pub use solve::{Solver, SolverResult};
 
 #[cfg(feature = "statistics")]
@@ -211,6 +214,7 @@ impl Config {
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum SolverPhases {
     Preprocessing,
+    Parsing,
     Initializing,
     Solving,
 }
@@ -299,6 +303,132 @@ pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
             }
         }
         println!("{}", solver_qdo.dimacs());
+    }
+
+    Ok(result)
+}
+
+#[derive(Debug)]
+pub struct DCaqeConfig {
+    pub filename: String,
+    pub verbosity: LevelFilter,
+    pub statistics: bool,
+}
+
+impl DCaqeConfig {
+    pub fn new(args: &[String]) -> DCaqeConfig {
+        let mut options = CaqeSolverOptions::new();
+
+        let default = |val| match val {
+            true => "1",
+            false => "0",
+        };
+
+        let mut flags = App::new("CAQE")
+            .version(env!("CARGO_PKG_VERSION"))
+            .author(env!("CARGO_PKG_AUTHORS"))
+            .about("CAQE is a solver for quantified Boolean formulas given in QDIMACS file format")
+            .arg(
+                Arg::with_name("INPUT")
+                    .help("Sets the input file to use")
+                    .required(true)
+                    .index(1),
+            );
+
+        #[cfg(debug_assertions)]
+        {
+            flags = flags.arg(
+                Arg::with_name("v")
+                    .short("v")
+                    .multiple(true)
+                    .help("Sets the level of verbosity"),
+            );
+        }
+        #[cfg(feature = "statistics")]
+        {
+            flags = flags.arg(
+                Arg::with_name("statistics")
+                    .long("--statistics")
+                    .help("Enables collection and printing of solving statistics"),
+            )
+        }
+        let matches = flags.get_matches_from(args);
+
+        // file name is mandatory
+        let filename = String::from(matches.value_of("INPUT").unwrap());
+
+        let verbosity = match matches.occurrences_of("v") {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            3 | _ => LevelFilter::Trace,
+        };
+
+        let statistics = matches.is_present("statistics");
+
+        DCaqeConfig {
+            filename,
+            verbosity,
+            statistics,
+        }
+    }
+}
+
+pub fn run_dcaqe(config: DCaqeConfig) -> Result<SolverResult, Box<Error>> {
+    #[cfg(debug_assertions)]
+    CombinedLogger::init(vec![
+        TermLogger::new(config.verbosity, simplelog::Config::default()).unwrap(),
+        //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+    ]).unwrap();
+
+    #[cfg(feature = "statistics")]
+    let statistics = TimingStats::new();
+
+    #[cfg(feature = "statistics")]
+    let mut timer = statistics.start(SolverPhases::Parsing);
+
+    let mut file = File::open(config.filename)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    let mut matrix = parse::dqdimacs::parse(&contents)?;
+
+    #[cfg(feature = "statistics")]
+    timer.stop();
+
+    //println!("{}", matrix.dimacs());
+
+    if matrix.conflict() {
+        return Ok(SolverResult::Unsatisfiable);
+    }
+
+    #[cfg(feature = "statistics")]
+    let mut timer = statistics.start(SolverPhases::Initializing);
+
+    let mut solver = DCaqeSolver::new(&mut matrix);
+
+    #[cfg(feature = "statistics")]
+    timer.stop();
+
+    #[cfg(feature = "statistics")]
+    let mut timer = statistics.start(SolverPhases::Solving);
+
+    let result = solver.solve();
+
+    #[cfg(feature = "statistics")]
+    timer.stop();
+
+    #[cfg(feature = "statistics")]
+    {
+        if config.statistics {
+            println!("Parsing took {:?}", statistics.sum(SolverPhases::Parsing));
+            println!(
+                "Initializing took {:?}",
+                statistics.sum(SolverPhases::Initializing)
+            );
+            println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
+            solver.print_statistics();
+        }
     }
 
     Ok(result)
