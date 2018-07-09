@@ -225,7 +225,7 @@ impl ScopeSolverData {
     ) -> ScopeSolverData {
         let mut s = cryptominisat::Solver::new();
         s.set_num_threads(1);
-        // assign all variables initially to zero, need that for expansion refinement
+        // assign all variables initially to zero, needed for expansion refinement
         let mut assignments = FxHashMap::default();
         for &variable in scope.variables.iter() {
             assignments.insert(variable, false);

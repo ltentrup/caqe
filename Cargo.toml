@@ -1,6 +1,6 @@
 [package]
 name = "caqe"
-version = "3.0.0"
+version = "4.0.0-dev"
 authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 
 [dependencies]
@@ -20,7 +20,7 @@ statistics = [] # enable statistics
 
 [profile.release]
 opt-level = 3
-panic = "abort"
 lto = true
 codegen-units = 1
 incremental = false
+

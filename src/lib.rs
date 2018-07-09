@@ -11,7 +11,7 @@ use simplelog::*;
 use clap::{App, Arg};
 use tempfile::tempfile;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 // Rust stdlib
 use std::error::Error;

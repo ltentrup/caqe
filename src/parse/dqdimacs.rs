@@ -2,7 +2,6 @@ use super::super::matrix::depenendcy::*;
 use super::super::*;
 use super::dimacs::*;
 use super::ParseError;
-use std::collections::HashSet;
 
 /// Parses the QDIMACS string into its matrix representation
 pub fn parse(content: &str) -> Result<Matrix<DependencyPrefix>, ParseError> {
@@ -20,7 +19,7 @@ pub fn parse_prefix(
     lexer: &mut DimacsTokenStream,
     matrix: &mut Matrix<DependencyPrefix>,
 ) -> Result<DimacsToken, ParseError> {
-    let mut bound_universals: HashSet<Variable> = HashSet::new();
+    let mut bound_universals: FxHashSet<Variable> = FxHashSet::default();
 
     loop {
         // first character after newline, either `e`, `a`, `d`, or literal (in which case we return)
@@ -110,7 +109,7 @@ pub fn parse_prefix(
                             });
                         }
                     };
-                    let mut dependencies = HashSet::new();
+                    let mut dependencies = FxHashSet::default();
                     loop {
                         match lexer.next()? {
                             DimacsToken::Lit(l) => {
