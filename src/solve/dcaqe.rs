@@ -70,6 +70,7 @@ impl<'a> DCaqeSolver<'a> {
                     matrix,
                     &universals,
                     &global.level_lookup,
+                    level,
                 )));
             }
             let level = abstractions.len();
@@ -81,7 +82,7 @@ impl<'a> DCaqeSolver<'a> {
                         for &var in &scope.existentials {
                             global.level_lookup.insert(var, level);
                         }
-                        Abstraction::new_existential(matrix, scope)
+                        Abstraction::new_existential(matrix, scope_id, scope, level)
                     })
                     .collect(),
             ))
@@ -122,7 +123,7 @@ impl SolverLevel {
         global: &mut GlobalSolverData,
     ) -> SolveLevelResult {
         match self {
-            SolverLevel::Universal(abstraction) => match abstraction.solve(global) {
+            SolverLevel::Universal(abstraction) => match abstraction.solve(matrix, global) {
                 AbstractionResult::CandidateFound => {
                     panic!("not implemented");
                 }
@@ -132,7 +133,7 @@ impl SolverLevel {
             },
             SolverLevel::Existential(abstractions) => {
                 for abstraction in abstractions {
-                    if abstraction.solve(global) == AbstractionResult::CandidateRefuted {
+                    if abstraction.solve(matrix, global) == AbstractionResult::CandidateRefuted {
                         panic!("not implemented");
                     }
                 }
@@ -174,12 +175,23 @@ struct Abstraction {
     t_literals: Vec<(ClauseId, Lit)>,
     b_literals: Vec<(ClauseId, Lit)>,
 
+    /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
+    entry: BitVec,
+
     /// lookup from sat solver variables to clause id's
     reverse_t_literals: FxHashMap<u32, ClauseId>,
+
+    /// stores the assumptions given to sat solver
+    sat_solver_assumptions: Vec<Lit>,
+
+    level: usize,
+
+    /// scope_id for existential scopes, `None` for universal ones
+    scope_id: Option<ScopeId>,
 }
 
 impl Abstraction {
-    fn new() -> Abstraction {
+    fn new(matrix: &DQMatrix, level: usize, scope_id: Option<ScopeId>) -> Abstraction {
         let mut sat = cryptominisat::Solver::new();
         sat.set_num_threads(1);
         Abstraction {
@@ -188,6 +200,10 @@ impl Abstraction {
             b_literals: Vec::new(),
             t_literals: Vec::new(),
             reverse_t_literals: FxHashMap::default(),
+            entry: BitVec::from_elem(matrix.clauses.len(), false),
+            sat_solver_assumptions: Vec::new(),
+            level,
+            scope_id,
         }
     }
 
@@ -195,11 +211,12 @@ impl Abstraction {
         matrix: &DQMatrix,
         variables: &FxHashSet<Variable>,
         level_lookup: &FxHashMap<Variable, usize>,
+        level: usize,
     ) -> Abstraction {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
         debug_assert!(!variables.is_empty());
 
-        let mut abs = Self::new();
+        let mut abs = Self::new(matrix, level, None);
 
         // add variables of scope to sat solver
         for &variable in variables {
@@ -250,8 +267,13 @@ impl Abstraction {
         abs
     }
 
-    fn new_existential(matrix: &DQMatrix, scope: &Scope) -> Abstraction {
-        let mut abs = Self::new();
+    fn new_existential(
+        matrix: &DQMatrix,
+        scope_id: ScopeId,
+        scope: &Scope,
+        level: usize,
+    ) -> Abstraction {
+        let mut abs = Self::new(matrix, level, Some(scope_id));
         let mut sat_clause = Vec::new();
 
         // add variables of scope to sat solver
@@ -319,8 +341,105 @@ impl Abstraction {
         }
     }
 
-    fn solve(&mut self, global: &mut GlobalSolverData) -> AbstractionResult {
-        panic!("not implementde");
+    fn is_universal(&self) -> bool {
+        self.scope_id.is_none()
+    }
+
+    fn variable_is_visible(
+        &self,
+        var: Variable,
+        matrix: &DQMatrix,
+        global: &GlobalSolverData,
+    ) -> bool {
+        if let Some(scope_id) = self.scope_id {
+            // existential scope
+            // only variables scope depends on
+            let scope = &matrix.prefix.scopes[scope_id];
+            matrix.prefix.depends_on_scope(scope, var)
+        } else {
+            debug_assert!(self.is_universal());
+            // everything bound earlier is relevant
+            let var_level = global.level_lookup[&var];
+            var_level < self.level
+        }
+    }
+
+    fn check_candidate_exists(
+        &mut self,
+        matrix: &DQMatrix,
+        global: &mut GlobalSolverData,
+    ) -> Lbool {
+        trace!("check_candidate_exists");
+
+        self.entry.clear();
+
+        // we compute the entry as a projection of the current assignment on the matrix
+        // with the restriction that the variable is `visible` for the scope
+        debug!("relevant assignments");
+        for (&var, &value) in &global.assignments {
+            if !self.variable_is_visible(var, matrix, global) {
+                continue;
+            }
+            debug!("{} {}", var, value);
+
+            let literal = Literal::new(var, value);
+            for &clause_id in matrix.occurrences(literal) {
+                self.entry.set(clause_id as usize, true);
+            }
+        }
+
+        self.sat_solver_assumptions.clear();
+
+        #[cfg(debug_assertions)]
+        let mut debug_print = String::new();
+
+        // we iterate in parallel over the entry and the t-literals of current level
+        // there are 3 possibilities:
+        // * clause from entry is not a t-lit: push entry to next quantifier
+        // * clause is in entry and a t-lit: assume positively
+        // * clause is not in entry and a t-lit: assume negatively
+        for &(clause_id, mut t_literal) in self.t_literals.iter() {
+            if !self.entry[clause_id as usize] {
+                t_literal = !t_literal;
+            }
+            if self.is_universal() {
+                t_literal = !t_literal;
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                if t_literal.isneg() {
+                    debug_print.push_str(&format!(" -t{}", clause_id));
+                } else {
+                    debug_print.push_str(&format!(" t{}", clause_id));
+                }
+            }
+
+            if self.is_universal() && !t_literal.isneg() {
+                // assume t-literal completely for existential quantifier
+                // and only negatively for universal quantifier
+                continue;
+            }
+
+            self.sat_solver_assumptions.push(t_literal);
+        }
+
+        #[cfg(debug_assertions)]
+        debug!("assume {}", debug_print);
+
+        self.sat
+            .solve_with_assumptions(self.sat_solver_assumptions.as_ref())
+    }
+
+    fn solve(&mut self, matrix: &DQMatrix, global: &mut GlobalSolverData) -> AbstractionResult {
+        trace!("solve");
+
+        debug!("");
+        info!("solve level {}", self.level);
+
+        self.check_candidate_exists(matrix, global);
+
+        panic!("solve: not implemented");
     }
 }
 

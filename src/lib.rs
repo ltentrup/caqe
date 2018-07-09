@@ -222,9 +222,10 @@ enum SolverPhases {
 pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
     #[cfg(debug_assertions)]
     CombinedLogger::init(vec![
-        TermLogger::new(config.verbosity, simplelog::Config::default()).unwrap(),
+        TermLogger::new(config.verbosity, simplelog::Config::default())
+            .expect("Could not initialize TermLogger"),
         //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-    ]).unwrap();
+    ]).expect("Could not initialize logging");
 
     #[cfg(feature = "statistics")]
     let statistics = TimingStats::new();
@@ -377,9 +378,10 @@ impl DCaqeConfig {
 pub fn run_dcaqe(config: DCaqeConfig) -> Result<SolverResult, Box<Error>> {
     #[cfg(debug_assertions)]
     CombinedLogger::init(vec![
-        TermLogger::new(config.verbosity, simplelog::Config::default()).unwrap(),
+        TermLogger::new(config.verbosity, simplelog::Config::default())
+            .expect("Could not initialize TermLogger"),
         //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-    ]).unwrap();
+    ]).expect("Could not initialize logging");
 
     #[cfg(feature = "statistics")]
     let statistics = TimingStats::new();
@@ -427,7 +429,7 @@ pub fn run_dcaqe(config: DCaqeConfig) -> Result<SolverResult, Box<Error>> {
                 statistics.sum(SolverPhases::Initializing)
             );
             println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-            solver.print_statistics();
+            //solver.print_statistics();
         }
     }
 
