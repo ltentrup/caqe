@@ -1,9 +1,6 @@
 extern crate cryptominisat;
 use self::cryptominisat::*;
 
-extern crate bit_vec;
-use self::bit_vec::BitVec;
-
 use super::super::*;
 
 #[cfg(feature = "statistics")]
@@ -186,7 +183,7 @@ struct ScopeSolverData {
     entry: BitVec,
 
     /// Stores the clauses for which the current level is maximal, i.e.,
-    /// there is no literal of a inner scope contained.
+    /// there is no literal of an inner scope contained.
     /// For universal scopes, it stores the clauses which are only influenced by
     /// the current, or some inner, scope.
     max_clauses: BitVec,

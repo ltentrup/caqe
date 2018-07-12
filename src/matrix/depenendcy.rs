@@ -33,17 +33,21 @@ impl DQVariableInfo {
     pub fn is_existential(&self) -> bool {
         !self.is_universal()
     }
+
+    pub fn get_scope_id(&self) -> &Option<ScopeId> {
+        &self.scope_id
+    }
 }
 
 /// A scope represents a grouping of existential variables with the same dependency set
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Scope {
     pub dependencies: FxHashSet<Variable>,
     pub existentials: Vec<Variable>,
 }
 
 impl Scope {
-    fn new(dependencies: &FxHashSet<Variable>) -> Scope {
+    pub fn new(dependencies: &FxHashSet<Variable>) -> Scope {
         Scope {
             dependencies: dependencies.clone(),
             existentials: Vec::new(),
@@ -69,6 +73,39 @@ impl Dimacs for Scope {
     }
 }
 
+impl PartialEq for Scope {
+    fn eq(&self, other: &Scope) -> bool {
+        self.dependencies == other.dependencies
+    }
+}
+
+impl PartialOrd for Scope {
+    fn partial_cmp(&self, other: &Scope) -> Option<Ordering> {
+        if self.dependencies.len() == other.dependencies.len() {
+            // self can only be equal or incomparable
+            if self.dependencies == other.dependencies {
+                Some(Ordering::Equal)
+            } else {
+                None
+            }
+        } else if self.dependencies.len() < other.dependencies.len() {
+            // can only be subset or incomparable
+            if self.dependencies.is_subset(&other.dependencies) {
+                Some(Ordering::Less)
+            } else {
+                None
+            }
+        } else {
+            // can only be superset or incomparable
+            if self.dependencies.is_superset(&other.dependencies) {
+                Some(Ordering::Greater)
+            } else {
+                None
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct DependencyPrefix {
     variables: VariableStore<DQVariableInfo>,
@@ -81,7 +118,7 @@ impl DependencyPrefix {
         if self.variables.get(variable).is_bound() {
             panic!("variable cannot be bound twice");
         }
-        let scope_id = match self.get_scope(dependencies) {
+        let scope_id = match self.scope_lookup(dependencies) {
             None => {
                 let scope_id = self.scopes.len();
                 self.scopes.push(Scope::new(dependencies));
@@ -109,13 +146,17 @@ impl DependencyPrefix {
         variable_info.bound = true;
     }
 
-    fn get_scope(&self, dependencies: &FxHashSet<Variable>) -> Option<ScopeId> {
+    pub fn scope_lookup(&self, dependencies: &FxHashSet<Variable>) -> Option<ScopeId> {
         for (scope_id, scope) in self.scopes.iter().enumerate() {
             if scope.dependencies == *dependencies {
                 return Some(scope_id);
             }
         }
         None
+    }
+
+    pub fn get_scope(&self, scope_id: ScopeId) -> &Scope {
+        &self.scopes[scope_id as usize]
     }
 
     /// makes sure that for every pair of scopes, the intersection of dependencies
@@ -133,7 +174,7 @@ impl DependencyPrefix {
                         .intersection(&other.dependencies)
                         .map(|x| *x)
                         .collect();
-                    if self.get_scope(&intersection).is_none() {
+                    if self.scope_lookup(&intersection).is_none() {
                         // intersection is not contained
                         to_add.push(intersection);
                         changed = true;
@@ -142,7 +183,7 @@ impl DependencyPrefix {
                 union = union.union(&scope.dependencies).map(|x| *x).collect();
             }
             for dependencies in &to_add {
-                if self.get_scope(dependencies).is_none() {
+                if self.scope_lookup(dependencies).is_none() {
                     // intersection is not contained
                     self.scopes.push(Scope::new(dependencies));
                 }
@@ -152,7 +193,7 @@ impl DependencyPrefix {
                 break;
             }
         }
-        if self.get_scope(&union).is_none() {
+        if self.scope_lookup(&union).is_none() {
             // union of all universal variables not contained
             self.scopes.push(Scope::new(&union));
         }
@@ -235,6 +276,15 @@ impl DependencyPrefix {
             other_scope.dependencies.is_subset(&scope.dependencies)
         }
     }
+
+    /// Returns `true` is scope is maximal
+    pub fn is_maximal(&self, scope: &Scope) -> bool {
+        self.scopes.iter().fold(true, |val, other| {
+            // checks that other is not a strict superset
+            val && (other.dependencies.len() <= scope.dependencies.len()
+                || !other.dependencies.is_superset(&scope.dependencies))
+        })
+    }
 }
 
 impl Prefix for DependencyPrefix {
@@ -281,6 +331,28 @@ impl Prefix for DependencyPrefix {
     }
 }
 
+impl Dimacs for DependencyPrefix {
+    fn dimacs(&self) -> String {
+        let mut dimacs = String::new();
+        let mut universals = FxHashSet::default();
+        for scope in &self.scopes {
+            universals = universals.union(&scope.dependencies).map(|x| *x).collect();
+        }
+        if universals.len() > 0 {
+            dimacs.push_str("a ");
+            for universal in &universals {
+                dimacs.push_str(&format!("{} ", universal))
+            }
+            dimacs.push_str("0\n");
+        }
+        for scope in &self.scopes {
+            dimacs.push_str(&scope.dimacs());
+            dimacs.push('\n');
+        }
+        dimacs
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -300,18 +372,24 @@ mod tests {
         dep.clear();
 
         // empty set and complete set not contained before...
-        assert!(prefix.get_scope(&dep).is_none());
+        assert!(prefix.scope_lookup(&dep).is_none());
         dep.insert(1);
         dep.insert(2);
-        assert!(prefix.get_scope(&dep).is_none());
+        assert!(prefix.scope_lookup(&dep).is_none());
         dep.clear();
 
         // ... but after building closure
         prefix.build_closure();
-        assert_eq!(prefix.get_scope(&dep), Some(2));
+        assert_eq!(prefix.scope_lookup(&dep), Some(2));
         dep.insert(1);
         dep.insert(2);
-        assert_eq!(prefix.get_scope(&dep), Some(3));
+        assert_eq!(prefix.scope_lookup(&dep), Some(3));
+
+        // check `is_maximal`
+        assert!(!prefix.is_maximal(&prefix.scopes[0]));
+        assert!(!prefix.is_maximal(&prefix.scopes[1]));
+        assert!(!prefix.is_maximal(&prefix.scopes[2]));
+        assert!(prefix.is_maximal(&prefix.scopes[3]));
 
         // check antichain decomposition
         // there are 3 antichains:
@@ -345,11 +423,11 @@ mod tests {
         dep.clear();
 
         // empty set not contained before...
-        assert!(prefix.get_scope(&dep).is_none());
+        assert!(prefix.scope_lookup(&dep).is_none());
 
         // ... but after building closure
         prefix.build_closure();
-        assert!(prefix.get_scope(&dep).is_some());
+        assert!(prefix.scope_lookup(&dep).is_some());
 
         let antichains = prefix.antichain_decomposition();
         assert_eq!(antichains.len(), 4);
@@ -401,5 +479,36 @@ mod tests {
         assert!(prefix.depends_on(6, 4));
         assert!(prefix.depends_on(6, 5));
         assert!(prefix.depends_on(6, 6));
+    }
+
+    #[test]
+    fn test_scope_comparison() {
+        let scope1 = Scope::new(&vec![1 as Variable].iter().map(|x| *x).collect());
+        let scope2 = Scope::new(&vec![2 as Variable].iter().map(|x| *x).collect());
+        let empty = Scope::new(&FxHashSet::default());
+        let full = Scope::new(&vec![1 as Variable, 2 as Variable]
+            .iter()
+            .map(|x| *x)
+            .collect());
+
+        assert_eq!(scope1.partial_cmp(&scope1), Some(Ordering::Equal));
+        assert_eq!(scope1.partial_cmp(&scope2), None);
+        assert_eq!(scope1.partial_cmp(&empty), Some(Ordering::Greater));
+        assert_eq!(scope1.partial_cmp(&full), Some(Ordering::Less));
+
+        assert_eq!(scope2.partial_cmp(&scope1), None);
+        assert_eq!(scope2.partial_cmp(&scope2), Some(Ordering::Equal));
+        assert_eq!(scope2.partial_cmp(&empty), Some(Ordering::Greater));
+        assert_eq!(scope2.partial_cmp(&full), Some(Ordering::Less));
+
+        assert_eq!(empty.partial_cmp(&scope1), Some(Ordering::Less));
+        assert_eq!(empty.partial_cmp(&scope2), Some(Ordering::Less));
+        assert_eq!(empty.partial_cmp(&empty), Some(Ordering::Equal));
+        assert_eq!(empty.partial_cmp(&full), Some(Ordering::Less));
+
+        assert_eq!(full.partial_cmp(&scope1), Some(Ordering::Greater));
+        assert_eq!(full.partial_cmp(&scope2), Some(Ordering::Greater));
+        assert_eq!(full.partial_cmp(&empty), Some(Ordering::Greater));
+        assert_eq!(full.partial_cmp(&full), Some(Ordering::Equal));
     }
 }

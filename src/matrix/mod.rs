@@ -39,7 +39,8 @@ impl<P: Prefix> Matrix<P> {
         }
     }
 
-    pub fn add(&mut self, mut clause: Clause) {
+    /// Adds a clause to the matrix and returns its `ClauseId`
+    pub fn add(&mut self, mut clause: Clause) -> ClauseId {
         self.prefix.reduce_universal(&mut clause);
         for &literal in clause.iter() {
             let occurrences = self.occurrences.entry(literal).or_insert(Vec::new());
@@ -50,6 +51,7 @@ impl<P: Prefix> Matrix<P> {
             self.conflict = true;
         }
         self.clauses.push(clause);
+        (self.clauses.len() - 1) as ClauseId
     }
 
     pub fn occurrences(&self, literal: Literal) -> std::slice::Iter<ClauseId> {
@@ -91,6 +93,7 @@ pub trait VariableInfo: std::clone::Clone {
 #[derive(Debug)]
 pub struct VariableStore<V: VariableInfo> {
     variables: Vec<V>,
+    used: BitVec,
     orig_num_variables: usize,
     unbounded: V,
 }
@@ -99,8 +102,14 @@ impl<V: VariableInfo> VariableStore<V> {
     pub fn new(num_variables: usize) -> Self {
         let mut variables = Vec::with_capacity(num_variables + 1);
         variables.push(V::new());
+
+        let mut used = BitVec::with_capacity(num_variables + 1);
+        used.grow(num_variables + 1, false);
+        used.set(0, true);
+
         VariableStore {
             variables: variables,
+            used,
             orig_num_variables: num_variables,
             unbounded: V::new(),
         }
@@ -125,16 +134,30 @@ impl<V: VariableInfo> VariableStore<V> {
     }
 
     /// Makes sure variable vector is large enough
+    /// Also, marks the variable as `used`
     fn import(&mut self, variable: Variable) {
         if self.variables.len() <= variable as usize {
             self.variables.resize((variable + 1) as usize, V::new())
         }
+        if self.used.len() <= variable as usize {
+            self.used.grow((variable + 1) as usize, false);
+        }
+        self.used.set(variable as usize, true);
     }
 
     fn get_mut(&mut self, variable: Variable) -> &mut V {
         let index = variable as usize;
         assert!(index < self.variables.len());
         &mut self.variables[index]
+    }
+
+    /// Returns the next unused variable
+    pub fn next_unused(&self) -> Variable {
+        if let Some((index, _)) = self.used.iter().enumerate().filter(|(_, val)| !val).next() {
+            index as Variable
+        } else {
+            self.used.len() as Variable
+        }
     }
 }
 

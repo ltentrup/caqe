@@ -1,17 +1,17 @@
 // extern crates
 #[macro_use]
 extern crate log;
+extern crate bit_vec;
 extern crate clap;
 extern crate rustc_hash;
 extern crate simplelog;
 extern crate tempfile;
 
-use simplelog::*;
-
+use bit_vec::BitVec;
 use clap::{App, Arg};
-use tempfile::tempfile;
-
 use rustc_hash::{FxHashMap, FxHashSet};
+use simplelog::*;
+use tempfile::tempfile;
 
 // Rust stdlib
 use std::error::Error;

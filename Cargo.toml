@@ -5,9 +5,9 @@ authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 
 [dependencies]
 cryptominisat = "5.0.1"
-log = "0.4"
+log = { version = "0.4", features = ["release_max_level_warn"] }
 simplelog = "^0.5.0"
-bit-vec = "0.4.4"
+bit-vec = "0.5.0"
 tempfile = "3.0.1"    # for first running preprocessor and piping result to temporary
 clap = "2.31.2"       # parsing command line arguments
 rustc-hash = "1.0.1"  # fast, non-randomized HashMap/HashSet

@@ -2,7 +2,7 @@ use super::*;
 
 use super::matrix::hierarchical::*;
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Clause {
     literals: Vec<Literal>,
 }
