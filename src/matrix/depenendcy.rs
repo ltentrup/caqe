@@ -67,7 +67,7 @@ impl Dimacs for Scope {
             for &dependency in self.dependencies.iter() {
                 dimacs.push_str(&format!("{} ", dependency));
             }
-            dimacs.push_str("0");
+            dimacs.push_str("0\n");
         }
         dimacs
     }
@@ -347,7 +347,6 @@ impl Dimacs for DependencyPrefix {
         }
         for scope in &self.scopes {
             dimacs.push_str(&scope.dimacs());
-            dimacs.push('\n');
         }
         dimacs
     }
