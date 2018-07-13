@@ -115,7 +115,11 @@ impl<'a> DCaqeSolver<'a> {
             }
         }
 
-        // TODO: reset universal progress
+        for level in self.levels.iter_mut() {
+            if let SolverLevel::Universal(abstraction) = level {
+                abstraction.reset();
+            }
+        }
         // TODO: reset skolem functions
 
         self.global.unsat_core.grow(clauses.len(), false);
@@ -479,6 +483,9 @@ struct Abstraction {
     /// stores the assumptions given to sat solver
     sat_solver_assumptions: Vec<Lit>,
 
+    /// sat literal to implement incremental sat solving
+    inc_sat_lit: Option<Lit>,
+
     level: usize,
     is_max_level: bool,
 
@@ -505,6 +512,7 @@ impl Abstraction {
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
             sat_solver_assumptions: Vec::new(),
+            inc_sat_lit: None,
             level,
             is_max_level,
             scope_id,
@@ -530,6 +538,8 @@ impl Abstraction {
         for (clause_id, clause) in matrix.clauses.iter().enumerate() {
             abs.encode_universal_clause(matrix, clause_id as ClauseId, clause, level_lookup);
         }
+
+        abs.inc_sat_lit = Some(abs.sat.new_var());
 
         abs
     }
@@ -608,6 +618,10 @@ impl Abstraction {
             );
         }
 
+        debug!("Scope {}", scope_id);
+        debug!("t-literals: {}", abs.t_literals.len());
+        debug!("b-literals: {}", abs.b_literals.len());
+
         abs
     }
 
@@ -625,16 +639,26 @@ impl Abstraction {
         let mut need_b_lit = false;
         let mut need_t_lit = false;
         let mut contains_variables = false;
+        let mut maximal_elements: MaxElements<&Scope> = MaxElements::new();
 
         for &literal in clause.iter() {
             if !self.variable_to_sat.contains_key(&literal.variable()) {
                 // not of current scope
-                if matrix.prefix.depends_on_scope(scope, literal.variable()) {
-                    // outer variable
-                    need_t_lit = true;
+                let info = matrix.prefix.variables().get(literal.variable());
+                if let &Some(scope_id) = info.get_scope_id() {
+                    // existential variable
+                    debug_assert!(scope_id != self.scope_id.unwrap());
+                    let other_scope = matrix.prefix.get_scope(scope_id);
+                    if other_scope.dependencies.is_subset(&scope.dependencies) {
+                        maximal_elements.add(other_scope);
+                    } else {
+                        need_b_lit = true;
+                    }
                 } else {
-                    // inner variable
-                    need_b_lit = true;
+                    // universal variable
+                    if scope.dependencies.contains(&literal.variable()) {
+                        need_t_lit = true;
+                    }
                 }
                 continue;
             }
@@ -642,12 +666,13 @@ impl Abstraction {
             sat_clause.push(self.lit_to_sat_lit(literal));
         }
 
-        if !contains_variables {
+        if !contains_variables && maximal_elements.len() < 2 {
             debug_assert!(sat_clause.is_empty());
             return;
         }
 
-        if need_t_lit {
+        if need_t_lit || maximal_elements.len() > 1 {
+            // we need a t-literal if there are at least two, inner and incomparable scopes directly above
             let t_lit = self.sat.new_var();
             sat_clause.push(t_lit);
             self.t_literals.push((clause_id as ClauseId, t_lit));
@@ -656,6 +681,7 @@ impl Abstraction {
         }
 
         if need_b_lit {
+            debug_assert!(need_b_lit);
             let b_lit = self.sat.new_var();
             sat_clause.push(!b_lit);
             self.b_literals.push((clause_id as ClauseId, b_lit));
@@ -796,6 +822,10 @@ impl Abstraction {
         #[cfg(debug_assertions)]
         debug!("assume {}", debug_print);
 
+        if let Some(inc_lit) = self.inc_sat_lit {
+            self.sat_solver_assumptions.push(!inc_lit);
+        }
+
         self.sat
             .solve_with_assumptions(self.sat_solver_assumptions.as_ref())
     }
@@ -841,6 +871,12 @@ impl Abstraction {
 
         let failed = self.sat.get_conflict();
         for l in failed {
+            if let Some(inc_sat) = self.inc_sat_lit {
+                // ignore incremental sat literal
+                if l.var() == inc_sat.var() {
+                    continue;
+                }
+            }
             let clause_id = self.reverse_t_literals[&l.var()];
             global.unsat_core.set(clause_id as usize, true);
 
@@ -933,7 +969,8 @@ impl Abstraction {
     fn refine(&mut self, learned: &BitVec) {
         trace!("refine");
 
-        let mut blocking_clause = Vec::new();
+        let blocking_clause = &mut self.sat_solver_assumptions;
+        blocking_clause.clear();
 
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
@@ -951,10 +988,25 @@ impl Abstraction {
             #[cfg(debug_assertions)]
             debug_print.push_str(&format!(" b{}", clause_id));
         }
+
+        if let Some(inc_lit) = self.inc_sat_lit {
+            blocking_clause.push(inc_lit);
+        }
+
         self.sat.add_clause(blocking_clause.as_ref());
 
         #[cfg(debug_assertions)]
         debug!("refinement: {}", debug_print);
+    }
+
+    /// Resets the abstraction completely, i.e., removes all learnt clauses.
+    /// Only applicable for universal levels.
+    fn reset(&mut self) {
+        debug_assert!(self.is_universal());
+        if let Some(inc_lit) = self.inc_sat_lit {
+            self.sat.add_clause(&vec![inc_lit]);
+        }
+        self.inc_sat_lit = Some(self.sat.new_var());
     }
 
     fn solve(&mut self, matrix: &DQMatrix, global: &mut GlobalSolverData) -> AbstractionResult {
@@ -1090,5 +1142,24 @@ e 5 0
         let mut matrix = dqdimacs::parse(&instance).unwrap();
         let mut solver = DCaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
+    }
+
+    #[test]
+    fn test_unsat_simple() {
+        let instance = "c
+p cnf 4 6
+a 1 2 0
+d 3 1 0
+d 4 2 0
+3 4 1 0
+-3 -4 1 0
+3 4 -1 -2 0
+-3 4 -1 2 0
+3 -4 -1 2 0
+-3 -4 -1 -2 0
+";
+        let mut matrix = dqdimacs::parse(&instance).unwrap();
+        let mut solver = DCaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 }
