@@ -138,6 +138,129 @@ impl<'a> DCaqeSolver<'a> {
             level.add_clauses(&self.matrix, &self.global.level_lookup, &clauses);
         }
     }
+
+    fn solve_level(&mut self, level: usize) -> SolveLevelResult {
+        match self.levels[level] {
+            SolverLevel::Universal(ref mut abstraction) => {
+                match abstraction.solve(&mut self.matrix, &mut self.global) {
+                    AbstractionResult::CandidateFound => {
+                        // continue with inner level
+                        SolveLevelResult::ContinueInner
+                    }
+                    AbstractionResult::CandidateRefuted => SolveLevelResult::SatConflict(level),
+                    _ => unreachable!(),
+                }
+            }
+            SolverLevel::Existential(ref mut abstractions) => {
+                let len = abstractions.len();
+                let mut result = SolveLevelResult::ContinueInner;
+                for abstraction in abstractions {
+                    match abstraction.solve(&mut self.matrix, &mut self.global) {
+                        AbstractionResult::CandidateRefuted => {
+                            // global.unsat_core represents the conflict clause
+                            let clause = self.global
+                                .build_conflict_clause(&self.matrix, abstraction.scope_id.unwrap());
+                            result = SolveLevelResult::UnsatConflict(clause);
+                            break;
+                        }
+                        AbstractionResult::CandidateVerified => {
+                            assert!(len == 1);
+                            result = SolveLevelResult::SatConflict(level);
+                            break;
+                        }
+                        AbstractionResult::CandidateFound => {
+                            debug_assert!(result == SolveLevelResult::ContinueInner);
+                        }
+                    }
+                }
+                result
+            }
+        }
+    }
+
+    fn process_level_result(
+        &mut self,
+        mut level: usize,
+        result: SolveLevelResult,
+    ) -> Result<usize, SolverResult> {
+        match result {
+            SolveLevelResult::ContinueInner => level = level + 1,
+            SolveLevelResult::UnsatConflict(clause) => {
+                if clause.len() == 0 {
+                    // derived the empty clause
+                    return Err(SolverResult::Unsatisfiable);
+                }
+                debug!("conflict clause is {}", clause.dimacs());
+                match self.global
+                    .dependency_conflict_resolution(&mut self.matrix, clause)
+                {
+                    Ok((clauses, variables)) => {
+                        // we applied dependency conflict resolution
+                        self.update_abstractions(clauses, variables);
+                        level = 0;
+                    }
+                    Err(scope_id) => {
+                        // we apply standard conflict resolution
+                        // go to level with scope_id, refine, and proceed
+                        level = level - 1;
+                        loop {
+                            match &mut self.levels[level] {
+                                SolverLevel::Existential(abstractions) => {
+                                    // refine and proceed with this level
+                                    let mut refined = false;
+                                    for abstraction in abstractions {
+                                        if abstraction.scope_id.unwrap() == scope_id {
+                                            // found the existential level to refine
+                                            abstraction.refine(&self.global.unsat_core);
+                                            refined = true;
+                                        }
+                                    }
+                                    if !refined {
+                                        level = level - 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                SolverLevel::Universal(abstraction) => {
+                                    // optimize and proceed with inner level
+                                    abstraction.unsat_propagation(&mut self.global);
+                                    level = level - 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            SolveLevelResult::SatConflict(orig_level) => {
+                loop {
+                    match &mut self.levels[level] {
+                        SolverLevel::Existential(abstractions) => {
+                            // optimize and proceed with inner level
+                            if level == 0 {
+                                return Err(SolverResult::Satisfiable);
+                            }
+                            for abstraction in abstractions {
+                                abstraction.entry_minimization(&self.matrix, &mut self.global);
+                            }
+                            level = level - 1;
+                        }
+                        SolverLevel::Universal(abstraction) => {
+                            // refine and proceed with this level
+                            if level < orig_level {
+                                abstraction.refine(&self.global.unsat_core);
+                                break;
+                            } else if level == 0 {
+                                return Err(SolverResult::Satisfiable);
+                            } else {
+                                level = level - 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(level)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -155,119 +278,10 @@ impl<'a> super::Solver for DCaqeSolver<'a> {
 
         let mut level = 0;
         loop {
-            let result = match self.levels[level] {
-                SolverLevel::Universal(ref mut abstraction) => {
-                    match abstraction.solve(&mut self.matrix, &mut self.global) {
-                        AbstractionResult::CandidateFound => {
-                            // continue with inner level
-                            SolveLevelResult::ContinueInner
-                        }
-                        AbstractionResult::CandidateRefuted => SolveLevelResult::SatConflict(level),
-                        _ => unreachable!(),
-                    }
-                }
-                SolverLevel::Existential(ref mut abstractions) => {
-                    let len = abstractions.len();
-                    let mut result = SolveLevelResult::ContinueInner;
-                    for abstraction in abstractions {
-                        match abstraction.solve(&mut self.matrix, &mut self.global) {
-                            AbstractionResult::CandidateRefuted => {
-                                // global.unsat_core represents the conflict clause
-                                let clause = self.global.build_conflict_clause(
-                                    &self.matrix,
-                                    abstraction.scope_id.unwrap(),
-                                );
-                                result = SolveLevelResult::UnsatConflict(clause);
-                                break;
-                            }
-                            AbstractionResult::CandidateVerified => {
-                                assert!(len == 1);
-                                result = SolveLevelResult::SatConflict(level);
-                                break;
-                            }
-                            AbstractionResult::CandidateFound => {
-                                debug_assert!(result == SolveLevelResult::ContinueInner);
-                            }
-                        }
-                    }
-                    result
-                }
-            };
-            match result {
-                SolveLevelResult::ContinueInner => level = level + 1,
-                SolveLevelResult::UnsatConflict(clause) => {
-                    if clause.len() == 0 {
-                        // derived the empty clause
-                        return SolverResult::Unsatisfiable;
-                    }
-                    debug!("conflict clause is {}", clause.dimacs());
-                    match self.global
-                        .dependency_conflict_resolution(&mut self.matrix, clause)
-                    {
-                        Ok((clauses, variables)) => {
-                            // we applied dependency conflict resolution
-                            self.update_abstractions(clauses, variables);
-                            level = 0;
-                        }
-                        Err(scope_id) => {
-                            // we apply standard conflict resolution
-                            // go to level with scope_id, refine, and proceed
-                            level = level - 1;
-                            loop {
-                                match &mut self.levels[level] {
-                                    SolverLevel::Existential(abstractions) => {
-                                        // refine and proceed with this level
-                                        let mut refined = false;
-                                        for abstraction in abstractions {
-                                            if abstraction.scope_id.unwrap() == scope_id {
-                                                // found the existential level to refine
-                                                abstraction.refine(&self.global.unsat_core);
-                                                refined = true;
-                                            }
-                                        }
-                                        if !refined {
-                                            level = level - 1;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    SolverLevel::Universal(abstraction) => {
-                                        // optimize and proceed with inner level
-                                        abstraction.unsat_propagation(&mut self.global);
-                                        level = level - 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                SolveLevelResult::SatConflict(orig_level) => {
-                    loop {
-                        match &mut self.levels[level] {
-                            SolverLevel::Existential(abstractions) => {
-                                // optimize and proceed with inner level
-                                if level == 0 {
-                                    return SolverResult::Satisfiable;
-                                }
-                                for abstraction in abstractions {
-                                    abstraction.entry_minimization(&self.matrix, &mut self.global);
-                                }
-                                level = level - 1;
-                            }
-                            SolverLevel::Universal(abstraction) => {
-                                // refine and proceed with this level
-                                if level < orig_level {
-                                    abstraction.refine(&self.global.unsat_core);
-                                    break;
-                                } else if level == 0 {
-                                    return SolverResult::Satisfiable;
-                                } else {
-                                    level = level - 1;
-                                }
-                            }
-                        }
-                    }
-                }
+            let result = self.solve_level(level);
+            level = match self.process_level_result(level, result) {
+                Ok(l) => l,
+                Err(res) => return res,
             }
         }
     }
