@@ -71,6 +71,8 @@ impl<'a> DCaqeSolver<'a> {
                 )));
             }
             let level = abstractions.len();
+            // we only need to learn Skolem functions if there is more than one abstraction
+            let needs_learner = antichain.len() > 1;
             abstractions.push(SolverLevel::Existential(
                 antichain
                     .iter()
@@ -80,7 +82,7 @@ impl<'a> DCaqeSolver<'a> {
                         for &var in &scope.existentials {
                             global.level_lookup.insert(var, level);
                         }
-                        Abstraction::new_existential(matrix, scope_id, scope, level)
+                        Abstraction::new_existential(matrix, scope_id, scope, level, needs_learner)
                     })
                     .collect(),
             ))
@@ -117,11 +119,18 @@ impl<'a> DCaqeSolver<'a> {
         }
 
         for level in self.levels.iter_mut() {
-            if let SolverLevel::Universal(abstraction) = level {
-                abstraction.reset();
+            match level {
+                SolverLevel::Universal(abstraction) => abstraction.reset(),
+                SolverLevel::Existential(abstractions) => {
+                    for abstraction in abstractions.iter_mut() {
+                        match abstraction.learner.as_mut() {
+                            Some(l) => l.reset(),
+                            None => {}
+                        }
+                    }
+                }
             }
         }
-        // TODO: reset skolem functions
 
         self.global.unsat_core.grow(clauses.len(), false);
 
@@ -493,10 +502,18 @@ struct Abstraction {
 
     /// scope_id for existential scopes, `None` for universal ones
     scope_id: Option<ScopeId>,
+
+    /// learns Skolem functions during solving
+    learner: Option<SkolemFunctionLearner>,
 }
 
 impl Abstraction {
-    fn new(matrix: &DQMatrix, level: usize, scope_id: Option<ScopeId>) -> Abstraction {
+    fn new(
+        matrix: &DQMatrix,
+        level: usize,
+        scope_id: Option<ScopeId>,
+        needs_learner: bool,
+    ) -> Abstraction {
         let mut sat = cryptominisat::Solver::new();
         sat.set_num_threads(1);
         let is_max_level = scope_id
@@ -505,6 +522,11 @@ impl Abstraction {
                 matrix.prefix.is_maximal(scope)
             })
             .unwrap_or(false);
+        let learner = if needs_learner {
+            Some(SkolemFunctionLearner::new())
+        } else {
+            None
+        };
         Abstraction {
             sat,
             variable_to_sat: FxHashMap::default(),
@@ -518,6 +540,7 @@ impl Abstraction {
             level,
             is_max_level,
             scope_id,
+            learner,
         }
     }
 
@@ -530,7 +553,7 @@ impl Abstraction {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
         debug_assert!(!variables.is_empty());
 
-        let mut abs = Self::new(matrix, level, None);
+        let mut abs = Self::new(matrix, level, None, false);
 
         // add variables of scope to sat solver
         for &variable in variables {
@@ -601,8 +624,9 @@ impl Abstraction {
         scope_id: ScopeId,
         scope: &Scope,
         level: usize,
+        needs_learner: bool,
     ) -> Abstraction {
-        let mut abs = Self::new(matrix, level, Some(scope_id));
+        let mut abs = Self::new(matrix, level, Some(scope_id), needs_learner);
         let mut sat_clause = Vec::new();
 
         // add variables of scope to sat solver
@@ -891,7 +915,7 @@ impl Abstraction {
         debug!("unsat core: {}", debug_print);
     }
 
-    fn entry_minimization(&self, matrix: &DQMatrix, global: &mut GlobalSolverData) {
+    fn entry_minimization(&mut self, matrix: &DQMatrix, global: &mut GlobalSolverData) {
         trace!("entry_minimization");
 
         let scope = matrix
@@ -924,6 +948,10 @@ impl Abstraction {
                     }
                 }
             }*/
+        }
+
+        if let Some(ref mut learner) = self.learner {
+            learner.learn(matrix, global, scope);
         }
     }
 
@@ -1021,6 +1049,12 @@ impl Abstraction {
         if let Some(scope_id) = self.scope_id {
             let scope = matrix.prefix.get_scope(scope_id);
             debug!("{:?}", scope);
+
+            if let Some(ref mut learner) = self.learner {
+                if learner.matches(matrix, global, scope) {
+                    return AbstractionResult::CandidateFound;
+                }
+            }
         }
 
         match self.check_candidate_exists(matrix, global) {
@@ -1115,6 +1149,173 @@ where
         self.elements.into_iter()
     }
 }*/
+
+struct SkolemFunctionLearner {
+    sat: cryptominisat::Solver,
+    incremental: Lit,
+    variable2sat: FxHashMap<Variable, Lit>,
+    assumptions: Vec<Lit>,
+}
+
+/// Implements the part of learning the Skolem function during solving
+impl SkolemFunctionLearner {
+    fn new() -> SkolemFunctionLearner {
+        let mut sat = cryptominisat::Solver::new();
+        let incremental = sat.new_var();
+        sat.add_clause(&vec![incremental]);
+        SkolemFunctionLearner {
+            sat,
+            incremental,
+            variable2sat: FxHashMap::default(),
+            assumptions: Vec::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.sat = cryptominisat::Solver::new();
+        self.incremental = self.sat.new_var();
+        self.sat.add_clause(&vec![self.incremental]);
+        self.variable2sat.clear();
+    }
+
+    /// Learns the function case of the Skolem function represented by the entry in
+    /// `global->unsat_core` for the variables bound by `scope`.
+    fn learn(&mut self, matrix: &DQMatrix, global: &GlobalSolverData, scope: &Scope) {
+        // encodes query
+        // prevIncLit => ite(entry, assignment, newLit)
+
+        let mut conjunctive_lits = Vec::new();
+        let sat_clause = &mut self.assumptions;
+        sat_clause.clear();
+        let sat = &mut self.sat;
+
+        // builds the conjunction of entries
+        for (clause_id, _) in global.unsat_core.iter().enumerate().filter(|(_, val)| *val) {
+            let clause = &matrix.clauses[clause_id];
+
+            debug_assert!(sat_clause.is_empty());
+
+            for &literal in clause.iter().filter(|l| {
+                !scope.existentials.contains(&l.variable())
+                    && matrix.prefix.depends_on_scope(scope, l.variable())
+            }) {
+                let sat_lit = *self.variable2sat
+                    .entry(literal.variable())
+                    .or_insert_with(|| sat.new_var());
+                if literal.signed() {
+                    sat_clause.push(!sat_lit);
+                } else {
+                    sat_clause.push(sat_lit);
+                }
+            }
+
+            if sat_clause.is_empty() {
+                continue;
+            }
+
+            let conjunction = sat.new_var();
+            sat_clause.push(!conjunction);
+            sat.add_clause(sat_clause);
+            sat_clause.clear();
+            conjunctive_lits.push(conjunction);
+        }
+
+        debug_assert!(sat_clause.is_empty());
+        let precondition = sat.new_var(); // 1 iff entry holds
+        sat_clause.push(precondition);
+        for &conjunction in &conjunctive_lits {
+            sat_clause.push(!conjunction);
+            sat.add_clause(&vec![!precondition, conjunction]);
+        }
+        sat.add_clause(&sat_clause);
+        sat_clause.clear();
+
+        debug_assert!(sat_clause.is_empty());
+        let assignment_lit = sat.new_var(); // 1 iff assignment holds
+        sat_clause.push(assignment_lit);
+        for &variable in &scope.existentials {
+            let sat_lit = *self.variable2sat
+                .entry(variable)
+                .or_insert_with(|| sat.new_var());
+            if global.assignments[&variable] {
+                sat_clause.push(!sat_lit);
+                sat.add_clause(&vec![!assignment_lit, sat_lit]);
+            } else {
+                sat_clause.push(sat_lit);
+                sat.add_clause(&vec![!assignment_lit, !sat_lit]);
+            }
+        }
+        sat.add_clause(&sat_clause);
+        sat_clause.clear();
+
+        let previous_inc_lit = self.incremental;
+        self.incremental = sat.new_var();
+
+        // if then else
+        // not prev || not prec || assig == (prev && prec) -> assig
+        sat.add_clause(&vec![!previous_inc_lit, !precondition, assignment_lit]);
+        sat.add_clause(&vec![!previous_inc_lit, precondition, self.incremental]);
+    }
+
+    /// Checks if the current assignment in `global->assignment` matches the previous
+    /// learned Skolem function.
+    /// If yes, the assignment is updated accordingly.
+    fn matches(&mut self, matrix: &DQMatrix, global: &mut GlobalSolverData, scope: &Scope) -> bool {
+        self.assumptions.clear();
+
+        // assume incremental literal negatively
+        self.assumptions.push(!self.incremental);
+
+        // assume dependent variables
+        for (variable, &sat_lit) in &self.variable2sat {
+            if scope.existentials.contains(variable) {
+                continue;
+            }
+            if global.assignments[variable] {
+                self.assumptions.push(sat_lit);
+            } else {
+                self.assumptions.push(!sat_lit);
+            }
+        }
+
+        match self.sat.solve_with_assumptions(&self.assumptions) {
+            Lbool::True => {
+                // found a match, update assignments
+
+                #[cfg(debug_assertions)]
+                let mut debug_print = String::new();
+
+                let model = self.sat.get_model();
+                for variable in &scope.existentials {
+                    let sat_var = self.variable2sat[variable];
+                    let value = match model[sat_var.var() as usize] {
+                        Lbool::True => true,
+                        Lbool::False => false,
+                        _ => panic!("expect all variables to be assigned"),
+                    };
+
+                    #[cfg(debug_assertions)]
+                    {
+                        if value {
+                            debug_print.push_str(&format!(" {}", variable));
+                        } else {
+                            debug_print.push_str(&format!(" -{}", variable));
+                        }
+                    }
+
+                    let old = global.assignments.entry(*variable).or_insert(value);
+                    *old = value;
+                }
+                #[cfg(debug_assertions)]
+                debug!("assignment {}", debug_print);
+
+                true
+            }
+            Lbool::False => false,
+            _ => unreachable!(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
