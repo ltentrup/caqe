@@ -56,7 +56,7 @@ impl<'a> DCaqeSolver<'a> {
                 .map(|x| *x)
                 .collect();
             bound_universals = bound_universals.union(&universals).map(|x| *x).collect();
-            println!("{:?} {:?}", universals, antichain);
+            //debug!("{:?} {:?}", universals, antichain);
 
             if !universals.is_empty() {
                 let level = abstractions.len();
@@ -334,6 +334,7 @@ impl GlobalSolverData {
                 maximal_scopes.add(scope);
             }
         }
+        debug_assert!(maximal_scopes.len() > 0, "clause should not be empty");
         if maximal_scopes.len() == 1 {
             let scope = maximal_scopes.remove(0);
             return Err(matrix.prefix.scope_lookup(&scope.dependencies).unwrap());
@@ -450,8 +451,6 @@ impl GlobalSolverData {
         Ok((clauses, arbiters))
     }
 }
-
-type AbstractionId = usize;
 
 #[derive(Debug, PartialEq, Eq)]
 enum AbstractionResult {
@@ -651,6 +650,7 @@ impl Abstraction {
                     let other_scope = matrix.prefix.get_scope(scope_id);
                     if other_scope.dependencies.is_subset(&scope.dependencies) {
                         maximal_elements.add(other_scope);
+                        need_t_lit = true;
                     } else {
                         need_b_lit = true;
                     }
@@ -671,7 +671,7 @@ impl Abstraction {
             return;
         }
 
-        if need_t_lit || maximal_elements.len() > 1 {
+        if need_t_lit {
             // we need a t-literal if there are at least two, inner and incomparable scopes directly above
             let t_lit = self.sat.new_var();
             sat_clause.push(t_lit);
