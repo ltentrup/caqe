@@ -204,14 +204,17 @@ impl DependencyPrefix {
         // sort scopes by superset inclusion
         let mut scopes: Vec<ScopeId> = (0..self.scopes.len()).collect();
         scopes.sort_unstable_by(|&scope, &other| {
-            let lhs = &self.scopes[scope].dependencies;
-            let rhs = &self.scopes[other].dependencies;
-            if lhs.is_superset(rhs) {
-                Ordering::Less
-            } else if lhs.is_subset(rhs) {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
+            let lhs = &self.scopes[scope];
+            let rhs = &self.scopes[other];
+            let res = match lhs.partial_cmp(rhs) {
+                Some(ord) => ord,
+                None => lhs.dependencies.len().cmp(&rhs.dependencies.len()),
+            };
+            // reverse
+            match res {
+                Ordering::Equal => Ordering::Equal,
+                Ordering::Greater => Ordering::Less,
+                Ordering::Less => Ordering::Greater,
             }
         });
 

@@ -1018,6 +1018,10 @@ impl Abstraction {
 
         debug!("");
         info!("solve level {}", self.level);
+        if let Some(scope_id) = self.scope_id {
+            let scope = matrix.prefix.get_scope(scope_id);
+            debug!("{:?}", scope);
+        }
 
         match self.check_candidate_exists(matrix, global) {
             Lbool::True => {
