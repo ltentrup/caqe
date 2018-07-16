@@ -1029,6 +1029,11 @@ impl Abstraction {
 
         #[cfg(debug_assertions)]
         debug!("refinement: {}", debug_print);
+
+        // refinement may invalidate previous Skolem functions
+        if let Some(ref mut learner) = self.learner {
+            learner.reset();
+        }
     }
 
     /// Resets the abstraction completely, i.e., removes all learnt clauses.
@@ -1172,6 +1177,7 @@ impl SkolemFunctionLearner {
     }
 
     fn reset(&mut self) {
+        trace!("SkolemFunctionLearner::reset");
         self.sat = cryptominisat::Solver::new();
         self.incremental = self.sat.new_var();
         self.sat.add_clause(&vec![self.incremental]);
@@ -1181,6 +1187,7 @@ impl SkolemFunctionLearner {
     /// Learns the function case of the Skolem function represented by the entry in
     /// `global->unsat_core` for the variables bound by `scope`.
     fn learn(&mut self, matrix: &DQMatrix, global: &GlobalSolverData, scope: &Scope) {
+        trace!("SkolemFunctionLearner::learn");
         // encodes query
         // prevIncLit => ite(entry, assignment, newLit)
 
@@ -1261,6 +1268,7 @@ impl SkolemFunctionLearner {
     /// learned Skolem function.
     /// If yes, the assignment is updated accordingly.
     fn matches(&mut self, matrix: &DQMatrix, global: &mut GlobalSolverData, scope: &Scope) -> bool {
+        trace!("SkolemFunctionLearner::match");
         self.assumptions.clear();
 
         // assume incremental literal negatively
@@ -1306,6 +1314,7 @@ impl SkolemFunctionLearner {
                     let old = global.assignments.entry(*variable).or_insert(value);
                     *old = value;
                 }
+                debug!("replay Skolem function");
                 #[cfg(debug_assertions)]
                 debug!("assignment {}", debug_print);
 
