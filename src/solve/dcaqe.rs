@@ -185,15 +185,20 @@ impl<'a> DCaqeSolver<'a> {
     ) -> Result<usize, SolverResult> {
         match result {
             SolveLevelResult::ContinueInner => level = level + 1,
-            SolveLevelResult::UnsatConflict(clause) => {
+            SolveLevelResult::UnsatConflict(mut clause) => {
+                let len_before = clause.len();
+                self.matrix.prefix.reduce_universal(&mut clause);
+                let universally_reduced = len_before != clause.len();
                 if clause.len() == 0 {
                     // derived the empty clause
                     return Err(SolverResult::Unsatisfiable);
                 }
                 debug!("conflict clause is {}", clause.dimacs());
-                match self.global
-                    .dependency_conflict_resolution(&mut self.matrix, clause)
-                {
+                match self.global.dependency_conflict_resolution(
+                    &mut self.matrix,
+                    clause,
+                    universally_reduced,
+                ) {
                     Ok((clauses, variables)) => {
                         // we applied dependency conflict resolution
                         self.update_abstractions(clauses, variables);
@@ -350,6 +355,7 @@ impl GlobalSolverData {
         &mut self,
         matrix: &mut DQMatrix,
         conflict_clause: Clause,
+        universally_reduced: bool,
     ) -> Result<(Vec<ClauseId>, Vec<Variable>), ScopeId> {
         let mut maximal_scopes: MaxElements<Scope> = MaxElements::new();
         for &literal in conflict_clause.iter() {
@@ -362,8 +368,13 @@ impl GlobalSolverData {
         }
         debug_assert!(maximal_scopes.len() > 0, "clause should not be empty");
         if maximal_scopes.len() == 1 {
-            let scope = maximal_scopes.remove(0);
-            return Err(matrix.prefix.scope_lookup(&scope.dependencies).unwrap());
+            if universally_reduced {
+                // The Skolem function has changed due to universal reduction
+                return Ok((vec![matrix.add(conflict_clause)], vec![]));
+            } else {
+                let scope = maximal_scopes.remove(0);
+                return Err(matrix.prefix.scope_lookup(&scope.dependencies).unwrap());
+            }
         }
         debug!("dependency conflict detected");
 
@@ -1043,11 +1054,6 @@ impl Abstraction {
 
         #[cfg(debug_assertions)]
         debug!("refinement: {}", debug_print);
-
-        // refinement may invalidate previous Skolem functions
-        if let Some(ref mut learner) = self.learner {
-            learner.reset();
-        }
     }
 
     /// Resets the abstraction completely, i.e., removes all learnt clauses.
