@@ -56,10 +56,10 @@ impl<'a> DCaqeSolver<'a> {
                 .map(|x| *x)
                 .collect();
             bound_universals = bound_universals.union(&universals).map(|x| *x).collect();
-            //debug!("{:?} {:?}", universals, antichain);
 
             if !universals.is_empty() {
                 let level = abstractions.len();
+                debug!("universal level {}: {:?}", level, universals);
                 for &var in &universals {
                     global.level_lookup.insert(var, level);
                 }
@@ -76,6 +76,7 @@ impl<'a> DCaqeSolver<'a> {
                     .iter()
                     .map(|&scope_id| {
                         let scope = &matrix.prefix.scopes[scope_id];
+                        debug!("existential level {}: {:?}", level, scope);
                         for &var in &scope.existentials {
                             global.level_lookup.insert(var, level);
                         }
@@ -249,6 +250,8 @@ impl<'a> super::Solver for DCaqeSolver<'a> {
                                 if level < orig_level {
                                     abstraction.refine(&self.global.unsat_core);
                                     break;
+                                } else if level == 0 {
+                                    return SolverResult::Satisfiable;
                                 } else {
                                     level = level - 1;
                                 }
@@ -963,6 +966,7 @@ impl Abstraction {
 
     /// filters those clauses that are only influenced by this quantifier (or inner)
     fn unsat_propagation(&self, global: &mut GlobalSolverData) {
+        trace!("unsat_propagation");
         global.unsat_core.difference(&self.max_clauses);
     }
 

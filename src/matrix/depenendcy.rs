@@ -220,9 +220,9 @@ impl DependencyPrefix {
         while let Some(characteristic) = scopes.pop() {
             let mut antichain = vec![characteristic];
             for &other in scopes.iter().rev() {
-                let lhs = &self.scopes[characteristic].dependencies;
                 let rhs = &self.scopes[other].dependencies;
-                let incomparable = antichain.iter().fold(true, |val, ele| {
+                let incomparable = antichain.iter().fold(true, |val, &ele| {
+                    let lhs = &self.scopes[ele as usize].dependencies;
                     val && !lhs.is_subset(rhs) && !lhs.is_superset(rhs)
                 });
                 if incomparable {
@@ -235,6 +235,23 @@ impl DependencyPrefix {
                 .map(|x| *x)
                 .collect();
             antichains.push(antichain);
+        }
+        #[cfg(debug_assertions)]
+        {
+            for antichain in &antichains {
+                for &scope_id in antichain {
+                    for &other_id in antichain {
+                        if scope_id == other_id {
+                            continue;
+                        }
+                        // verify antichain property
+                        let scope = &self.scopes[scope_id as usize].dependencies;
+                        let other = &self.scopes[other_id as usize].dependencies;
+                        debug_assert!(!scope.is_subset(other));
+                        debug_assert!(!other.is_subset(scope));
+                    }
+                }
+            }
         }
         antichains
     }
