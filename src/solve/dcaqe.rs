@@ -1231,7 +1231,7 @@ impl SkolemFunctionLearner {
     }
 
     /// Learns the function case of the Skolem function represented by the entry in
-    /// `global->unsat_core` for the variables bound by `scope`.
+    /// `global.unsat_core` for the variables bound by `scope`.
     fn learn(&mut self, matrix: &DQMatrix, global: &GlobalSolverData, scope: &Scope) {
         trace!("SkolemFunctionLearner::learn");
         // encodes query
@@ -1248,10 +1248,16 @@ impl SkolemFunctionLearner {
 
             debug_assert!(sat_clause.is_empty());
 
+            let mut satisfied = false;
             for &literal in clause.iter().filter(|l| {
                 !scope.existentials.contains(&l.variable())
                     && matrix.prefix.depends_on_scope(scope, l.variable())
             }) {
+                let value = global.assignments[&literal.variable()];
+                let assigned_lit = Literal::new(literal.variable(), !value);
+                if literal == assigned_lit {
+                    satisfied = true;
+                }
                 let sat_lit = *self.variable2sat
                     .entry(literal.variable())
                     .or_insert_with(|| sat.new_var());
@@ -1262,7 +1268,9 @@ impl SkolemFunctionLearner {
                 }
             }
 
-            if sat_clause.is_empty() {
+            if !satisfied {
+                // entry not relevant for current scope
+                sat_clause.clear();
                 continue;
             }
 
