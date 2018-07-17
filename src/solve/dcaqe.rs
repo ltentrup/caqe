@@ -199,12 +199,12 @@ impl<'a> DCaqeSolver<'a> {
                     clause,
                     universally_reduced,
                 ) {
-                    Ok((clauses, variables)) => {
+                    DepConfResResult::Split(clauses, variables) => {
                         // we applied dependency conflict resolution
                         self.update_abstractions(clauses, variables);
                         level = 0;
                     }
-                    Err(scope_id) => {
+                    DepConfResResult::Refine(scope_id) => {
                         // we apply standard conflict resolution
                         // go to level with scope_id, refine, and proceed
                         level = level - 1;
@@ -233,6 +233,10 @@ impl<'a> DCaqeSolver<'a> {
                                 }
                             }
                         }
+                    }
+                    DepConfResResult::Cycle => {
+                        error!("Detected a dependency cycle");
+                        return Err(SolverResult::Unknown);
                     }
                 }
             }
@@ -356,7 +360,7 @@ impl GlobalSolverData {
         matrix: &mut DQMatrix,
         conflict_clause: Clause,
         universally_reduced: bool,
-    ) -> Result<(Vec<ClauseId>, Vec<Variable>), ScopeId> {
+    ) -> DepConfResResult {
         let mut maximal_scopes: MaxElements<Scope> = MaxElements::new();
         for &literal in conflict_clause.iter() {
             let info = matrix.prefix.variables().get(literal.variable());
@@ -370,10 +374,12 @@ impl GlobalSolverData {
         if maximal_scopes.len() == 1 {
             if universally_reduced {
                 // The Skolem function has changed due to universal reduction
-                return Ok((vec![matrix.add(conflict_clause)], vec![]));
+                return DepConfResResult::Split(vec![matrix.add(conflict_clause)], vec![]);
             } else {
                 let scope = maximal_scopes.remove(0);
-                return Err(matrix.prefix.scope_lookup(&scope.dependencies).unwrap());
+                return DepConfResResult::Refine(
+                    matrix.prefix.scope_lookup(&scope.dependencies).unwrap(),
+                );
             }
         }
         debug!("dependency conflict detected");
@@ -388,23 +394,24 @@ impl GlobalSolverData {
             // get maximal scope with only one interesction with other scope
             // if this is not possible, there is a dependency cycle
 
-            let index = maximal_scopes
-                .get_first(|scope| {
-                    meets.clear();
-                    for other in maximal_scopes.iter() {
-                        if scope == other {
-                            continue;
-                        }
-                        let intersection = scope
-                            .dependencies
-                            .intersection(&other.dependencies)
-                            .map(|x| *x)
-                            .collect();
-                        meets.add(Scope::new(&intersection));
+            let index = match maximal_scopes.get_first(|scope| {
+                meets.clear();
+                for other in maximal_scopes.iter() {
+                    if scope == other {
+                        continue;
                     }
-                    meets.len() == 1
-                })
-                .expect("detected a dependency cycle");
+                    let intersection = scope
+                        .dependencies
+                        .intersection(&other.dependencies)
+                        .map(|x| *x)
+                        .collect();
+                    meets.add(Scope::new(&intersection));
+                }
+                meets.len() == 1
+            }) {
+                Some(i) => i,
+                None => return DepConfResResult::Cycle,
+            };
             let scope = maximal_scopes.remove(index);
             debug_assert!(meets.len() == 1);
             let meet = meets.iter().next().unwrap();
@@ -485,8 +492,15 @@ impl GlobalSolverData {
             debug!("\n{}", matrix.dimacs());
         }
 
-        Ok((clauses, arbiters))
+        DepConfResResult::Split(clauses, arbiters)
     }
+}
+
+/// Result of the dependency conflict resolution
+enum DepConfResResult {
+    Split(Vec<ClauseId>, Vec<Variable>),
+    Refine(ScopeId),
+    Cycle,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -956,23 +970,32 @@ impl Abstraction {
 
             // check if assignment satisfied clause in unsat core
             // if yes, it can be removed
+            let mut needed = false;
             for &clause_id in matrix.occurrences(literal) {
                 if global.unsat_core[clause_id as usize] {
-                    //needed = true;
+                    needed = true;
                     global.unsat_core.set(clause_id as usize, false);
                 }
             }
 
-            /*
-            // unsound if values are fixed by skolem function
+            // greedy flipping is unsound if values are fixed by skolem function
+            if let Some(ref learner) = self.learner {
+                if learner.last_matched {
+                    continue;
+                }
+            }
+
             if !needed {
                 // the current value set is not needed for the entry, try other polarity
                 for &clause_id in matrix.occurrences(-literal) {
                     if global.unsat_core[clause_id as usize] {
                         global.unsat_core.set(clause_id as usize, false);
                     }
+                    global
+                        .assignments
+                        .insert(literal.variable(), literal.signed());
                 }
-            }*/
+            }
         }
 
         if let Some(ref mut learner) = self.learner {
@@ -1180,6 +1203,8 @@ struct SkolemFunctionLearner {
     incremental: Lit,
     variable2sat: FxHashMap<Variable, Lit>,
     assumptions: Vec<Lit>,
+    /// remembers the result of the last call to `matches`
+    last_matched: bool,
 }
 
 /// Implements the part of learning the Skolem function during solving
@@ -1193,6 +1218,7 @@ impl SkolemFunctionLearner {
             incremental,
             variable2sat: FxHashMap::default(),
             assumptions: Vec::new(),
+            last_matched: false,
         }
     }
 
@@ -1306,7 +1332,7 @@ impl SkolemFunctionLearner {
             }
         }
 
-        match self.sat.solve_with_assumptions(&self.assumptions) {
+        let res = match self.sat.solve_with_assumptions(&self.assumptions) {
             Lbool::True => {
                 // found a match, update assignments
 
@@ -1342,7 +1368,10 @@ impl SkolemFunctionLearner {
             }
             Lbool::False => false,
             _ => unreachable!(),
-        }
+        };
+
+        self.last_matched = res;
+        res
     }
 }
 
