@@ -6,6 +6,12 @@ extern crate clap;
 extern crate rustc_hash;
 extern crate simplelog;
 extern crate tempfile;
+#[macro_use]
+extern crate uncover;
+
+// This defines two macros, `covers!` and `covered_by!`.
+// They will be no-ops unless `cfg!(debug_assertions)` is true.
+define_uncover_macros!(enable_if(cfg!(debug_assertions)));
 
 use bit_vec::BitVec;
 use clap::{App, Arg};

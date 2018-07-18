@@ -157,10 +157,9 @@ impl<'a> DCaqeSolver<'a> {
                 for abstraction in abstractions {
                     match abstraction.solve(&mut self.matrix, &mut self.global) {
                         AbstractionResult::CandidateRefuted => {
-                            // global.unsat_core represents the conflict clause
-                            let clause = self.global
-                                .build_conflict_clause(&self.matrix, abstraction.scope_id.unwrap());
-                            result = SolveLevelResult::UnsatConflict(clause);
+                            // `global.unsat_core` represents the conflict clause
+                            let level = self.global.get_unsat_level(&self.matrix, level);
+                            result = SolveLevelResult::UnsatConflict(level);
                             break;
                         }
                         AbstractionResult::CandidateVerified => {
@@ -185,15 +184,43 @@ impl<'a> DCaqeSolver<'a> {
     ) -> Result<usize, SolverResult> {
         match result {
             SolveLevelResult::ContinueInner => level = level + 1,
-            SolveLevelResult::UnsatConflict(mut clause) => {
+            SolveLevelResult::UnsatConflict(target_level) => {
+                let target_level = match target_level {
+                    Some(l) => l,
+                    None => {
+                        // derived the empty clause
+                        covered_by!("unsat_universal_reduction");
+                        return Err(SolverResult::Unsatisfiable);
+                    }
+                };
+                debug_assert!(target_level < level);
+
+                // go to target level
+                level = level - 1;
+                while level > target_level {
+                    match &mut self.levels[level] {
+                        SolverLevel::Existential(abstractions) => {
+                            // skip level since there is no influence on unsat core
+                            level = level - 1;
+                        }
+                        SolverLevel::Universal(abstraction) => {
+                            // optimize and proceed with inner level
+                            abstraction.unsat_propagation(&mut self.global);
+                            level = level - 1;
+                        }
+                    }
+                }
+                debug_assert!(level == target_level);
+
+                let mut clause = self.global.build_conflict_clause(&self.matrix, level);
+                debug_assert!(clause.len() > 0, "empty clauses are handeled before");
+                debug!("conflict clause is {}", clause.dimacs());
+
                 let len_before = clause.len();
+                // are there still non-dependencies in clause?
                 self.matrix.prefix.reduce_universal(&mut clause);
                 let universally_reduced = len_before != clause.len();
-                if clause.len() == 0 {
-                    // derived the empty clause
-                    return Err(SolverResult::Unsatisfiable);
-                }
-                debug!("conflict clause is {}", clause.dimacs());
+
                 match self.global.dependency_conflict_resolution(
                     &mut self.matrix,
                     clause,
@@ -206,32 +233,18 @@ impl<'a> DCaqeSolver<'a> {
                     }
                     DepConfResResult::Refine(scope_id) => {
                         // we apply standard conflict resolution
-                        // go to level with scope_id, refine, and proceed
-                        level = level - 1;
-                        loop {
-                            match &mut self.levels[level] {
-                                SolverLevel::Existential(abstractions) => {
-                                    // refine and proceed with this level
-                                    let mut refined = false;
-                                    for abstraction in abstractions {
-                                        if abstraction.scope_id.unwrap() == scope_id {
-                                            // found the existential level to refine
-                                            abstraction.refine(&self.global.unsat_core);
-                                            refined = true;
-                                        }
+                        // go to abstraction with scope_id, refine, and proceed
+                        match &mut self.levels[level] {
+                            SolverLevel::Existential(abstractions) => {
+                                // refine and proceed with this level
+                                for abstraction in abstractions {
+                                    if abstraction.scope_id.unwrap() == scope_id {
+                                        // found the existential level to refine
+                                        abstraction.refine(&self.global.unsat_core);
                                     }
-                                    if !refined {
-                                        level = level - 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                SolverLevel::Universal(abstraction) => {
-                                    // optimize and proceed with inner level
-                                    abstraction.unsat_propagation(&mut self.global);
-                                    level = level - 1;
                                 }
                             }
+                            _ => unreachable!(),
                         }
                     }
                     DepConfResResult::Cycle => {
@@ -275,8 +288,8 @@ impl<'a> DCaqeSolver<'a> {
 #[derive(Debug, PartialEq)]
 enum SolveLevelResult {
     ContinueInner,
-    /// A conflict for the existential player, with conflict clause
-    UnsatConflict(Clause),
+    /// A conflict for the existential player, with level to refine
+    UnsatConflict(Option<usize>),
     /// A conflict for the universal player, with originating level
     SatConflict(usize),
 }
@@ -341,15 +354,39 @@ impl GlobalSolverData {
         }
     }
 
-    fn build_conflict_clause(&mut self, matrix: &DQMatrix, scope_id: ScopeId) -> Clause {
-        let scope = &matrix.prefix.scopes[scope_id];
+    /// Returns the level to continue with refining the unsat result
+    fn get_unsat_level(&self, matrix: &DQMatrix, orig_level: usize) -> Option<usize> {
+        self.unsat_core
+            .iter()
+            .enumerate()
+            .filter(|(_, val)| *val)
+            .fold(None, |val, (clause_id, _)| {
+                let clause = &matrix.clauses[clause_id];
+                clause
+                    .iter()
+                    .filter(|l| {
+                        let info = matrix.prefix.variables().get(l.variable());
+                        info.is_existential() && self.level_lookup[&l.variable()] < orig_level
+                    })
+                    .fold(val, |val, l| {
+                        let level = self.level_lookup[&l.variable()];
+                        match val {
+                            Some(v) => Some(std::cmp::max(v, level)),
+                            None => Some(level),
+                        }
+                    })
+            })
+    }
+
+    fn build_conflict_clause(&mut self, matrix: &DQMatrix, level: usize) -> Clause {
         let mut literals = Vec::new();
         for (clause_id, _) in self.unsat_core.iter().enumerate().filter(|(_, val)| *val) {
             let clause = &matrix.clauses[clause_id];
-            literals.extend(clause.iter().filter(|l| {
-                !scope.existentials.contains(&l.variable())
-                    && matrix.prefix.depends_on_scope(scope, l.variable())
-            }));
+            literals.extend(
+                clause
+                    .iter()
+                    .filter(|l| self.level_lookup[&l.variable()] <= level),
+            );
         }
 
         Clause::new(literals)
@@ -370,10 +407,14 @@ impl GlobalSolverData {
                 maximal_scopes.add(scope);
             }
         }
-        debug_assert!(maximal_scopes.len() > 0, "clause should not be empty");
+        debug_assert!(
+            maximal_scopes.len() > 0,
+            "empty clauses are handeled before"
+        );
         if maximal_scopes.len() == 1 {
             if universally_reduced {
                 // The Skolem function has changed due to universal reduction
+                covered_by!("refinement_universal_reduction");
                 return DepConfResResult::Split(vec![matrix.add(conflict_clause)], vec![]);
             } else {
                 let scope = maximal_scopes.remove(0);
@@ -1432,6 +1473,51 @@ d 4 2 0
 -3 4 -1 2 0
 3 -4 -1 2 0
 -3 -4 -1 -2 0
+";
+        let mut matrix = dqdimacs::parse(&instance).unwrap();
+        let mut solver = DCaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_unsat_universal_reduction() {
+        covers!("unsat_universal_reduction");
+        let instance = "c
+p cnf 7 4
+a 1 2 3 4 0
+d 5 2 3 0
+d 6 3 1 4 0
+d 7 2 3 4 0
+-2 -4 6 -7 0
+2 -6 -7 0
+2 -5 0
+7 0
+";
+        let mut matrix = dqdimacs::parse(&instance).unwrap();
+        let mut solver = DCaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_refinement_universal_reduction() {
+        covers!("refinement_universal_reduction");
+        let instance = "c
+p cnf 13 9
+a 5 4 0
+d 7 4 0
+d 9 5 0
+d 13 5 4 0
+d 6 5 0
+d 8 5 0
+-5 13 0
+4 5 -13 0
+9 13 0
+-4 13 0
+-9 -13 0
+-6 9 0
+6 13 0
+-8 -9 0
+8 -13 0
 ";
         let mut matrix = dqdimacs::parse(&instance).unwrap();
         let mut solver = DCaqeSolver::new(&mut matrix);
