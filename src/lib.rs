@@ -56,97 +56,37 @@ use utils::statistics::TimingStats;
 
 // Command line parsing
 
-#[derive(Debug)]
-pub struct Config {
-    pub filename: Option<String>,
-    pub verbosity: LevelFilter,
-    pub options: CaqeSolverOptions,
-    pub qdimacs_output: bool,
-    pub statistics: bool,
-    pub preprocessor: Option<QBFPreprocessor>,
+pub type CaqeConfig = CommonSolverConfig<CaqeSpecificSolverConfig>;
+pub type DCaqeConfig = CommonSolverConfig<DCaqeSpecificSolverConfig>;
+
+pub trait SolverSpecificConfig {
+    fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>;
+    fn parse_arguments(matches: &clap::ArgMatches) -> Self;
+    const NAME: &'static str;
+    const DESC: &'static str;
 }
 
-impl Config {
-    pub fn new(args: &[String]) -> Result<Config, &'static str> {
-        let mut options = CaqeSolverOptions::new();
+#[derive(Debug)]
+pub struct CommonSolverConfig<T: SolverSpecificConfig> {
+    /// None for stdin
+    filename: Option<String>,
+    verbosity: LevelFilter,
+    statistics: bool,
+    specific: T,
+}
 
-        let default = |val| match val {
-            true => "1",
-            false => "0",
-        };
-
-        let mut flags = App::new("CAQE")
+impl<T: SolverSpecificConfig> CommonSolverConfig<T> {
+    pub fn new(args: &[String]) -> Self {
+        let mut flags = App::new(T::NAME)
             .version(env!("CARGO_PKG_VERSION"))
             .author(env!("CARGO_PKG_AUTHORS"))
-            .about("CAQE is a solver for quantified Boolean formulas given in QDIMACS file format")
+            .about(T::DESC)
             .arg(
                 Arg::with_name("INPUT")
                     .help("Sets the input file to use")
                     .required(false)
                     .index(1),
-            ).arg(
-                Arg::with_name("preprocessor")
-                    .help("Sets the preprocessor to use")
-                    .long("--preprocessor")
-                    .takes_value(true)
-                    .possible_values(QBFPreprocessor::values()),
-            ).arg(
-                Arg::with_name("qdimacs-output")
-                    .long("--qdo")
-                    .help("Prints QDIMACS output (partial assignment) after solving"),
-            ).arg(
-                Arg::with_name("strong-unsat-refinement")
-                    .long("--strong-unsat-refinement")
-                    .default_value(default(options.strong_unsat_refinement))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help("Controls whether strong unsat refinement should be used"),
-            ).arg(
-                Arg::with_name("expansion-refinement")
-                    .long("--expansion-refinement")
-                    .default_value(default(options.expansion_refinement))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help("Controls whether expansion refinement should be used"),
-            ).arg(
-                Arg::with_name("refinement-literal-subsumption")
-                    .long("--refinement-literal-subsumption")
-                    .default_value(default(options.refinement_literal_subsumption))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help(
-                        "Controls whether refinements are minimized according to subsumption rules",
-                    ),
-            ).arg(
-                Arg::with_name("abstraction-literal-optimization")
-                    .long("--abstraction-literal-optimization")
-                    .default_value(default(options.abstraction_literal_optimization))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help(
-                        "Controls whether abstractions should be optimized using subsumption rules",
-                    ),
-            ).arg(
-                Arg::with_name("collapse-empty-scopes")
-                    .long("--collapse-empty-scopes")
-                    .default_value(default(options.collapse_empty_scopes))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help(
-                        "Controls whether empty universal scopes are collapsed during mini-scoping",
-                    ),
             );
-
         #[cfg(debug_assertions)]
         {
             flags = flags.arg(
@@ -164,10 +104,11 @@ impl Config {
                     .help("Enables collection and printing of solving statistics"),
             )
         }
+        flags = T::add_arguments(flags);
+
         let matches = flags.get_matches_from(args);
 
-        // file name is mandatory
-        let filename = matches.value_of("INPUT").map(|s| String::from(s));
+        let filename = matches.value_of("INPUT").map(|s| s.to_string());
 
         let verbosity = match matches.occurrences_of("v") {
             0 => LevelFilter::Warn,
@@ -176,16 +117,107 @@ impl Config {
             3 | _ => LevelFilter::Trace,
         };
 
-        let qdimacs_output = matches.is_present("qdimacs-output");
-
         let statistics = matches.is_present("statistics");
 
+        CommonSolverConfig {
+            filename,
+            verbosity,
+            statistics,
+            specific: T::parse_arguments(&matches),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CaqeSpecificSolverConfig {
+    pub options: CaqeSolverOptions,
+    pub qdimacs_output: bool,
+    pub preprocessor: Option<QBFPreprocessor>,
+}
+
+impl SolverSpecificConfig for CaqeSpecificSolverConfig {
+    const NAME: &'static str = "CAQE";
+    const DESC: &'static str =
+        "CAQE is a solver for quantified Boolean formulas (QBF) in QDIMACS format.";
+
+    fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
+        let default_options = CaqeSolverOptions::new();
+
+        let default = |val| match val {
+            true => "1",
+            false => "0",
+        };
+        app.arg(
+            Arg::with_name("preprocessor")
+                .help("Sets the preprocessor to use")
+                .long("--preprocessor")
+                .takes_value(true)
+                .requires("INPUT")
+                .possible_values(QBFPreprocessor::values()),
+        ).arg(
+                Arg::with_name("qdimacs-output")
+                    .long("--qdo")
+                    .help("Prints QDIMACS output (partial assignment) after solving"),
+            ).arg(
+                Arg::with_name("strong-unsat-refinement")
+                    .long("--strong-unsat-refinement")
+                    .default_value(default(default_options.strong_unsat_refinement))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
+                    .help("Controls whether strong unsat refinement should be used"),
+            ).arg(
+                Arg::with_name("expansion-refinement")
+                    .long("--expansion-refinement")
+                    .default_value(default(default_options.expansion_refinement))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
+                    .help("Controls whether expansion refinement should be used"),
+            ).arg(
+                Arg::with_name("refinement-literal-subsumption")
+                    .long("--refinement-literal-subsumption")
+                    .default_value(default(default_options.refinement_literal_subsumption))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
+                    .help(
+                        "Controls whether refinements are minimized according to subsumption rules",
+                    ),
+            ).arg(
+                Arg::with_name("abstraction-literal-optimization")
+                    .long("--abstraction-literal-optimization")
+                    .default_value(default(default_options.abstraction_literal_optimization))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
+                    .help(
+                        "Controls whether abstractions should be optimized using subsumption rules",
+                    ),
+            ).arg(
+                Arg::with_name("collapse-empty-scopes")
+                    .long("--collapse-empty-scopes")
+                    .default_value(default(default_options.collapse_empty_scopes))
+                    .value_name("bool")
+                    .takes_value(true)
+                    .possible_values(&["0", "1"])
+                    .hide_possible_values(true)
+                    .help(
+                        "Controls whether empty universal scopes are collapsed during mini-scoping",
+                    ),
+            )
+    }
+
+    fn parse_arguments(matches: &clap::ArgMatches) -> Self {
+        let mut options = CaqeSolverOptions::new();
+        let qdimacs_output = matches.is_present("qdimacs-output");
         let preprocessor = match matches.value_of("preprocessor") {
             None => None,
             Some(ref s) => {
-                if filename.is_none() {
-                    return Err("--preprocessor is incompatible with stdin reading");
-                }
                 Some(QBFPreprocessor::from_str(s).unwrap())
             }
         };
@@ -205,14 +237,11 @@ impl Config {
 
         options.collapse_empty_scopes = matches.value_of("collapse-empty-scopes").unwrap() == "1";
 
-        Ok(Config {
-            filename,
-            verbosity,
+        CaqeSpecificSolverConfig {
             options,
             qdimacs_output,
-            statistics,
             preprocessor,
-        })
+        }
     }
 }
 
@@ -225,219 +254,175 @@ enum SolverPhases {
     Solving,
 }
 
-pub fn run(config: Config) -> Result<SolverResult, Box<Error>> {
-    #[cfg(debug_assertions)]
-    CombinedLogger::init(vec![
-        TermLogger::new(config.verbosity, simplelog::Config::default())
-            .expect("Could not initialize TermLogger"),
-        //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-    ]).expect("Could not initialize logging");
+impl CaqeConfig {
+    pub fn run(&self) -> Result<SolverResult, Box<Error>> {
+        #[cfg(debug_assertions)]
+        CombinedLogger::init(vec![
+            TermLogger::new(self.verbosity, simplelog::Config::default())
+                .expect("Could not initialize TermLogger"),
+            //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]).expect("Could not initialize logging");
 
-    #[cfg(feature = "statistics")]
-    let statistics = TimingStats::new();
+        #[cfg(feature = "statistics")]
+        let statistics = TimingStats::new();
 
-    #[cfg(feature = "statistics")]
-    let mut timer = statistics.start(SolverPhases::Preprocessing);
+        #[cfg(feature = "statistics")]
+        let mut timer = statistics.start(SolverPhases::Preprocessing);
 
-    let (matrix, partial_qdo) = preprocess(&config)?;
+        let (matrix, partial_qdo) = preprocess(&self)?;
 
-    #[cfg(feature = "statistics")]
-    timer.stop();
+        #[cfg(feature = "statistics")]
+        timer.stop();
 
-    //println!("{}", matrix.dimacs());
+        //println!("{}", matrix.dimacs());
 
-    if matrix.conflict() {
-        if config.qdimacs_output {
-            if let Some(partial_qdo) = partial_qdo {
-                if partial_qdo.result == SolverResult::Unsatisfiable {
-                    println!("{}", partial_qdo.dimacs());
-                } else {
-                    println!(
-                        "{}",
-                        parse::qdimacs::PartialQDIMACSCertificate::new(
-                            SolverResult::Unsatisfiable,
-                            partial_qdo.num_variables,
-                            partial_qdo.num_clauses
-                        ).dimacs()
-                    );
+        if matrix.conflict() {
+            if self.specific.qdimacs_output {
+                if let Some(partial_qdo) = partial_qdo {
+                    if partial_qdo.result == SolverResult::Unsatisfiable {
+                        println!("{}", partial_qdo.dimacs());
+                    } else {
+                        println!(
+                            "{}",
+                            parse::qdimacs::PartialQDIMACSCertificate::new(
+                                SolverResult::Unsatisfiable,
+                                partial_qdo.num_variables,
+                                partial_qdo.num_clauses
+                            ).dimacs()
+                        );
+                    }
                 }
             }
+            return Ok(SolverResult::Unsatisfiable);
         }
-        return Ok(SolverResult::Unsatisfiable);
-    }
 
-    let matrix = Matrix::unprenex_by_miniscoping(matrix, config.options.collapse_empty_scopes);
+        let matrix =
+            Matrix::unprenex_by_miniscoping(matrix, self.specific.options.collapse_empty_scopes);
 
-    #[cfg(feature = "statistics")]
-    let mut timer = statistics.start(SolverPhases::Initializing);
+        #[cfg(feature = "statistics")]
+        let mut timer = statistics.start(SolverPhases::Initializing);
 
-    let mut solver = CaqeSolver::new_with_options(&matrix, config.options);
+        let mut solver = CaqeSolver::new_with_options(&matrix, self.specific.options);
 
-    #[cfg(feature = "statistics")]
-    timer.stop();
+        #[cfg(feature = "statistics")]
+        timer.stop();
 
-    #[cfg(feature = "statistics")]
-    let mut timer = statistics.start(SolverPhases::Solving);
+        #[cfg(feature = "statistics")]
+        let mut timer = statistics.start(SolverPhases::Solving);
 
-    let result = solver.solve();
+        let result = solver.solve();
 
-    #[cfg(feature = "statistics")]
-    timer.stop();
+        #[cfg(feature = "statistics")]
+        timer.stop();
 
-    #[cfg(feature = "statistics")]
-    {
-        if config.statistics {
-            println!(
-                "Preprocessing took {:?}",
-                statistics.sum(SolverPhases::Preprocessing)
-            );
-            println!(
-                "Initializing took {:?}",
-                statistics.sum(SolverPhases::Initializing)
-            );
-            println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-            solver.print_statistics();
-        }
-    }
-
-    if config.qdimacs_output {
-        let mut solver_qdo = solver.qdimacs_output();
-        if let Some(partial_qdo) = partial_qdo {
-            solver_qdo.num_clauses = partial_qdo.num_clauses;
-            solver_qdo.num_variables = solver_qdo.num_variables;
-            if partial_qdo.result == solver_qdo.result {
-                solver_qdo.extend_assignments(partial_qdo);
+        #[cfg(feature = "statistics")]
+        {
+            if self.statistics {
+                println!(
+                    "Preprocessing took {:?}",
+                    statistics.sum(SolverPhases::Preprocessing)
+                );
+                println!(
+                    "Initializing took {:?}",
+                    statistics.sum(SolverPhases::Initializing)
+                );
+                println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
+                solver.print_statistics();
             }
         }
-        println!("{}", solver_qdo.dimacs());
-    }
 
-    Ok(result)
+        if self.specific.qdimacs_output {
+            let mut solver_qdo = solver.qdimacs_output();
+            if let Some(partial_qdo) = partial_qdo {
+                solver_qdo.num_clauses = partial_qdo.num_clauses;
+                solver_qdo.num_variables = solver_qdo.num_variables;
+                if partial_qdo.result == solver_qdo.result {
+                    solver_qdo.extend_assignments(partial_qdo);
+                }
+            }
+            println!("{}", solver_qdo.dimacs());
+        }
+
+        Ok(result)
+    }
 }
 
 #[derive(Debug)]
-pub struct DCaqeConfig {
-    pub filename: String,
-    pub verbosity: LevelFilter,
-    pub statistics: bool,
+pub struct DCaqeSpecificSolverConfig {}
+
+impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
+    const NAME: &'static str = "DCAQE";
+    const DESC: &'static str =
+        "DCAQE is a solver for dependency quantified Boolean formulas (DQBF) in DQDIMACS format.";
+
+    fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
+        app
+    }
+
+    fn parse_arguments(matches: &clap::ArgMatches) -> Self {
+        DCaqeSpecificSolverConfig {}
+    }
 }
 
 impl DCaqeConfig {
-    pub fn new(args: &[String]) -> DCaqeConfig {
-        let mut options = CaqeSolverOptions::new();
-
-        let default = |val| match val {
-            true => "1",
-            false => "0",
-        };
-
-        let mut flags = App::new("CAQE")
-            .version(env!("CARGO_PKG_VERSION"))
-            .author(env!("CARGO_PKG_AUTHORS"))
-            .about("CAQE is a solver for quantified Boolean formulas given in QDIMACS file format")
-            .arg(
-                Arg::with_name("INPUT")
-                    .help("Sets the input file to use")
-                    .required(true)
-                    .index(1),
-            );
-
+    pub fn run(&self) -> Result<SolverResult, Box<Error>> {
         #[cfg(debug_assertions)]
-        {
-            flags = flags.arg(
-                Arg::with_name("v")
-                    .short("v")
-                    .multiple(true)
-                    .help("Sets the level of verbosity"),
-            );
+        CombinedLogger::init(vec![
+            TermLogger::new(self.verbosity, simplelog::Config::default())
+                .expect("Could not initialize TermLogger"),
+            //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]).expect("Could not initialize logging");
+
+        #[cfg(feature = "statistics")]
+        let statistics = TimingStats::new();
+
+        #[cfg(feature = "statistics")]
+        let mut timer = statistics.start(SolverPhases::Parsing);
+
+        let mut file = File::open(self.filename.as_ref().unwrap())?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        let mut matrix = parse::dqdimacs::parse(&contents)?;
+
+        #[cfg(feature = "statistics")]
+        timer.stop();
+
+        //println!("{}", matrix.dimacs());
+
+        if matrix.conflict() {
+            return Ok(SolverResult::Unsatisfiable);
         }
+
+        #[cfg(feature = "statistics")]
+        let mut timer = statistics.start(SolverPhases::Initializing);
+
+        let mut solver = DCaqeSolver::new(&mut matrix);
+
+        #[cfg(feature = "statistics")]
+        timer.stop();
+
+        #[cfg(feature = "statistics")]
+        let mut timer = statistics.start(SolverPhases::Solving);
+
+        let result = solver.solve();
+
+        #[cfg(feature = "statistics")]
+        timer.stop();
+
         #[cfg(feature = "statistics")]
         {
-            flags = flags.arg(
-                Arg::with_name("statistics")
-                    .long("--statistics")
-                    .help("Enables collection and printing of solving statistics"),
-            )
+            if self.statistics {
+                println!("Parsing took {:?}", statistics.sum(SolverPhases::Parsing));
+                println!(
+                    "Initializing took {:?}",
+                    statistics.sum(SolverPhases::Initializing)
+                );
+                println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
+                //solver.print_statistics();
+            }
         }
-        let matches = flags.get_matches_from(args);
 
-        // file name is mandatory
-        let filename = String::from(matches.value_of("INPUT").unwrap());
-
-        let verbosity = match matches.occurrences_of("v") {
-            0 => LevelFilter::Warn,
-            1 => LevelFilter::Info,
-            2 => LevelFilter::Debug,
-            3 | _ => LevelFilter::Trace,
-        };
-
-        let statistics = matches.is_present("statistics");
-
-        DCaqeConfig {
-            filename,
-            verbosity,
-            statistics,
-        }
+        Ok(result)
     }
-}
-
-pub fn run_dcaqe(config: DCaqeConfig) -> Result<SolverResult, Box<Error>> {
-    #[cfg(debug_assertions)]
-    CombinedLogger::init(vec![
-        TermLogger::new(config.verbosity, simplelog::Config::default())
-            .expect("Could not initialize TermLogger"),
-        //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-    ]).expect("Could not initialize logging");
-
-    #[cfg(feature = "statistics")]
-    let statistics = TimingStats::new();
-
-    #[cfg(feature = "statistics")]
-    let mut timer = statistics.start(SolverPhases::Parsing);
-
-    let mut file = File::open(config.filename)?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-
-    let mut matrix = parse::dqdimacs::parse(&contents)?;
-
-    #[cfg(feature = "statistics")]
-    timer.stop();
-
-    //println!("{}", matrix.dimacs());
-
-    if matrix.conflict() {
-        return Ok(SolverResult::Unsatisfiable);
-    }
-
-    #[cfg(feature = "statistics")]
-    let mut timer = statistics.start(SolverPhases::Initializing);
-
-    let mut solver = DCaqeSolver::new(&mut matrix);
-
-    #[cfg(feature = "statistics")]
-    timer.stop();
-
-    #[cfg(feature = "statistics")]
-    let mut timer = statistics.start(SolverPhases::Solving);
-
-    let result = solver.solve();
-
-    #[cfg(feature = "statistics")]
-    timer.stop();
-
-    #[cfg(feature = "statistics")]
-    {
-        if config.statistics {
-            println!("Parsing took {:?}", statistics.sum(SolverPhases::Parsing));
-            println!(
-                "Initializing took {:?}",
-                statistics.sum(SolverPhases::Initializing)
-            );
-            println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-            //solver.print_statistics();
-        }
-    }
-
-    Ok(result)
 }

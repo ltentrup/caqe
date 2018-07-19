@@ -10,12 +10,8 @@ fn main() {
 
     println!("c {:?}", config);
 
-    let result = caqe::run_dcaqe(config).unwrap_or_else(|err| {
-        eprintln!(
-            "Problem while solving: {}\ndetails: {}",
-            err.description(),
-            err
-        );
+    let result = config.run().unwrap_or_else(|err| {
+        eprintln!("Problem while solving: {}", err);
         process::exit(1);
     });
 

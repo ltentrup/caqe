@@ -34,7 +34,7 @@ impl QBFPreprocessor {
 }
 
 pub fn preprocess(
-    config: &super::Config,
+    config: &super::CommonSolverConfig<CaqeSpecificSolverConfig>,
 ) -> Result<
     (
         Matrix<HierarchicalPrefix>,
@@ -44,7 +44,7 @@ pub fn preprocess(
 > {
     let mut partial_qdo = None;
     let mut contents = String::new();
-    match config.preprocessor {
+    match config.specific.preprocessor {
         None => match &config.filename {
             None => {
                 //reading from stdin
@@ -62,7 +62,7 @@ pub fn preprocess(
                 .expect("filename has to be present when using preprocessor");
             let mut f = tempfile()?;
             let f_copy = f.try_clone()?;
-            if config.qdimacs_output {
+            if config.specific.qdimacs_output {
                 let mut cert = tempfile()?;
                 let cert_copy = cert.try_clone()?;
                 Command::new("./bloqqer-qdo")
