@@ -71,8 +71,6 @@ impl<'a> DCaqeSolver<'a> {
                 )));
             }
             let level = abstractions.len();
-            // we only need to learn Skolem functions if there is more than one abstraction
-            let needs_learner = antichain.len() > 1;
             abstractions.push(SolverLevel::Existential(
                 antichain
                     .iter()
@@ -82,6 +80,8 @@ impl<'a> DCaqeSolver<'a> {
                         for &var in &scope.existentials {
                             global.level_lookup.insert(var, level);
                         }
+                        // we only need to learn Skolem functions if the bound universal variabales are not equal to dependencies
+                        let needs_learner = bound_universals != scope.dependencies;
                         Abstraction::new_existential(matrix, scope_id, scope, level, needs_learner)
                     })
                     .collect(),
@@ -1027,6 +1027,7 @@ impl Abstraction {
             }
 
             if !needed {
+                debug!("flip {} -> {}", literal.dimacs(), (-literal).dimacs());
                 // the current value set is not needed for the entry, try other polarity
                 for &clause_id in matrix.occurrences(-literal) {
                     if global.unsat_core[clause_id as usize] {
@@ -1141,6 +1142,7 @@ impl Abstraction {
 
             if let Some(ref mut learner) = self.learner {
                 if learner.matches(matrix, global, scope) {
+                    covered_by!("skolem_function_matched");
                     return AbstractionResult::CandidateFound;
                 }
             }
@@ -1518,6 +1520,29 @@ d 8 5 0
 6 13 0
 -8 -9 0
 8 -13 0
+";
+        let mut matrix = dqdimacs::parse(&instance).unwrap();
+        let mut solver = DCaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_unsat_fix_skolem() {
+        covers!("skolem_function_matched");
+        let instance = "c
+p cnf 8 6
+a 1 2 3 0
+d 4 1 0
+d 5 2 0
+d 6 1 3 0
+d 7 1 2 3 0
+d 8 1 2 3 0
+-2 5 0
+-2 7 0
+-7 -6 0
+3 6 -8 -4 0
+2 8 0
+-5 4 0
 ";
         let mut matrix = dqdimacs::parse(&instance).unwrap();
         let mut solver = DCaqeSolver::new(&mut matrix);
