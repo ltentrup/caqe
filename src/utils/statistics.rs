@@ -28,6 +28,15 @@ impl<E: Hash + Eq> CountingStats<E> {
     }
 }
 
+impl<E: fmt::Display + Hash + Eq> fmt::Display for CountingStats<E> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for (event, count) in &self.values {
+            write!(f, "{}\t{}\n", event, count)?;
+        }
+        Ok(())
+    }
+}
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};

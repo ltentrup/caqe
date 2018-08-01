@@ -419,7 +419,7 @@ impl DCaqeConfig {
                     statistics.sum(SolverPhases::Initializing)
                 );
                 println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-                //solver.print_statistics();
+                solver.print_statistics();
             }
         }
 

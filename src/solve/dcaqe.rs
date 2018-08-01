@@ -4,7 +4,7 @@ use self::cryptominisat::*;
 use super::super::*;
 
 #[cfg(feature = "statistics")]
-use super::super::utils::statistics::TimingStats;
+use super::super::utils::statistics::{CountingStats, TimingStats};
 
 use super::super::parse::dqdimacs;
 
@@ -182,6 +182,11 @@ impl<'a> DCaqeSolver<'a> {
         mut level: usize,
         result: SolveLevelResult,
     ) -> Result<usize, SolverResult> {
+        #[cfg(feature = "statistics")]
+        let _timer = self.global
+            .timings
+            .start(GlobalSolverEvents::ProcessLevelResult);
+
         match result {
             SolveLevelResult::ContinueInner => level = level + 1,
             SolveLevelResult::UnsatConflict(target_level) => {
@@ -283,6 +288,28 @@ impl<'a> DCaqeSolver<'a> {
         }
         Ok(level)
     }
+
+    #[cfg(feature = "statistics")]
+    pub(crate) fn print_statistics(&self) {
+        #[cfg(feature = "statistics")]
+
+        println!("{}", self.global.statistics);
+        self.global.timings.print();
+        println!("");
+
+        for level in &self.levels {
+            match level {
+                SolverLevel::Existential(abstractions) => {
+                    for abstraction in abstractions {
+                        abstraction.print_statistics();
+                    }
+                }
+                SolverLevel::Universal(abstraction) => {
+                    abstraction.print_statistics();
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -334,6 +361,25 @@ impl SolverLevel {
     }
 }
 
+#[cfg(feature = "statistics")]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+enum GlobalSolverEvents {
+    ConflictClauses,
+    DependencyConflicts,
+    ProcessLevelResult,
+}
+
+#[cfg(feature = "statistics")]
+impl std::fmt::Display for GlobalSolverEvents {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            &GlobalSolverEvents::ConflictClauses => write!(f, "ConflictClauses    "),
+            &GlobalSolverEvents::DependencyConflicts => write!(f, "DependencyConflicts"),
+            &GlobalSolverEvents::ProcessLevelResult => write!(f, "ProcessLevelResult "),
+        }
+    }
+}
+
 struct GlobalSolverData {
     /// the current assignment
     assignments: FxHashMap<Variable, bool>,
@@ -343,6 +389,12 @@ struct GlobalSolverData {
 
     /// representation of an unsatisfiable core as vector of clause ids
     unsat_core: BitVec,
+
+    #[cfg(feature = "statistics")]
+    statistics: CountingStats<GlobalSolverEvents>,
+
+    #[cfg(feature = "statistics")]
+    timings: TimingStats<GlobalSolverEvents>,
 }
 
 impl GlobalSolverData {
@@ -351,6 +403,10 @@ impl GlobalSolverData {
             assignments: FxHashMap::default(),
             level_lookup: FxHashMap::default(),
             unsat_core: BitVec::from_elem(matrix.clauses.len(), false),
+            #[cfg(feature = "statistics")]
+            statistics: CountingStats::new(),
+            #[cfg(feature = "statistics")]
+            timings: TimingStats::new(),
         }
     }
 
@@ -389,6 +445,9 @@ impl GlobalSolverData {
             );
         }
 
+        #[cfg(feature = "statistics")]
+        self.statistics.inc(GlobalSolverEvents::ConflictClauses);
+
         Clause::new(literals)
     }
 
@@ -424,6 +483,9 @@ impl GlobalSolverData {
             }
         }
         debug!("dependency conflict detected");
+
+        #[cfg(feature = "statistics")]
+        self.statistics.inc(GlobalSolverEvents::DependencyConflicts);
 
         let mut arbiters = Vec::new();
         let mut clauses = Vec::new();
@@ -544,6 +606,23 @@ enum DepConfResResult {
     Cycle,
 }
 
+#[cfg(feature = "statistics")]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+enum SolverScopeEvents {
+    SolveScopeAbstraction,
+    Refinement,
+}
+
+#[cfg(feature = "statistics")]
+impl std::fmt::Display for SolverScopeEvents {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            &SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
+            &SolverScopeEvents::Refinement => write!(f, "Refinement"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum AbstractionResult {
     CandidateFound,
@@ -585,6 +664,9 @@ struct Abstraction {
 
     /// learns Skolem functions during solving
     learner: Option<SkolemFunctionLearner>,
+
+    #[cfg(feature = "statistics")]
+    statistics: TimingStats<SolverScopeEvents>,
 }
 
 impl Abstraction {
@@ -621,6 +703,8 @@ impl Abstraction {
             is_max_level,
             scope_id,
             learner,
+            #[cfg(feature = "statistics")]
+            statistics: TimingStats::new(),
         }
     }
 
@@ -1134,6 +1218,10 @@ impl Abstraction {
     fn solve(&mut self, matrix: &DQMatrix, global: &mut GlobalSolverData) -> AbstractionResult {
         trace!("solve");
 
+        #[cfg(feature = "statistics")]
+        let mut _timer = self.statistics
+            .start(SolverScopeEvents::SolveScopeAbstraction);
+
         debug!("");
         info!("solve level {}", self.level);
         if let Some(scope_id) = self.scope_id {
@@ -1166,6 +1254,12 @@ impl Abstraction {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[cfg(feature = "statistics")]
+    pub fn print_statistics(&self) {
+        println!("scope {:?} at level {}", self.scope_id, self.level);
+        self.statistics.print();
     }
 }
 
