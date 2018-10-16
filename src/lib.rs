@@ -9,8 +9,8 @@ extern crate tempfile;
 
 use simplelog::*;
 
-use tempfile::tempfile;
 use clap::{App, Arg};
+use tempfile::tempfile;
 
 // Rust stdlib
 use std::error::Error;
@@ -18,8 +18,8 @@ use std::str::FromStr;
 
 // modules
 mod literal;
-use literal::*;
-pub use self::literal::Literal; // re-export literals
+pub use self::literal::Literal;
+use literal::*; // re-export literals
 
 mod clause;
 use clause::*;
@@ -49,7 +49,7 @@ use utils::statistics::TimingStats;
 
 #[derive(Debug)]
 pub struct Config {
-    pub filename: String,
+    pub filename: Option<String>,
     pub verbosity: LevelFilter,
     pub options: CaqeSolverOptions,
     pub qdimacs_output: bool,
@@ -73,22 +73,19 @@ impl Config {
             .arg(
                 Arg::with_name("INPUT")
                     .help("Sets the input file to use")
-                    .required(true)
+                    .required(false)
                     .index(1),
-            )
-            .arg(
+            ).arg(
                 Arg::with_name("preprocessor")
                     .help("Sets the preprocessor to use")
                     .long("--preprocessor")
                     .takes_value(true)
                     .possible_values(QBFPreprocessor::values()),
-            )
-            .arg(
+            ).arg(
                 Arg::with_name("qdimacs-output")
                     .long("--qdo")
                     .help("Prints QDIMACS output (partial assignment) after solving"),
-            )
-            .arg(
+            ).arg(
                 Arg::with_name("strong-unsat-refinement")
                     .long("--strong-unsat-refinement")
                     .default_value(default(options.strong_unsat_refinement))
@@ -97,8 +94,7 @@ impl Config {
                     .possible_values(&["0", "1"])
                     .hide_possible_values(true)
                     .help("Controls whether strong unsat refinement should be used"),
-            )
-            .arg(
+            ).arg(
                 Arg::with_name("expansion-refinement")
                     .long("--expansion-refinement")
                     .default_value(default(options.expansion_refinement))
@@ -107,8 +103,7 @@ impl Config {
                     .possible_values(&["0", "1"])
                     .hide_possible_values(true)
                     .help("Controls whether expansion refinement should be used"),
-            )
-            .arg(
+            ).arg(
                 Arg::with_name("refinement-literal-subsumption")
                     .long("--refinement-literal-subsumption")
                     .default_value(default(options.refinement_literal_subsumption))
@@ -119,8 +114,7 @@ impl Config {
                     .help(
                         "Controls whether refinements are minimized according to subsumption rules",
                     ),
-            )
-            .arg(
+            ).arg(
                 Arg::with_name("abstraction-literal-optimization")
                     .long("--abstraction-literal-optimization")
                     .default_value(default(options.abstraction_literal_optimization))
@@ -131,8 +125,7 @@ impl Config {
                     .help(
                         "Controls whether abstractions should be optimized using subsumption rules",
                     ),
-            )
-            .arg(
+            ).arg(
                 Arg::with_name("collapse-empty-scopes")
                     .long("--collapse-empty-scopes")
                     .default_value(default(options.collapse_empty_scopes))
@@ -165,7 +158,7 @@ impl Config {
         let matches = flags.get_matches_from(args);
 
         // file name is mandatory
-        let filename = String::from(matches.value_of("INPUT").unwrap());
+        let filename = matches.value_of("INPUT").map(|s| String::from(s));
 
         let verbosity = match matches.occurrences_of("v") {
             0 => LevelFilter::Warn,
@@ -180,7 +173,12 @@ impl Config {
 
         let preprocessor = match matches.value_of("preprocessor") {
             None => None,
-            Some(ref s) => Some(QBFPreprocessor::from_str(s).unwrap()),
+            Some(ref s) => {
+                if filename.is_none() {
+                    return Err("--preprocessor is incompatible with stdin reading");
+                }
+                Some(QBFPreprocessor::from_str(s).unwrap())
+            }
         };
 
         options.strong_unsat_refinement =
@@ -193,7 +191,8 @@ impl Config {
 
         options.abstraction_literal_optimization = matches
             .value_of("abstraction-literal-optimization")
-            .unwrap() == "1";
+            .unwrap()
+            == "1";
 
         options.collapse_empty_scopes = matches.value_of("collapse-empty-scopes").unwrap() == "1";
 

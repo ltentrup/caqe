@@ -1,8 +1,9 @@
 use super::*;
 
 use std::fs::File;
-use std::io::SeekFrom;
 use std::io::prelude::*;
+use std::io::SeekFrom;
+use std::io::{self, Read};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 
@@ -38,19 +39,32 @@ pub fn preprocess(
     ),
     Box<Error>,
 > {
-    let mut f;
     let mut partial_qdo = None;
+    let mut contents = String::new();
     match config.preprocessor {
-        None => f = File::open(config.filename.clone())?,
+        None => match &config.filename {
+            None => {
+                //reading from stdin
+                io::stdin().read_to_string(&mut contents)?;
+            }
+            Some(filename) => {
+                let mut f = File::open(&filename)?;
+                f.read_to_string(&mut contents)?;
+            }
+        },
         Some(QBFPreprocessor::Bloqqer) => {
-            f = tempfile()?;
+            let filename = config
+                .filename
+                .as_ref()
+                .expect("filename has to be present when using preprocessor");
+            let mut f = tempfile()?;
             let f_copy = f.try_clone()?;
             if config.qdimacs_output {
                 let mut cert = tempfile()?;
                 let cert_copy = cert.try_clone()?;
                 Command::new("./bloqqer-qdo")
                     .arg("--partial-assignment=1")
-                    .arg(&config.filename)
+                    .arg(&filename)
                     .stdout(f_copy)
                     .stderr(cert_copy)
                     .spawn()
@@ -64,7 +78,7 @@ pub fn preprocess(
             } else {
                 Command::new("./bloqqer")
                     .arg("--keep=0")
-                    .arg(&config.filename)
+                    .arg(&filename)
                     .stdout(f_copy)
                     .stderr(Stdio::null())
                     .spawn()
@@ -74,24 +88,27 @@ pub fn preprocess(
             };
 
             f.seek(SeekFrom::Start(0))?;
+            f.read_to_string(&mut contents)?;
         }
         Some(QBFPreprocessor::HQSPre) => {
-            f = tempfile()?;
+            let filename = config
+                .filename
+                .as_ref()
+                .expect("filename has to be present when using preprocessor");
+            let mut f = tempfile()?;
             let f_copy = f.try_clone()?;
             let mut child = Command::new("./hqspre")
                 .arg("--pipe")
-                .arg(&config.filename)
+                .arg(&filename)
                 .stdout(f_copy)
                 .stderr(Stdio::null())
                 .spawn()
                 .expect("hqspre failed to start");
             child.wait().expect("failed to wait on hqspre");
             f.seek(SeekFrom::Start(0))?;
+            f.read_to_string(&mut contents)?;
         }
     }
-
-    let mut contents = String::new();
-    f.read_to_string(&mut contents)?;
 
     Ok((qdimacs::parse(&contents)?, partial_qdo))
 }
