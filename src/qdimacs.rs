@@ -76,7 +76,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, Box<Error>> {
         } else if line.starts_with("p") {
             // header line
             let mut num_var: Option<usize> = None;
-            let mut chunks = line.split(|c| c == ' ');
+            let mut chunks = line.split_whitespace();
             for (i, chunk) in chunks.enumerate() {
                 match i {
                     0 => {
