@@ -1,29 +1,15 @@
-// extern crates
-#[macro_use]
-extern crate log;
-extern crate bit_vec;
-extern crate clap;
-extern crate rustc_hash;
-extern crate simplelog;
-extern crate tempfile;
-#[macro_use]
-extern crate uncover;
-
-// This defines two macros, `covers!` and `covered_by!`.
-// They will be no-ops unless `cfg!(debug_assertions)` is true.
-define_uncover_macros!(enable_if(cfg!(debug_assertions)));
-
-use bit_vec::BitVec;
 use clap::{App, Arg};
-use rustc_hash::{FxHashMap, FxHashSet};
-use simplelog::*;
-use tempfile::tempfile;
-
-// Rust stdlib
+use simplelog::{CombinedLogger, LevelFilter, TermLogger};
+use std::default::Default;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::str::FromStr;
+use uncover::define_uncover_macros;
+
+// This defines two macros, `covers!` and `covered_by!`.
+// They will be no-ops unless `cfg!(debug_assertions)` is true.
+define_uncover_macros!(enable_if(cfg!(debug_assertions)));
 
 // modules
 mod literal;
@@ -154,62 +140,62 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
                 .takes_value(true)
                 .requires("INPUT")
                 .possible_values(QBFPreprocessor::values()),
-        ).arg(
-                Arg::with_name("qdimacs-output")
-                    .long("--qdo")
-                    .help("Prints QDIMACS output (partial assignment) after solving"),
-            ).arg(
-                Arg::with_name("strong-unsat-refinement")
-                    .long("--strong-unsat-refinement")
-                    .default_value(default(default_options.strong_unsat_refinement))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help("Controls whether strong unsat refinement should be used"),
-            ).arg(
-                Arg::with_name("expansion-refinement")
-                    .long("--expansion-refinement")
-                    .default_value(default(default_options.expansion_refinement))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help("Controls whether expansion refinement should be used"),
-            ).arg(
-                Arg::with_name("refinement-literal-subsumption")
-                    .long("--refinement-literal-subsumption")
-                    .default_value(default(default_options.refinement_literal_subsumption))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help(
-                        "Controls whether refinements are minimized according to subsumption rules",
-                    ),
-            ).arg(
-                Arg::with_name("abstraction-literal-optimization")
-                    .long("--abstraction-literal-optimization")
-                    .default_value(default(default_options.abstraction_literal_optimization))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help(
-                        "Controls whether abstractions should be optimized using subsumption rules",
-                    ),
-            ).arg(
-                Arg::with_name("collapse-empty-scopes")
-                    .long("--collapse-empty-scopes")
-                    .default_value(default(default_options.collapse_empty_scopes))
-                    .value_name("bool")
-                    .takes_value(true)
-                    .possible_values(&["0", "1"])
-                    .hide_possible_values(true)
-                    .help(
-                        "Controls whether empty universal scopes are collapsed during mini-scoping",
-                    ),
-            )
+        )
+        .arg(
+            Arg::with_name("qdimacs-output")
+                .long("--qdo")
+                .help("Prints QDIMACS output (partial assignment) after solving"),
+        )
+        .arg(
+            Arg::with_name("strong-unsat-refinement")
+                .long("--strong-unsat-refinement")
+                .default_value(default(default_options.strong_unsat_refinement))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether strong unsat refinement should be used"),
+        )
+        .arg(
+            Arg::with_name("expansion-refinement")
+                .long("--expansion-refinement")
+                .default_value(default(default_options.expansion_refinement))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether expansion refinement should be used"),
+        )
+        .arg(
+            Arg::with_name("refinement-literal-subsumption")
+                .long("--refinement-literal-subsumption")
+                .default_value(default(default_options.refinement_literal_subsumption))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether refinements are minimized according to subsumption rules"),
+        )
+        .arg(
+            Arg::with_name("abstraction-literal-optimization")
+                .long("--abstraction-literal-optimization")
+                .default_value(default(default_options.abstraction_literal_optimization))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether abstractions should be optimized using subsumption rules"),
+        )
+        .arg(
+            Arg::with_name("collapse-empty-scopes")
+                .long("--collapse-empty-scopes")
+                .default_value(default(default_options.collapse_empty_scopes))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether empty universal scopes are collapsed during mini-scoping"),
+        )
     }
 
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
@@ -261,7 +247,8 @@ impl CaqeConfig {
             TermLogger::new(self.verbosity, simplelog::Config::default())
                 .expect("Could not initialize TermLogger"),
             //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]).expect("Could not initialize logging");
+        ])
+        .expect("Could not initialize logging");
 
         #[cfg(feature = "statistics")]
         let statistics = TimingStats::new();
@@ -288,7 +275,8 @@ impl CaqeConfig {
                                 SolverResult::Unsatisfiable,
                                 partial_qdo.num_variables,
                                 partial_qdo.num_clauses
-                            ).dimacs()
+                            )
+                            .dimacs()
                         );
                     }
                 }
@@ -348,7 +336,17 @@ impl CaqeConfig {
 }
 
 #[derive(Debug)]
-pub struct DCaqeSpecificSolverConfig {}
+pub struct DCaqeSpecificSolverConfig {
+    expansion_refinement: bool,
+}
+
+impl Default for DCaqeSpecificSolverConfig {
+    fn default() -> Self {
+        DCaqeSpecificSolverConfig {
+            expansion_refinement: true,
+        }
+    }
+}
 
 impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
     const NAME: &'static str = "DCAQE";
@@ -356,11 +354,30 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
         "DCAQE is a solver for dependency quantified Boolean formulas (DQBF) in DQDIMACS format.";
 
     fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
-        app
+        let default_options = DCaqeSpecificSolverConfig::default();
+
+        let default = |val| match val {
+            true => "1",
+            false => "0",
+        };
+        app.arg(
+            Arg::with_name("expansion-refinement")
+                .long("--expansion-refinement")
+                .default_value(default(default_options.expansion_refinement))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether expansion refinement should be used"),
+        )
     }
 
-    fn parse_arguments(_matches: &clap::ArgMatches) -> Self {
-        DCaqeSpecificSolverConfig {}
+    fn parse_arguments(matches: &clap::ArgMatches) -> Self {
+        let expansion_refinement = matches.value_of("expansion-refinement").unwrap() == "1";
+
+        DCaqeSpecificSolverConfig {
+            expansion_refinement,
+        }
     }
 }
 
@@ -371,7 +388,8 @@ impl DCaqeConfig {
             TermLogger::new(self.verbosity, simplelog::Config::default())
                 .expect("Could not initialize TermLogger"),
             //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]).expect("Could not initialize logging");
+        ])
+        .expect("Could not initialize logging");
 
         #[cfg(feature = "statistics")]
         let statistics = TimingStats::new();

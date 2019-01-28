@@ -1,4 +1,5 @@
 use super::*;
+use rustc_hash::FxHashSet;
 use std::cmp::Ordering;
 
 pub type ScopeId = usize;
@@ -126,7 +127,8 @@ impl DependencyPrefix {
             }
             Some(scope_id) => scope_id,
         };
-        let scope = self.scopes
+        let scope = self
+            .scopes
             .get_mut(scope_id)
             .expect("scope is guaranteed to exists");
         scope.existentials.push(variable);
@@ -266,7 +268,8 @@ impl DependencyPrefix {
     /// dependencies of `var`.
     pub fn depends_on(&self, var: Variable, other: Variable) -> bool {
         let info = self.variables().get(var);
-        let scope_id = info.scope_id
+        let scope_id = info
+            .scope_id
             .expect("depends_on called on universal variable");
         let scope = &self.scopes[scope_id];
         let other_info = self.variables().get(other);
@@ -505,10 +508,12 @@ mod tests {
         let scope1 = Scope::new(&vec![1 as Variable].iter().map(|x| *x).collect());
         let scope2 = Scope::new(&vec![2 as Variable].iter().map(|x| *x).collect());
         let empty = Scope::new(&FxHashSet::default());
-        let full = Scope::new(&vec![1 as Variable, 2 as Variable]
-            .iter()
-            .map(|x| *x)
-            .collect());
+        let full = Scope::new(
+            &vec![1 as Variable, 2 as Variable]
+                .iter()
+                .map(|x| *x)
+                .collect(),
+        );
 
         assert_eq!(scope1.partial_cmp(&scope1), Some(Ordering::Equal));
         assert_eq!(scope1.partial_cmp(&scope2), None);

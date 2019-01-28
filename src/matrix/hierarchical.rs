@@ -1,4 +1,6 @@
 use super::*;
+use log::{debug, info};
+use rustc_hash::FxHashMap;
 
 pub type ScopeId = i32;
 

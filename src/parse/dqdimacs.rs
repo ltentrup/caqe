@@ -2,6 +2,7 @@ use super::super::matrix::depenendcy::*;
 use super::super::*;
 use super::dimacs::*;
 use super::ParseError;
+use rustc_hash::FxHashSet;
 
 /// Parses the QDIMACS string into its matrix representation
 pub fn parse(content: &str) -> Result<Matrix<DependencyPrefix>, ParseError> {
@@ -151,7 +152,7 @@ pub fn parse_prefix(
                 return Err(ParseError {
                     msg: format!("Expect `e`, `a`, `d`, or literal, but found `{:?}`", token),
                     pos: lexer.pos(),
-                })
+                });
             }
         }
     }

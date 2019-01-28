@@ -1,6 +1,6 @@
-use super::*;
-
 use super::matrix::hierarchical::*;
+use super::*;
+use rustc_hash::FxHashMap;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Clause {
@@ -51,7 +51,8 @@ impl Clause {
     }
 
     pub fn reduce_universal_qbf(&mut self, prefix: &HierarchicalPrefix) {
-        let max = self.literals
+        let max = self
+            .literals
             .iter()
             .filter(|l| !prefix.variables().get(l.variable()).is_universal)
             .fold(0, |max, l| {

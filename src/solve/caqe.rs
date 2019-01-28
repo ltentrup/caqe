@@ -1,5 +1,7 @@
-extern crate cryptominisat;
-use self::cryptominisat::*;
+use bit_vec::BitVec;
+use cryptominisat::*;
+use log::{debug, info, trace};
+use rustc_hash::FxHashMap;
 
 use super::super::*;
 

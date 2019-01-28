@@ -1,5 +1,6 @@
 use super::super::*;
 use super::{CharIterator, ParseError, SourcePos};
+use rustc_hash::FxHashMap;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum QCIRQuantKind {
@@ -120,7 +121,7 @@ impl<'a> QCIRLexer<'a> {
                     return Err(ParseError {
                         msg: format!("Encountered unknown token `{}` during lexing", c),
                         pos: self.chars.pos,
-                    })
+                    });
                 }
             }
         }
@@ -228,7 +229,7 @@ fn parse_output(lexer: &mut QCIRLexer, token: QCIRToken) -> Result<(), ParseErro
             return Err(ParseError {
                 msg: format!("Expect token `{:?}` but found {:?}", QCIRToken::Output, t),
                 pos: lexer.pos(),
-            })
+            });
         }
     })
 }
@@ -271,7 +272,7 @@ fn parse_lit(lexer: &mut QCIRLexer, token: QCIRToken) -> Result<Literal, ParseEr
                 return Err(ParseError {
                     msg: format!("Expect identifier but found {:?}", t),
                     pos: lexer.pos(),
-                })
+                });
             }
         },
         QCIRToken::Ident(name) => return Ok(Literal::new(name, false)),
@@ -279,7 +280,7 @@ fn parse_lit(lexer: &mut QCIRLexer, token: QCIRToken) -> Result<Literal, ParseEr
             return Err(ParseError {
                 msg: format!("Expect identifier but found {:?}", t),
                 pos: lexer.pos(),
-            })
+            });
         }
     }
 }
@@ -378,7 +379,7 @@ fn parse_gates(lexer: &mut QCIRLexer) -> Result<(), ParseError> {
                 return Err(ParseError {
                     msg: format!("Expect gate definition but found token {:?}", t),
                     pos: lexer.pos(),
-                })
+                });
             }
         }
     })

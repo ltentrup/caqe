@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 cryptominisat = "5.0.1"
-log = { version = "0.4", features = ["release_max_level_warn"] }
+log = { version = "0.4.6", features = ["release_max_level_warn"] }
 simplelog = "^0.5.0"
 bit-vec = "0.5.0"
 tempfile = "3.0.1"    # for first running preprocessor and piping result to temporary

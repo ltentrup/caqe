@@ -1,14 +1,14 @@
-extern crate cryptominisat;
-use self::cryptominisat::*;
-
+use super::super::matrix::depenendcy::*;
+use super::super::parse::dqdimacs;
 use super::super::*;
+use bit_vec::BitVec;
+use cryptominisat::*;
+use log::{debug, error, info, log_enabled, trace};
+use rustc_hash::{FxHashMap, FxHashSet};
+use simplelog::Level;
 
 #[cfg(feature = "statistics")]
 use super::super::utils::statistics::{CountingStats, TimingStats};
-
-use super::super::parse::dqdimacs;
-
-use super::super::matrix::depenendcy::*;
 
 type DQMatrix = Matrix<DependencyPrefix>;
 
@@ -53,7 +53,7 @@ impl<'a> DCaqeSolver<'a> {
                     val.union(&scope.dependencies).map(|x| *x).collect()
                 })
                 .difference(&bound_universals)
-                .map(|x| *x)
+                .cloned()
                 .collect();
             bound_universals = bound_universals.union(&universals).map(|x| *x).collect();
 
@@ -94,7 +94,8 @@ impl<'a> DCaqeSolver<'a> {
         trace!("update_abstractions");
 
         for &variable in &variables {
-            let scope_id = self.matrix
+            let scope_id = self
+                .matrix
                 .prefix
                 .variables()
                 .get(variable)
@@ -183,12 +184,13 @@ impl<'a> DCaqeSolver<'a> {
         result: SolveLevelResult,
     ) -> Result<usize, SolverResult> {
         #[cfg(feature = "statistics")]
-        let _timer = self.global
+        let _timer = self
+            .global
             .timings
             .start(GlobalSolverEvents::ProcessLevelResult);
 
         match result {
-            SolveLevelResult::ContinueInner => level = level + 1,
+            SolveLevelResult::ContinueInner => level += 1,
             SolveLevelResult::UnsatConflict(target_level) => {
                 let target_level = match target_level {
                     Some(l) => l,
@@ -201,17 +203,17 @@ impl<'a> DCaqeSolver<'a> {
                 debug_assert!(target_level < level);
 
                 // go to target level
-                level = level - 1;
+                level -= 1;
                 while level > target_level {
                     match &mut self.levels[level] {
                         SolverLevel::Existential(_abstractions) => {
                             // skip level since there is no influence on unsat core
-                            level = level - 1;
+                            level -= 1;
                         }
                         SolverLevel::Universal(abstraction) => {
                             // optimize and proceed with inner level
                             abstraction.unsat_propagation(&mut self.global);
-                            level = level - 1;
+                            level -= 1;
                         }
                     }
                 }
@@ -269,7 +271,7 @@ impl<'a> DCaqeSolver<'a> {
                             for abstraction in abstractions {
                                 abstraction.entry_minimization(&self.matrix, &mut self.global);
                             }
-                            level = level - 1;
+                            level -= 1;
                         }
                         SolverLevel::Universal(abstraction) => {
                             // refine and proceed with this level
@@ -279,7 +281,7 @@ impl<'a> DCaqeSolver<'a> {
                             } else if level == 0 {
                                 return Err(SolverResult::Satisfiable);
                             } else {
-                                level = level - 1;
+                                level -= 1;
                             }
                         }
                     }
@@ -373,9 +375,9 @@ enum GlobalSolverEvents {
 impl std::fmt::Display for GlobalSolverEvents {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            &GlobalSolverEvents::ConflictClauses => write!(f, "ConflictClauses    "),
-            &GlobalSolverEvents::DependencyConflicts => write!(f, "DependencyConflicts"),
-            &GlobalSolverEvents::ProcessLevelResult => write!(f, "ProcessLevelResult "),
+            GlobalSolverEvents::ConflictClauses => write!(f, "ConflictClauses    "),
+            GlobalSolverEvents::DependencyConflicts => write!(f, "DependencyConflicts"),
+            GlobalSolverEvents::ProcessLevelResult => write!(f, "ProcessLevelResult "),
         }
     }
 }
@@ -617,8 +619,8 @@ enum SolverScopeEvents {
 impl std::fmt::Display for SolverScopeEvents {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            &SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
-            &SolverScopeEvents::Refinement => write!(f, "Refinement"),
+            SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
+            SolverScopeEvents::Refinement => write!(f, "Refinement"),
         }
     }
 }
@@ -1210,7 +1212,7 @@ impl Abstraction {
     fn reset(&mut self) {
         debug_assert!(self.is_universal());
         if let Some(inc_lit) = self.inc_sat_lit {
-            self.sat.add_clause(&vec![inc_lit]);
+            self.sat.add_clause(&[inc_lit]);
         }
         self.inc_sat_lit = Some(self.sat.new_var());
     }
@@ -1219,7 +1221,8 @@ impl Abstraction {
         trace!("solve");
 
         #[cfg(feature = "statistics")]
-        let mut _timer = self.statistics
+        let mut _timer = self
+            .statistics
             .start(SolverScopeEvents::SolveScopeAbstraction);
 
         debug!("");
@@ -1286,9 +1289,7 @@ where
     /// Then, we add `element` if there is no other element that is greater or equal.
     fn add(&mut self, element: T) {
         self.elements.retain(|other| !(other < &element));
-        let subsumed = self.elements
-            .iter()
-            .fold(false, |val, other| val || other >= &element);
+        let subsumed = self.elements.iter().any(|other| other >= &element);
         if !subsumed {
             self.elements.push(element);
         }
@@ -1349,7 +1350,7 @@ impl SkolemFunctionLearner {
     fn new() -> SkolemFunctionLearner {
         let mut sat = cryptominisat::Solver::new();
         let incremental = sat.new_var();
-        sat.add_clause(&vec![incremental]);
+        sat.add_clause(&[incremental]);
         SkolemFunctionLearner {
             sat,
             incremental,
@@ -1363,7 +1364,7 @@ impl SkolemFunctionLearner {
         trace!("SkolemFunctionLearner::reset");
         self.sat = cryptominisat::Solver::new();
         self.incremental = self.sat.new_var();
-        self.sat.add_clause(&vec![self.incremental]);
+        self.sat.add_clause(&[self.incremental]);
         self.variable2sat.clear();
     }
 
@@ -1395,7 +1396,8 @@ impl SkolemFunctionLearner {
                 if literal == assigned_lit {
                     satisfied = true;
                 }
-                let sat_lit = *self.variable2sat
+                let sat_lit = *self
+                    .variable2sat
                     .entry(literal.variable())
                     .or_insert_with(|| sat.new_var());
                 if literal.signed() {
@@ -1423,7 +1425,7 @@ impl SkolemFunctionLearner {
         sat_clause.push(precondition);
         for &conjunction in &conjunctive_lits {
             sat_clause.push(!conjunction);
-            sat.add_clause(&vec![!precondition, conjunction]);
+            sat.add_clause(&[!precondition, conjunction]);
         }
         sat.add_clause(&sat_clause);
         sat_clause.clear();
@@ -1432,15 +1434,16 @@ impl SkolemFunctionLearner {
         let assignment_lit = sat.new_var(); // 1 iff assignment holds
         sat_clause.push(assignment_lit);
         for &variable in &scope.existentials {
-            let sat_lit = *self.variable2sat
+            let sat_lit = *self
+                .variable2sat
                 .entry(variable)
                 .or_insert_with(|| sat.new_var());
             if global.assignments[&variable] {
                 sat_clause.push(!sat_lit);
-                sat.add_clause(&vec![!assignment_lit, sat_lit]);
+                sat.add_clause(&[!assignment_lit, sat_lit]);
             } else {
                 sat_clause.push(sat_lit);
-                sat.add_clause(&vec![!assignment_lit, !sat_lit]);
+                sat.add_clause(&[!assignment_lit, !sat_lit]);
             }
         }
         sat.add_clause(&sat_clause);
@@ -1451,14 +1454,19 @@ impl SkolemFunctionLearner {
 
         // if then else
         // not prev || not prec || assig == (prev && prec) -> assig
-        sat.add_clause(&vec![!previous_inc_lit, !precondition, assignment_lit]);
-        sat.add_clause(&vec![!previous_inc_lit, precondition, self.incremental]);
+        sat.add_clause(&[!previous_inc_lit, !precondition, assignment_lit]);
+        sat.add_clause(&[!previous_inc_lit, precondition, self.incremental]);
     }
 
     /// Checks if the current assignment in `global->assignment` matches the previous
     /// learned Skolem function.
     /// If yes, the assignment is updated accordingly.
-    fn matches(&mut self, _matrix: &DQMatrix, global: &mut GlobalSolverData, scope: &Scope) -> bool {
+    fn matches(
+        &mut self,
+        _matrix: &DQMatrix,
+        global: &mut GlobalSolverData,
+        scope: &Scope,
+    ) -> bool {
         trace!("SkolemFunctionLearner::match");
         self.assumptions.clear();
 

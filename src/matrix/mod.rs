@@ -1,4 +1,6 @@
 use super::*;
+use bit_vec::BitVec;
+use rustc_hash::FxHashMap;
 
 pub mod depenendcy;
 pub mod hierarchical;

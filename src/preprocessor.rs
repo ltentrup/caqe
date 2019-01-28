@@ -1,14 +1,13 @@
 use super::*;
-
 use super::matrix::hierarchical::*;
 use super::parse::qdimacs;
-
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::io::{self, Read};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
+use tempfile::tempfile;
 
 #[derive(Debug)]
 pub enum QBFPreprocessor {
