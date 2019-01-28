@@ -667,6 +667,10 @@ struct Abstraction {
     /// learns Skolem functions during solving
     learner: Option<SkolemFunctionLearner>,
 
+    /// store expanded variables
+    /// maps a variable and a cube representing the assignment of its dependencies to a SAT solver literal
+    expanded: FxHashMap<(Variable, Vec<Literal>), Lit>,
+
     #[cfg(feature = "statistics")]
     statistics: TimingStats<SolverScopeEvents>,
 }
@@ -705,6 +709,7 @@ impl Abstraction {
             is_max_level,
             scope_id,
             learner,
+            expanded: FxHashMap::default(),
             #[cfg(feature = "statistics")]
             statistics: TimingStats::new(),
         }
