@@ -221,11 +221,11 @@ impl Prefix for TreePrefix {
         &self.variables
     }
 
-    fn import(&mut self, variable: Variable) {
+    fn import(&mut self, _variable: Variable) {
         panic!("not implemented");
     }
 
-    fn reduce_universal(&self, clause: &mut Clause) {
+    fn reduce_universal(&self, _clause: &mut Clause) {
         panic!("not implemented");
     }
 }

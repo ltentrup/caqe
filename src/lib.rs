@@ -28,28 +28,28 @@ use std::str::FromStr;
 // modules
 mod literal;
 pub use self::literal::Literal;
-use literal::*; // re-export literals
+use crate::literal::*; // re-export literals
 
 mod clause;
-use clause::*;
+use crate::clause::*;
 
 mod matrix;
 pub use self::matrix::Matrix;
-use matrix::*;
+use crate::matrix::*;
 
 mod dimacs;
-pub use dimacs::*;
+pub use crate::dimacs::*;
 
 mod preprocessor;
-use preprocessor::*;
+use crate::preprocessor::*;
 
 pub mod parse;
 mod utils;
 
 pub mod solve;
-pub use solve::caqe::{CaqeSolver, CaqeSolverOptions};
-pub use solve::dcaqe::DCaqeSolver;
-pub use solve::{Solver, SolverResult};
+pub use crate::solve::caqe::{CaqeSolver, CaqeSolverOptions};
+pub use crate::solve::dcaqe::DCaqeSolver;
+pub use crate::solve::{Solver, SolverResult};
 
 #[cfg(feature = "statistics")]
 use utils::statistics::TimingStats;
@@ -359,7 +359,7 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
         app
     }
 
-    fn parse_arguments(matches: &clap::ArgMatches) -> Self {
+    fn parse_arguments(_matches: &clap::ArgMatches) -> Self {
         DCaqeSpecificSolverConfig {}
     }
 }

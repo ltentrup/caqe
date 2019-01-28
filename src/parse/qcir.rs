@@ -177,7 +177,7 @@ fn parse(lexer: &mut QCIRLexer) -> Result<(), ParseError> {
     // (2) or the start of the quantifier prefix
     let is_cleansed;
     let token = match lexer.next()? {
-        QCIRToken::Number(val) => {
+        QCIRToken::Number(_val) => {
             is_cleansed = true;
             lexer.next()?
         }
@@ -188,7 +188,7 @@ fn parse(lexer: &mut QCIRLexer) -> Result<(), ParseError> {
     };
     let token = parse_free_variables(lexer, token)?;
     let token = parse_quantifier(lexer, token)?;
-    let token = parse_output(lexer, token)?;
+    let _token = parse_output(lexer, token)?;
     parse_gates(lexer)?;
     Ok(())
 }
@@ -196,7 +196,7 @@ fn parse(lexer: &mut QCIRLexer) -> Result<(), ParseError> {
 fn parse_free_variables(lexer: &mut QCIRLexer, token: QCIRToken) -> Result<QCIRToken, ParseError> {
     Ok(match token {
         QCIRToken::Free => {
-            parse_var_list(lexer, |symbol| {})?;
+            parse_var_list(lexer, |_symbol| {})?;
             lexer.next()?
         }
         t => t,
@@ -206,8 +206,8 @@ fn parse_free_variables(lexer: &mut QCIRLexer, token: QCIRToken) -> Result<QCIRT
 fn parse_quantifier(lexer: &mut QCIRLexer, mut token: QCIRToken) -> Result<QCIRToken, ParseError> {
     let next = loop {
         match token {
-            QCIRToken::Quant(qtype) => {
-                parse_var_list(lexer, |symbol| {})?;
+            QCIRToken::Quant(_qtype) => {
+                parse_var_list(lexer, |_symbol| {})?;
                 token = lexer.next()?
             }
             t => break t,
@@ -328,12 +328,12 @@ where
 fn parse_gates(lexer: &mut QCIRLexer) -> Result<(), ParseError> {
     Ok(loop {
         match lexer.next()? {
-            QCIRToken::Ident(name) => {
+            QCIRToken::Ident(_name) => {
                 // gate definition is gate = type(var-list)
                 lexer.expect_next_token(QCIRToken::Equal)?;
                 match lexer.next()? {
-                    QCIRToken::Gate(gtype) => {
-                        parse_lit_list(lexer, |lit| {}, QCIRToken::RPar)?;
+                    QCIRToken::Gate(_gtype) => {
+                        parse_lit_list(lexer, |_lit| {}, QCIRToken::RPar)?;
                     }
                     QCIRToken::Xor => {
                         // xor(lit, lit)
@@ -358,9 +358,9 @@ fn parse_gates(lexer: &mut QCIRLexer) -> Result<(), ParseError> {
                         parse_lit(lexer, next_token)?;
                         lexer.expect_next_token(QCIRToken::RPar)?;
                     }
-                    QCIRToken::Quant(qtype) => {
+                    QCIRToken::Quant(_qtype) => {
                         // quant(lit-var; lit)
-                        parse_lit_list(lexer, |lit| {}, QCIRToken::Semicolon)?;
+                        parse_lit_list(lexer, |_lit| {}, QCIRToken::Semicolon)?;
                         let next_token = lexer.next()?;
                         parse_lit(lexer, next_token)?;
                         lexer.expect_next_token(QCIRToken::RPar)?;

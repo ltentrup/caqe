@@ -2,6 +2,7 @@
 name = "caqe"
 version = "4.0.0-dev"
 authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
+edition = "2018"
 
 [dependencies]
 cryptominisat = "5.0.1"

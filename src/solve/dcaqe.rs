@@ -204,7 +204,7 @@ impl<'a> DCaqeSolver<'a> {
                 level = level - 1;
                 while level > target_level {
                     match &mut self.levels[level] {
-                        SolverLevel::Existential(abstractions) => {
+                        SolverLevel::Existential(_abstractions) => {
                             // skip level since there is no influence on unsat core
                             level = level - 1;
                         }
@@ -735,7 +735,7 @@ impl Abstraction {
 
     fn encode_universal_clause(
         &mut self,
-        matrix: &DQMatrix,
+        _matrix: &DQMatrix,
         clause_id: ClauseId,
         clause: &Clause,
         level_lookup: &FxHashMap<Variable, usize>,
@@ -1458,7 +1458,7 @@ impl SkolemFunctionLearner {
     /// Checks if the current assignment in `global->assignment` matches the previous
     /// learned Skolem function.
     /// If yes, the assignment is updated accordingly.
-    fn matches(&mut self, matrix: &DQMatrix, global: &mut GlobalSolverData, scope: &Scope) -> bool {
+    fn matches(&mut self, _matrix: &DQMatrix, global: &mut GlobalSolverData, scope: &Scope) -> bool {
         trace!("SkolemFunctionLearner::match");
         self.assumptions.clear();
 
@@ -1524,7 +1524,7 @@ impl SkolemFunctionLearner {
 mod tests {
 
     use super::*;
-    use solve::Solver;
+    use crate::solve::Solver;
 
     #[test]
     fn test_max_elements() {

@@ -59,7 +59,8 @@ impl<'a> CaqeSolver<'a> {
         // get the first scope that contains variables (the scope 0 may be empty)
         let mut top_level = Vec::new();
         let is_universal;
-        if self.matrix
+        if self
+            .matrix
             .prefix
             .roots
             .iter()
@@ -317,7 +318,8 @@ impl ScopeSolverData {
                             info.scope <= scope.id
                         }) {
                             debug_assert!(need_b_lit);
-                            let pos = self.b_literals
+                            let pos = self
+                                .b_literals
                                 .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
                             if pos.is_ok() {
                                 let sat_var = self.b_literals[pos.unwrap()].1;
@@ -339,7 +341,8 @@ impl ScopeSolverData {
                             info.scope < scope.id
                         }) {
                             debug_assert!(need_t_lit);
-                            let pos = self.t_literals
+                            let pos = self
+                                .t_literals
                                 .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
                             if pos.is_ok() {
                                 let sat_var = self.t_literals[pos.unwrap()].1;
@@ -360,7 +363,8 @@ impl ScopeSolverData {
                             info.scope > scope.id
                         }) {
                             debug_assert!(need_b_lit);
-                            let pos = self.b_literals
+                            let pos = self
+                                .b_literals
                                 .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
                             if pos.is_ok() {
                                 let sat_var = self.b_literals[pos.unwrap()].1;
@@ -472,7 +476,8 @@ impl ScopeSolverData {
                         let info = matrix.prefix.variables().get(l.variable());
                         info.scope <= scope.id
                     }) {
-                        let pos = self.b_literals
+                        let pos = self
+                            .b_literals
                             .binary_search_by(|elem| elem.0.cmp(&other_clause_id))
                             .unwrap();
                         let sat_var = self.b_literals[pos].1;
@@ -718,11 +723,10 @@ impl ScopeSolverData {
                     }*/
                 }
                 if !nonempty {
-                    debug_assert!(
-                        self.t_literals
-                            .binary_search_by(|elem| elem.0.cmp(&clause_id))
-                            .is_ok()
-                    );
+                    debug_assert!(self
+                        .t_literals
+                        .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                        .is_ok());
                     // we have already copied the value by copying current entry
                     continue;
                     /*if !self.entry[clause_id as usize] {
@@ -773,7 +777,7 @@ impl ScopeSolverData {
         }
 
         #[cfg(debug_assertions)]
-        for (i, val) in self.entry.iter().enumerate().filter(|&(_, val)| val) {
+        for (i, _val) in self.entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
             let mut min = ScopeId::max_value();
             for &literal in clause.iter() {
@@ -1078,7 +1082,8 @@ impl ScopeSolverData {
                 debug_assert!(info.scope > self.scope_id);
                 contains_variables = true;
 
-                let entry = self.expansion_renaming
+                let entry = self
+                    .expansion_renaming
                     .entry(literal.variable())
                     .or_insert_with(|| sat.new_var());
                 let mut sat_var = *entry;
@@ -1088,9 +1093,11 @@ impl ScopeSolverData {
                 sat_clause.push(sat_var);
             }
             let clause_id = i as ClauseId;
-            if self.b_literals
+            if self
+                .b_literals
                 .binary_search_by(|elem| elem.0.cmp(&clause_id))
-                .is_ok() || contains_variables && contains_outer_variables
+                .is_ok()
+                || contains_variables && contains_outer_variables
             {
                 let sat_lit = Self::add_b_lit_and_adapt_abstraction(
                     clause_id,
@@ -1470,7 +1477,7 @@ impl MinMax {
 mod tests {
 
     use super::*;
-    use solve::Solver;
+    use crate::solve::Solver;
 
     #[test]
     fn test_false() {
