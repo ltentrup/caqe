@@ -38,6 +38,10 @@ impl DQVariableInfo {
     pub fn get_scope_id(&self) -> &Option<ScopeId> {
         &self.scope_id
     }
+
+    pub(crate) fn dependencies(&self) -> &FxHashSet<Variable> {
+        &self.dependencies
+    }
 }
 
 /// A scope represents a grouping of existential variables with the same dependency set
@@ -136,6 +140,7 @@ impl DependencyPrefix {
         let variable_info = self.variables.get_mut(variable);
         variable_info.scope_id = Some(scope_id);
         variable_info.bound = true;
+        variable_info.dependencies = dependencies.clone();
     }
 
     pub fn add_universal(&mut self, variable: Variable) {
@@ -174,7 +179,7 @@ impl DependencyPrefix {
                     let intersection: FxHashSet<Variable> = scope
                         .dependencies
                         .intersection(&other.dependencies)
-                        .map(|x| *x)
+                        .cloned()
                         .collect();
                     if self.scope_lookup(&intersection).is_none() {
                         // intersection is not contained
@@ -182,7 +187,7 @@ impl DependencyPrefix {
                         changed = true;
                     }
                 }
-                union = union.union(&scope.dependencies).map(|x| *x).collect();
+                union = union.union(&scope.dependencies).cloned().collect();
             }
             for dependencies in &to_add {
                 if self.scope_lookup(dependencies).is_none() {
@@ -237,7 +242,7 @@ impl DependencyPrefix {
             scopes = scopes
                 .iter()
                 .filter(|ele| !antichain.contains(ele))
-                .map(|x| *x)
+                .cloned()
                 .collect();
             antichains.push(antichain);
         }

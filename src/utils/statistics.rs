@@ -1,4 +1,4 @@
-use std::cmp::Eq;
+use std::cmp::{Eq, Ord};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
@@ -6,12 +6,12 @@ use std::hash::Hash;
 #[derive(Debug)]
 pub struct CountingStats<E>
 where
-    E: Eq + Hash,
+    E: Eq + Hash + Ord,
 {
     values: HashMap<E, usize>,
 }
 
-impl<E: Hash + Eq> CountingStats<E> {
+impl<E: Hash + Eq + Ord> CountingStats<E> {
     pub fn new() -> CountingStats<E> {
         CountingStats {
             values: HashMap::new(),
@@ -28,10 +28,12 @@ impl<E: Hash + Eq> CountingStats<E> {
     }
 }
 
-impl<E: fmt::Display + Hash + Eq> fmt::Display for CountingStats<E> {
+impl<E: fmt::Display + Hash + Eq + Ord + Copy> fmt::Display for CountingStats<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for (event, count) in &self.values {
-            write!(f, "{}\t{}\n", event, count)?;
+        let mut vals: Vec<_> = self.values.keys().collect();
+        vals.sort();
+        for event in &vals {
+            write!(f, "{}\t{}\n", event, self.get(**event))?;
         }
         Ok(())
     }

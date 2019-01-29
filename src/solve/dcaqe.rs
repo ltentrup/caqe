@@ -20,11 +20,11 @@ pub struct DCaqeSolver<'a> {
 }
 
 impl<'a> DCaqeSolver<'a> {
-    pub fn new(matrix: &mut DQMatrix) -> DCaqeSolver {
+    pub fn new(matrix: &'a mut DQMatrix, config: &'a DCaqeSpecificSolverConfig) -> DCaqeSolver<'a> {
         // make sure every scope is contained where variables
         // may be introduced by fork extension
         matrix.prefix.build_closure();
-        let (levels, global) = Self::build_abstraction(matrix);
+        let (levels, global) = Self::build_abstraction(matrix, config);
         DCaqeSolver {
             matrix,
             result: SolverResult::Unknown,
@@ -38,11 +38,14 @@ impl<'a> DCaqeSolver<'a> {
     /// In detail, the function
     /// - builds the antichain decomposition of the lattice representing the partial order induced by the dependencies
     /// - determines at which abstraction which universal variable has to be introduced
-    fn build_abstraction(matrix: &mut DQMatrix) -> (Vec<SolverLevel>, GlobalSolverData) {
+    fn build_abstraction(
+        matrix: &mut DQMatrix,
+        config: &DCaqeSpecificSolverConfig,
+    ) -> (Vec<SolverLevel>, GlobalSolverData) {
         let antichains = matrix.prefix.antichain_decomposition();
 
         let mut abstractions: Vec<SolverLevel> = Vec::new();
-        let mut global = GlobalSolverData::new(matrix);
+        let mut global = GlobalSolverData::new(matrix, config);
 
         let mut bound_universals = FxHashSet::default();
         for antichain in antichains.iter() {
@@ -90,10 +93,10 @@ impl<'a> DCaqeSolver<'a> {
         (abstractions, global)
     }
 
-    fn update_abstractions(&mut self, clauses: Vec<ClauseId>, variables: Vec<Variable>) {
+    fn update_abstractions(&mut self, clauses: Vec<ClauseId>, variables: &[Variable]) {
         trace!("update_abstractions");
 
-        for &variable in &variables {
+        for &variable in variables {
             let scope_id = self
                 .matrix
                 .prefix
@@ -235,12 +238,66 @@ impl<'a> DCaqeSolver<'a> {
                 ) {
                     DepConfResResult::Split(clauses, variables) => {
                         // we applied dependency conflict resolution
-                        self.update_abstractions(clauses, variables);
+                        self.update_abstractions(clauses, &variables);
+
+                        if self.global.config.expansion_refinement {
+                            let mut scopes: Vec<ScopeId> = variables
+                                .iter()
+                                .map(|var| {
+                                    self.matrix
+                                        .prefix
+                                        .variables()
+                                        .get(*var)
+                                        .get_scope_id()
+                                        .expect("arbiters are existential variables")
+                                })
+                                .collect();
+                            scopes.dedup();
+                            for scope_id in scopes {
+                                // filter universal variables on larger levels
+                                let scope = self.matrix.prefix.get_scope(scope_id);
+                                let universal_assignment: FxHashMap<Variable, bool> = self
+                                    .global
+                                    .assignments
+                                    .iter()
+                                    .filter(|(&var, _val)| {
+                                        self.matrix.prefix.variables().get(var).is_universal()
+                                            && !scope.dependencies.contains(&var)
+                                    })
+                                    .map(|(&v, &k)| (v, k))
+                                    .collect();
+                                if !universal_assignment.is_empty() {
+                                    #[cfg(feature = "statistics")]
+                                    self.global
+                                        .statistics
+                                        .inc(GlobalSolverEvents::ExpansionRefinements);
+                                    match &mut self.levels[level] {
+                                        SolverLevel::Existential(abstractions) => {
+                                            for abstraction in abstractions {
+                                                if abstraction.scope_id.unwrap() == scope_id {
+                                                    abstraction.expansion_refinement(
+                                                        &self.matrix,
+                                                        &universal_assignment,
+                                                        &self.global.level_lookup,
+                                                    );
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        _ => unreachable!(),
+                                    }
+                                }
+                            }
+                        }
+
                         level = 0;
                     }
                     DepConfResResult::Refine(scope_id) => {
                         // we apply standard conflict resolution
                         // go to abstraction with scope_id, refine, and proceed
+
+                        let matrix = &self.matrix;
+
                         match &mut self.levels[level] {
                             SolverLevel::Existential(abstractions) => {
                                 // refine and proceed with this level
@@ -248,6 +305,40 @@ impl<'a> DCaqeSolver<'a> {
                                     if abstraction.scope_id.unwrap() == scope_id {
                                         // found the existential level to refine
                                         abstraction.refine(&self.global.unsat_core);
+                                        if self.global.config.expansion_refinement {
+                                            // filter universal variables on larger levels
+                                            let universal_assignment: FxHashMap<Variable, bool> =
+                                                self.global
+                                                    .assignments
+                                                    .iter()
+                                                    .filter(|(&var, _val)| {
+                                                        matrix
+                                                            .prefix
+                                                            .variables()
+                                                            .get(var)
+                                                            .is_universal()
+                                                            && !matrix
+                                                                .prefix
+                                                                .get_scope(
+                                                                    abstraction.scope_id.unwrap(),
+                                                                )
+                                                                .dependencies
+                                                                .contains(&var)
+                                                    })
+                                                    .map(|(&v, &k)| (v, k))
+                                                    .collect();
+                                            if !universal_assignment.is_empty() {
+                                                #[cfg(feature = "statistics")]
+                                                self.global
+                                                    .statistics
+                                                    .inc(GlobalSolverEvents::ExpansionRefinements);
+                                                abstraction.expansion_refinement(
+                                                    &self.matrix,
+                                                    &universal_assignment,
+                                                    &self.global.level_lookup,
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -364,10 +455,11 @@ impl SolverLevel {
 }
 
 #[cfg(feature = "statistics")]
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug)]
 enum GlobalSolverEvents {
     ConflictClauses,
     DependencyConflicts,
+    ExpansionRefinements,
     ProcessLevelResult,
 }
 
@@ -375,9 +467,10 @@ enum GlobalSolverEvents {
 impl std::fmt::Display for GlobalSolverEvents {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            GlobalSolverEvents::ConflictClauses => write!(f, "ConflictClauses    "),
-            GlobalSolverEvents::DependencyConflicts => write!(f, "DependencyConflicts"),
-            GlobalSolverEvents::ProcessLevelResult => write!(f, "ProcessLevelResult "),
+            GlobalSolverEvents::ConflictClauses => write!(f, "ConflictClauses     "),
+            GlobalSolverEvents::DependencyConflicts => write!(f, "DependencyConflicts "),
+            GlobalSolverEvents::ExpansionRefinements => write!(f, "ExpansionRefinements"),
+            GlobalSolverEvents::ProcessLevelResult => write!(f, "ProcessLevelResult  "),
         }
     }
 }
@@ -392,6 +485,8 @@ struct GlobalSolverData {
     /// representation of an unsatisfiable core as vector of clause ids
     unsat_core: BitVec,
 
+    config: DCaqeSpecificSolverConfig,
+
     #[cfg(feature = "statistics")]
     statistics: CountingStats<GlobalSolverEvents>,
 
@@ -400,11 +495,12 @@ struct GlobalSolverData {
 }
 
 impl GlobalSolverData {
-    fn new(matrix: &DQMatrix) -> GlobalSolverData {
+    fn new(matrix: &DQMatrix, config: &DCaqeSpecificSolverConfig) -> GlobalSolverData {
         GlobalSolverData {
             assignments: FxHashMap::default(),
             level_lookup: FxHashMap::default(),
             unsat_core: BitVec::from_elem(matrix.clauses.len(), false),
+            config: config.clone(),
             #[cfg(feature = "statistics")]
             statistics: CountingStats::new(),
             #[cfg(feature = "statistics")]
@@ -462,7 +558,7 @@ impl GlobalSolverData {
         let mut maximal_scopes: MaxElements<Scope> = MaxElements::new();
         for &literal in conflict_clause.iter() {
             let info = matrix.prefix.variables().get(literal.variable());
-            if let &Some(scope_id) = info.get_scope_id() {
+            if let Some(scope_id) = *info.get_scope_id() {
                 // TODO: we need a clone here, since the prefix is modified below, but this is wasteful
                 let scope = matrix.prefix.get_scope(scope_id).clone();
                 maximal_scopes.add(scope);
@@ -508,7 +604,7 @@ impl GlobalSolverData {
                     let intersection = scope
                         .dependencies
                         .intersection(&other.dependencies)
-                        .map(|x| *x)
+                        .cloned()
                         .collect();
                     meets.add(Scope::new(&intersection));
                 }
@@ -533,7 +629,7 @@ impl GlobalSolverData {
                 .iter()
                 .filter(|&literal| {
                     let info = matrix.prefix.variables().get(literal.variable());
-                    if let &Some(scope_id) = info.get_scope_id() {
+                    if let Some(scope_id) = *info.get_scope_id() {
                         let other = &matrix.prefix.scopes[scope_id as usize];
                         other.dependencies.is_subset(&scope.dependencies)
                             && !other.dependencies.is_subset(&meet.dependencies)
@@ -542,7 +638,7 @@ impl GlobalSolverData {
                         scope.dependencies.contains(&literal.variable())
                     }
                 })
-                .map(|x| *x)
+                .cloned()
                 .collect();
             literals.push(Literal::new(arbiter, true));
 
@@ -555,7 +651,7 @@ impl GlobalSolverData {
                 .iter()
                 .filter(|&literal| {
                     let info = matrix.prefix.variables().get(literal.variable());
-                    if let &Some(scope_id) = info.get_scope_id() {
+                    if let Some(scope_id) = *info.get_scope_id() {
                         let other = &matrix.prefix.scopes[scope_id as usize];
                         !other.dependencies.is_subset(&scope.dependencies)
                             || other.dependencies.is_subset(&meet.dependencies)
@@ -565,7 +661,7 @@ impl GlobalSolverData {
                             && !meet.dependencies.contains(&literal.variable()))
                     }
                 })
-                .map(|x| *x)
+                .cloned()
                 .collect();
             literals.push(Literal::new(arbiter, false));
             remaining = Clause::new(literals);
@@ -667,7 +763,7 @@ struct Abstraction {
     /// learns Skolem functions during solving
     learner: Option<SkolemFunctionLearner>,
 
-    /// store expanded variables
+    /// store partially expanded variables
     /// maps a variable and a cube representing the assignment of its dependencies to a SAT solver literal
     expanded: FxHashMap<(Variable, Vec<Literal>), Lit>,
 
@@ -842,7 +938,7 @@ impl Abstraction {
             if !self.variable_to_sat.contains_key(&literal.variable()) {
                 // not of current scope
                 let info = matrix.prefix.variables().get(literal.variable());
-                if let &Some(scope_id) = info.get_scope_id() {
+                if let Some(scope_id) = *info.get_scope_id() {
                     // existential variable
                     debug_assert!(scope_id != self.scope_id.unwrap());
                     let other_scope = matrix.prefix.get_scope(scope_id);
@@ -1212,6 +1308,122 @@ impl Abstraction {
         debug!("refinement: {}", debug_print);
     }
 
+    fn expansion_refinement(
+        &mut self,
+        matrix: &DQMatrix,
+        assignment: &FxHashMap<Variable, bool>,
+        level_lookup: &FxHashMap<Variable, usize>,
+    ) {
+        trace!("expansion refinement");
+        debug_assert!(!assignment.is_empty());
+        debug_assert!(!self.is_universal());
+
+        //dbg!(self.level);
+        //dbg!(assignment);
+
+        #[cfg(debug_assertions)]
+        {
+            // check that assignment is universal
+            for &var in assignment.keys() {
+                assert!(matrix.prefix.variables().get(var).is_universal());
+            }
+        }
+
+        let blocking_clause = &mut self.sat_solver_assumptions;
+        let sat = &mut self.sat;
+
+        for (i, clause) in matrix.clauses.iter().enumerate() {
+            // check if the universal assignment satisfies the clause
+            if clause.is_satisfied_by_assignment(assignment) {
+                continue;
+            }
+
+            blocking_clause.clear();
+
+            let mut outer_variables = false;
+
+            // add the clause to the abstraction
+            // variables bound by inner existential quantifier have to be renamed
+            for &literal in clause.iter() {
+                let info = matrix.prefix.variables().get(literal.variable());
+                /*let lvl = level_lookup[&literal.variable()];
+                if lvl <= self.level {
+                    if lvl < self.level || *info.get_scope_id() != self.scope_id {
+                        outer_variables = true
+                    }
+                    // ignore variables
+                    continue;
+                }
+                if info.is_universal() {
+                    // inner universal variables are eliminated
+                    continue;
+                }*/
+                let scope = matrix.prefix.get_scope(self.scope_id.unwrap());
+                if let Some(scope_id) = *info.get_scope_id() {
+                    // existential variable
+                    if scope_id == self.scope_id.unwrap() {
+                        continue;
+                    }
+                    let other_scope = matrix.prefix.get_scope(scope_id);
+                    if other_scope.dependencies.is_subset(&scope.dependencies) {
+                        outer_variables = true;
+                    } else {
+                        // continue with encoding
+                    }
+                } else {
+                    // universal variable
+                    if scope.dependencies.contains(&literal.variable()) {
+                        outer_variables = true;
+                        debug_assert!(!assignment.contains_key(&literal.variable()));
+                    } else {
+                        debug_assert!(assignment.contains_key(&literal.variable()));
+                    }
+                    continue;
+                }
+                debug_assert!(info.is_existential());
+                let mut deps: Vec<Literal> = assignment
+                    .iter()
+                    .filter(|(var, _val)| info.dependencies().contains(var))
+                    .map(|(&var, val)| Literal::new(var, !val))
+                    .collect();
+                deps.sort(); // make it unique
+                let entry = self
+                    .expanded
+                    .entry((literal.variable(), deps))
+                    .or_insert_with(|| sat.new_var());
+                let mut sat_var = *entry;
+                if literal.signed() {
+                    sat_var = !sat_var;
+                }
+                blocking_clause.push(sat_var);
+                //eprint!("{} ", literal.dimacs());
+            }
+            if blocking_clause.is_empty() {
+                continue;
+            }
+
+            let clause_id = i as ClauseId;
+            if self
+                .b_literals
+                .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                .is_ok()
+                || outer_variables
+            {
+                let sat_lit = Self::add_b_lit_and_adapt_abstraction(
+                    clause_id,
+                    sat,
+                    &self.b_literals,
+                    &mut self.t_literals,
+                    &mut self.reverse_t_literals,
+                );
+                blocking_clause.push(sat_lit);
+                //eprint!("b-lit");
+            }
+            //eprintln!("");
+            sat.add_clause(&blocking_clause);
+        }
+    }
+
     /// Resets the abstraction completely, i.e., removes all learnt clauses.
     /// Only applicable for universal levels.
     fn reset(&mut self) {
@@ -1565,7 +1777,8 @@ e 5 0
 -4 -1 -5 0
 ";
         let mut matrix = dqdimacs::parse(&instance).unwrap();
-        let mut solver = DCaqeSolver::new(&mut matrix);
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
     }
 
@@ -1584,7 +1797,8 @@ d 4 2 0
 -3 -4 -1 -2 0
 ";
         let mut matrix = dqdimacs::parse(&instance).unwrap();
-        let mut solver = DCaqeSolver::new(&mut matrix);
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 
@@ -1603,7 +1817,8 @@ d 7 2 3 4 0
 7 0
 ";
         let mut matrix = dqdimacs::parse(&instance).unwrap();
-        let mut solver = DCaqeSolver::new(&mut matrix);
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 
@@ -1629,7 +1844,8 @@ d 8 5 0
 8 -13 0
 ";
         let mut matrix = dqdimacs::parse(&instance).unwrap();
-        let mut solver = DCaqeSolver::new(&mut matrix);
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
     }
 
@@ -1652,7 +1868,45 @@ d 8 1 2 3 0
 -5 4 0
 ";
         let mut matrix = dqdimacs::parse(&instance).unwrap();
-        let mut solver = DCaqeSolver::new(&mut matrix);
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_expansion_regression() {
+        let instance = "c
+p cnf 7 3
+a 1 2 3 4 0
+d 5 0
+d 6 1 3 0
+d 7 1 2 4 0
+6 7 0
+-7 0
+5 -6 0
+";
+        let mut matrix = dqdimacs::parse(&instance).unwrap();
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+    }
+
+    #[test]
+    fn test_expansion_regression2() {
+        let instance = "c
+p cnf 9 3
+a 1 2 3 4 5 0
+d 6 1 2 0
+d 7 4 5 0
+d 8 2 3 0
+d 9 5 0
+-7 0
+6 8 0
+7 9 0
+";
+        let mut matrix = dqdimacs::parse(&instance).unwrap();
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
     }
 }

@@ -15,7 +15,7 @@ rustc-hash = "1.0.1"  # fast, non-randomized HashMap/HashSet
 uncover = "0.1.1"     # test maintainence
 
 [patch.crates-io]
-#cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git" }
+cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git" }
 
 [features]
 statistics = [] # enable statistics

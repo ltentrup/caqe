@@ -1095,6 +1095,7 @@ impl ScopeSolverData {
                 sat_clause.push(sat_var);
             }
             let clause_id = i as ClauseId;
+            // TODO: check if we can move `if !contains_variables` up
             if self
                 .b_literals
                 .binary_search_by(|elem| elem.0.cmp(&clause_id))

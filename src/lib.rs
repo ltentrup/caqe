@@ -335,7 +335,7 @@ impl CaqeConfig {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DCaqeSpecificSolverConfig {
     expansion_refinement: bool,
 }
@@ -415,7 +415,7 @@ impl DCaqeConfig {
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Initializing);
 
-        let mut solver = DCaqeSolver::new(&mut matrix);
+        let mut solver = DCaqeSolver::new(&mut matrix, &self.specific);
 
         #[cfg(feature = "statistics")]
         timer.stop();
