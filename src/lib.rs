@@ -127,7 +127,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         "CAQE is a solver for quantified Boolean formulas (QBF) in QDIMACS format.";
 
     fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
-        let default_options = CaqeSolverOptions::new();
+        let default_options = CaqeSolverOptions::default();
 
         let default = |val| match val {
             true => "1",
@@ -199,7 +199,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
     }
 
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
-        let mut options = CaqeSolverOptions::new();
+        let mut options = CaqeSolverOptions::default();
         let qdimacs_output = matches.is_present("qdimacs-output");
         let preprocessor = match matches.value_of("preprocessor") {
             None => None,
@@ -256,7 +256,7 @@ impl CaqeConfig {
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Preprocessing);
 
-        let (matrix, partial_qdo) = preprocess(&self)?;
+        let (mut matrix, partial_qdo) = preprocess(&self)?;
 
         #[cfg(feature = "statistics")]
         timer.stop();
@@ -283,6 +283,8 @@ impl CaqeConfig {
             }
             return Ok(SolverResult::Unsatisfiable);
         }
+
+        matrix.refl_res_path_dep_scheme();
 
         let matrix =
             Matrix::unprenex_by_miniscoping(matrix, self.specific.options.collapse_empty_scopes);

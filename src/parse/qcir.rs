@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::super::*;
 use super::{CharIterator, ParseError, SourcePos};
 use rustc_hash::FxHashMap;

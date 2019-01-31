@@ -1,16 +1,13 @@
+use super::super::matrix::hierarchical::*;
+use super::super::parse::qdimacs;
+use super::super::*;
 use bit_vec::BitVec;
 use cryptominisat::*;
 use log::{debug, info, trace};
 use rustc_hash::FxHashMap;
 
-use super::super::*;
-
 #[cfg(feature = "statistics")]
-use super::super::utils::statistics::TimingStats;
-
-use super::super::parse::qdimacs;
-
-use super::super::matrix::hierarchical::*;
+use crate::utils::statistics::TimingStats;
 
 type QMatrix = Matrix<TreePrefix>;
 
@@ -22,7 +19,7 @@ pub struct CaqeSolver<'a> {
 
 impl<'a> CaqeSolver<'a> {
     pub fn new(matrix: &QMatrix) -> CaqeSolver {
-        Self::new_with_options(matrix, CaqeSolverOptions::new())
+        Self::new_with_options(matrix, CaqeSolverOptions::default())
     }
 
     pub fn new_with_options(matrix: &QMatrix, options: CaqeSolverOptions) -> CaqeSolver {
@@ -42,7 +39,7 @@ impl<'a> CaqeSolver<'a> {
 
     #[cfg(feature = "statistics")]
     pub fn print_statistics(&self) {
-        for ref abstraction in self.abstraction.iter() {
+        for abstraction in self.abstraction.iter() {
             abstraction.print_statistics();
         }
     }
@@ -141,8 +138,8 @@ pub struct CaqeSolverOptions {
     pub collapse_empty_scopes: bool,
 }
 
-impl CaqeSolverOptions {
-    pub fn new() -> CaqeSolverOptions {
+impl Default for CaqeSolverOptions {
+    fn default() -> CaqeSolverOptions {
         CaqeSolverOptions {
             strong_unsat_refinement: false,
             expansion_refinement: true,
@@ -1232,14 +1229,12 @@ impl ScopeRecursiveSolver {
     fn init_abstraction_recursively(
         matrix: &QMatrix,
         options: CaqeSolverOptions,
-        scope_node: &Box<ScopeNode>,
+        scope_node: &ScopeNode,
     ) -> Box<ScopeRecursiveSolver> {
         let mut prev = Vec::new();
-        for ref child_node in scope_node.next.iter() {
+        for child_node in scope_node.next.iter() {
             prev.push(Self::init_abstraction_recursively(
-                matrix,
-                options.clone(),
-                child_node,
+                matrix, options, child_node,
             ))
         }
         let scope = &scope_node.scope;

@@ -2,7 +2,7 @@ use std::ops;
 
 pub type Variable = u32;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug, Hash)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Hash)]
 pub struct Literal {
     x: u32,
 }
@@ -57,6 +57,12 @@ impl From<i32> for Literal {
         let signed = literal < 0;
         let abs = literal.abs() as Variable;
         Literal::new(abs, signed)
+    }
+}
+
+impl std::fmt::Debug for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "Literal({})", self.dimacs())
     }
 }
 

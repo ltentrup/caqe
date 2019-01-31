@@ -19,22 +19,18 @@ impl VariableInfo for DQVariableInfo {
             dependencies: FxHashSet::default(),
         }
     }
-}
 
-impl DQVariableInfo {
-    pub fn is_bound(&self) -> bool {
-        self.bound
-    }
-
-    pub fn is_universal(&self) -> bool {
+    fn is_universal(&self) -> bool {
         debug_assert!(self.is_bound());
         self.scope_id.is_none()
     }
 
-    pub fn is_existential(&self) -> bool {
-        !self.is_universal()
+    fn is_bound(&self) -> bool {
+        self.bound
     }
+}
 
+impl DQVariableInfo {
     pub fn get_scope_id(&self) -> &Option<ScopeId> {
         &self.scope_id
     }
@@ -266,29 +262,6 @@ impl DependencyPrefix {
         antichains
     }
 
-    /// Checks if an existential variable `var` depends on `other`.
-    /// If `other` is existential, the dependencies of `other`
-    /// have to be a subset of the dependencies of `var`.
-    /// If `other` is universal, it has to be contained in the
-    /// dependencies of `var`.
-    pub fn depends_on(&self, var: Variable, other: Variable) -> bool {
-        let info = self.variables().get(var);
-        let scope_id = info
-            .scope_id
-            .expect("depends_on called on universal variable");
-        let scope = &self.scopes[scope_id];
-        let other_info = self.variables().get(other);
-        if other_info.is_universal() {
-            scope.dependencies.contains(&other)
-        } else {
-            let other_scope_id = other_info
-                .scope_id
-                .expect("other var should be existential");
-            let other_scope = &self.scopes[other_scope_id];
-            other_scope.dependencies.is_subset(&scope.dependencies)
-        }
-    }
-
     /// Checks if existential variables in `scope` may depend on `var`.
     /// If `var` is existential, the dependencies of `var`
     /// have to be a subset of the dependencies of `scope`.
@@ -356,6 +329,29 @@ impl Prefix for DependencyPrefix {
                 true
             }
         });
+    }
+
+    /// Checks if an existential variable `var` depends on `other`.
+    /// If `other` is existential, the dependencies of `other`
+    /// have to be a subset of the dependencies of `var`.
+    /// If `other` is universal, it has to be contained in the
+    /// dependencies of `var`.
+    fn depends_on(&self, var: Variable, other: Variable) -> bool {
+        let info = self.variables().get(var);
+        let scope_id = info
+            .scope_id
+            .expect("depends_on called on universal variable");
+        let scope = &self.scopes[scope_id];
+        let other_info = self.variables().get(other);
+        if other_info.is_universal() {
+            scope.dependencies.contains(&other)
+        } else {
+            let other_scope_id = other_info
+                .scope_id
+                .expect("other var should be existential");
+            let other_scope = &self.scopes[other_scope_id];
+            other_scope.dependencies.is_subset(&scope.dependencies)
+        }
     }
 }
 

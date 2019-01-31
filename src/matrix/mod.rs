@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 
 pub mod depenendcy;
 pub mod hierarchical;
+mod schemes;
 
 pub type ClauseId = u32;
 
@@ -19,6 +20,9 @@ pub trait Prefix {
 
     /// Reduces a clause universally
     fn reduce_universal(&self, clause: &mut Clause);
+
+    /// Checks if an existential variable `var` depends on `other`.
+    fn depends_on(&self, var: Variable, other: Variable) -> bool;
 }
 
 #[derive(Debug)]
@@ -45,7 +49,7 @@ impl<P: Prefix> Matrix<P> {
     pub fn add(&mut self, mut clause: Clause) -> ClauseId {
         self.prefix.reduce_universal(&mut clause);
         for &literal in clause.iter() {
-            let occurrences = self.occurrences.entry(literal).or_insert(Vec::new());
+            let occurrences = self.occurrences.entry(literal).or_insert_with(Vec::new);
             occurrences.push(self.clauses.len() as ClauseId);
             self.prefix.import(literal.variable());
         }
@@ -79,8 +83,8 @@ where
             self.prefix.variables().num_variables(),
             self.clauses.len()
         ));
-        dimacs.push_str(&format!("{}", self.prefix.dimacs()));
-        for ref clause in self.clauses.iter() {
+        dimacs.push_str(&self.prefix.dimacs().to_string());
+        for clause in self.clauses.iter() {
             dimacs.push_str(&format!("{}\n", clause.dimacs()));
         }
 
@@ -88,8 +92,14 @@ where
     }
 }
 
-pub trait VariableInfo: std::clone::Clone {
+pub trait VariableInfo: std::clone::Clone + std::fmt::Debug {
     fn new() -> Self;
+    fn is_universal(&self) -> bool;
+    fn is_bound(&self) -> bool;
+
+    fn is_existential(&self) -> bool {
+        !self.is_universal()
+    }
 }
 
 #[derive(Debug)]
@@ -191,6 +201,7 @@ e 3 4 0
         assert_eq!(matrix.occurrences(-lit3).len(), 1);
         assert_eq!(matrix.occurrences(lit4).len(), 2);
         assert_eq!(matrix.occurrences(-lit4).len(), 1);
+        assert!(matrix.prefix.depends_on(lit3.variable(), lit1.variable()));
     }
 
     #[test]

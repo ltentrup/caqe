@@ -19,20 +19,14 @@ impl VariableInfo for QVariableInfo {
             copy_of: 0,
         }
     }
-}
 
-impl QVariableInfo {
-    pub fn is_bound(&self) -> bool {
-        self.scope >= 0
-    }
-
-    pub fn is_universal(&self) -> bool {
+    fn is_universal(&self) -> bool {
         debug_assert!(self.is_bound());
         self.scope % 2 == 1
     }
 
-    pub fn is_existential(&self) -> bool {
-        return !self.is_universal();
+    fn is_bound(&self) -> bool {
+        self.scope >= 0
     }
 }
 
@@ -51,9 +45,7 @@ impl Scope {
     }
 
     pub fn contains(&self, variable: Variable) -> bool {
-        self.variables
-            .iter()
-            .fold(false, |val, &var| val || var == variable)
+        self.variables.iter().any(|var| *var == variable)
     }
 }
 
@@ -144,6 +136,13 @@ impl Prefix for HierarchicalPrefix {
     fn reduce_universal(&self, clause: &mut Clause) {
         clause.reduce_universal_qbf(self);
     }
+
+    fn depends_on(&self, var: Variable, other: Variable) -> bool {
+        let info = self.variables().get(var);
+        debug_assert!(info.is_existential());
+        let other = self.variables().get(other);
+        other.scope < info.scope
+    }
 }
 
 impl HierarchicalPrefix {
@@ -151,10 +150,10 @@ impl HierarchicalPrefix {
     pub fn new_scope(&mut self, quantifier: Quantifier) -> ScopeId {
         let last_scope: ScopeId = self.last_scope();
         if last_scope % 2 == quantifier as ScopeId {
-            return last_scope;
+            last_scope
         } else {
             self.scopes.push(Scope::new(last_scope + 1));
-            return self.last_scope();
+            self.last_scope()
         }
     }
 
@@ -229,6 +228,14 @@ impl Prefix for TreePrefix {
 
     fn reduce_universal(&self, _clause: &mut Clause) {
         panic!("not implemented");
+    }
+
+    fn depends_on(&self, var: Variable, other: Variable) -> bool {
+        let info = self.variables().get(var);
+        debug_assert!(info.is_existential());
+        let other = self.variables().get(other);
+        // todo: this is probably wrong due to tree prefix
+        other.scope < info.scope
     }
 }
 
