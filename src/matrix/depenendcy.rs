@@ -114,7 +114,12 @@ pub struct DependencyPrefix {
 }
 
 impl DependencyPrefix {
-    pub fn add_existential(&mut self, variable: Variable, dependencies: &FxHashSet<Variable>) {
+    pub fn add_existential<V: Into<Variable>>(
+        &mut self,
+        variable: V,
+        dependencies: &FxHashSet<Variable>,
+    ) {
+        let variable = variable.into();
         self.variables.import(variable);
         if self.variables.get(variable).is_bound() {
             panic!("variable cannot be bound twice");
@@ -139,7 +144,8 @@ impl DependencyPrefix {
         variable_info.dependencies = dependencies.clone();
     }
 
-    pub fn add_universal(&mut self, variable: Variable) {
+    pub fn add_universal<V: Into<Variable>>(&mut self, variable: V) {
+        let variable = variable.into();
         self.variables.import(variable);
         if self.variables.get(variable).is_bound() {
             panic!("variable cannot be bound twice");
@@ -336,7 +342,9 @@ impl Prefix for DependencyPrefix {
     /// have to be a subset of the dependencies of `var`.
     /// If `other` is universal, it has to be contained in the
     /// dependencies of `var`.
-    fn depends_on(&self, var: Variable, other: Variable) -> bool {
+    fn depends_on<V: Into<Variable>, U: Into<Variable>>(&self, var: V, other: U) -> bool {
+        let var = var.into();
+        let other = other.into();
         let info = self.variables().get(var);
         let scope_id = info
             .scope_id
@@ -384,28 +392,32 @@ mod tests {
     #[test]
     fn test_closure() {
         let mut prefix = DependencyPrefix::new(4);
-        prefix.add_universal(1);
-        prefix.add_universal(2);
+        let v1 = Variable::from(1u32);
+        let v2 = Variable::from(2u32);
+        let v3 = Variable::from(3u32);
+        let v4 = Variable::from(4u32);
+        prefix.add_universal(v1);
+        prefix.add_universal(v2);
         let mut dep = FxHashSet::default();
-        dep.insert(1);
-        prefix.add_existential(3, &dep);
+        dep.insert(v1);
+        prefix.add_existential(v3, &dep);
         dep.clear();
-        dep.insert(2);
-        prefix.add_existential(4, &dep);
+        dep.insert(v2);
+        prefix.add_existential(v4, &dep);
         dep.clear();
 
         // empty set and complete set not contained before...
         assert!(prefix.scope_lookup(&dep).is_none());
-        dep.insert(1);
-        dep.insert(2);
+        dep.insert(v1);
+        dep.insert(v2);
         assert!(prefix.scope_lookup(&dep).is_none());
         dep.clear();
 
         // ... but after building closure
         prefix.build_closure();
         assert_eq!(prefix.scope_lookup(&dep), Some(2));
-        dep.insert(1);
-        dep.insert(2);
+        dep.insert(v1);
+        dep.insert(v2);
         assert_eq!(prefix.scope_lookup(&dep), Some(3));
 
         // check `is_maximal`
@@ -428,21 +440,28 @@ mod tests {
     #[test]
     fn test_closure_recursive() {
         let mut prefix = DependencyPrefix::new(6);
-        prefix.add_universal(1);
-        prefix.add_universal(2);
-        prefix.add_universal(3);
+        let v1 = Variable::from(1u32);
+        let v2 = Variable::from(2u32);
+        let v3 = Variable::from(3u32);
+        let v4 = Variable::from(4u32);
+        let v5 = Variable::from(5u32);
+        let v6 = Variable::from(6u32);
+
+        prefix.add_universal(v1);
+        prefix.add_universal(v2);
+        prefix.add_universal(v3);
         let mut dep = FxHashSet::default();
-        dep.insert(1);
-        dep.insert(2);
-        prefix.add_existential(4, &dep);
+        dep.insert(v1);
+        dep.insert(v2);
+        prefix.add_existential(v4, &dep);
         dep.clear();
-        dep.insert(2);
-        dep.insert(3);
-        prefix.add_existential(5, &dep);
+        dep.insert(v2);
+        dep.insert(v3);
+        prefix.add_existential(v5, &dep);
         dep.clear();
-        dep.insert(1);
-        dep.insert(3);
-        prefix.add_existential(6, &dep);
+        dep.insert(v1);
+        dep.insert(v3);
+        prefix.add_existential(v6, &dep);
         dep.clear();
 
         // empty set not contained before...
@@ -459,62 +478,66 @@ mod tests {
     #[test]
     fn test_dep_on() {
         let mut prefix = DependencyPrefix::new(6);
-        prefix.add_universal(1);
-        prefix.add_universal(2);
+        let v1 = Variable::from(1u32);
+        let v2 = Variable::from(2u32);
+        let v3 = Variable::from(3u32);
+        let v4 = Variable::from(4u32);
+        let v5 = Variable::from(5u32);
+        let v6 = Variable::from(6u32);
+
+        prefix.add_universal(v1);
+        prefix.add_universal(v2);
         let mut dep = FxHashSet::default();
-        prefix.add_existential(3, &dep); // d 3 0
-        dep.insert(1);
-        prefix.add_existential(4, &dep); // d 4 1 0
+        prefix.add_existential(v3, &dep); // d 3 0
+        dep.insert(v1);
+        prefix.add_existential(v4, &dep); // d 4 1 0
         dep.clear();
-        dep.insert(2);
-        prefix.add_existential(5, &dep); // d 5 2 0
-        dep.insert(1);
-        prefix.add_existential(6, &dep); // d 6 1 2 0
+        dep.insert(v2);
+        prefix.add_existential(v5, &dep); // d 5 2 0
+        dep.insert(v1);
+        prefix.add_existential(v6, &dep); // d 6 1 2 0
 
         // 3
-        assert!(!prefix.depends_on(3, 1));
-        assert!(!prefix.depends_on(3, 2));
-        assert!(prefix.depends_on(3, 3));
-        assert!(!prefix.depends_on(3, 4));
-        assert!(!prefix.depends_on(3, 5));
-        assert!(!prefix.depends_on(3, 6));
+        assert!(!prefix.depends_on(v3, v1));
+        assert!(!prefix.depends_on(v3, v2));
+        assert!(prefix.depends_on(v3, v3));
+        assert!(!prefix.depends_on(v3, v4));
+        assert!(!prefix.depends_on(v3, v5));
+        assert!(!prefix.depends_on(v3, v6));
 
         // 4
-        assert!(prefix.depends_on(4, 1));
-        assert!(!prefix.depends_on(4, 2));
-        assert!(prefix.depends_on(4, 3));
-        assert!(prefix.depends_on(4, 4));
-        assert!(!prefix.depends_on(4, 5));
-        assert!(!prefix.depends_on(4, 6));
+        assert!(prefix.depends_on(v4, v1));
+        assert!(!prefix.depends_on(v4, v2));
+        assert!(prefix.depends_on(v4, v3));
+        assert!(prefix.depends_on(v4, v4));
+        assert!(!prefix.depends_on(v4, v5));
+        assert!(!prefix.depends_on(v4, v6));
 
         // 5
-        assert!(!prefix.depends_on(5, 1));
-        assert!(prefix.depends_on(5, 2));
-        assert!(prefix.depends_on(5, 3));
-        assert!(!prefix.depends_on(5, 4));
-        assert!(prefix.depends_on(5, 5));
-        assert!(!prefix.depends_on(5, 6));
+        assert!(!prefix.depends_on(v5, v1));
+        assert!(prefix.depends_on(v5, v2));
+        assert!(prefix.depends_on(v5, v3));
+        assert!(!prefix.depends_on(v5, v4));
+        assert!(prefix.depends_on(v5, v5));
+        assert!(!prefix.depends_on(v5, v6));
 
         // 6
-        assert!(prefix.depends_on(6, 1));
-        assert!(prefix.depends_on(6, 2));
-        assert!(prefix.depends_on(6, 3));
-        assert!(prefix.depends_on(6, 4));
-        assert!(prefix.depends_on(6, 5));
-        assert!(prefix.depends_on(6, 6));
+        assert!(prefix.depends_on(v6, v1));
+        assert!(prefix.depends_on(v6, v2));
+        assert!(prefix.depends_on(v6, v3));
+        assert!(prefix.depends_on(v6, v4));
+        assert!(prefix.depends_on(v6, v5));
+        assert!(prefix.depends_on(v6, v6));
     }
 
     #[test]
     fn test_scope_comparison() {
-        let scope1 = Scope::new(&vec![1 as Variable].iter().map(|x| *x).collect());
-        let scope2 = Scope::new(&vec![2 as Variable].iter().map(|x| *x).collect());
+        let v1 = Variable::from(1u32);
+        let v2 = Variable::from(2u32);
+        let scope1 = Scope::new(&vec![v1].iter().map(|x| *x).collect());
+        let scope2 = Scope::new(&vec![v2].iter().map(|x| *x).collect());
         let empty = Scope::new(&FxHashSet::default());
-        let full = Scope::new(
-            &vec![1 as Variable, 2 as Variable]
-                .iter()
-                .map(|x| *x)
-                .collect(),
-        );
+        let full = Scope::new(&vec![v1, v2].iter().map(|x| *x).collect());
 
         assert_eq!(scope1.partial_cmp(&scope1), Some(Ordering::Equal));
         assert_eq!(scope1.partial_cmp(&scope2), None);

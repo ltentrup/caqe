@@ -169,12 +169,17 @@ mod tests {
         assert!(result.is_ok());
         let matrix = result.unwrap();
 
+        let v1 = Variable::from(1u32);
+        let v2 = Variable::from(2u32);
+        let v3 = Variable::from(3u32);
+        let v4 = Variable::from(4u32);
+
         // prefix
         let variables = matrix.prefix.variables();
-        assert!(variables.get(1).is_universal());
-        assert!(variables.get(2).is_universal());
-        assert!(variables.get(3).is_existential());
-        assert!(variables.get(4).is_existential());
+        assert!(variables.get(v1).is_universal());
+        assert!(variables.get(v2).is_universal());
+        assert!(variables.get(v3).is_existential());
+        assert!(variables.get(v4).is_existential());
 
         // clauses
         let mut clause_iter = matrix.clauses.iter();

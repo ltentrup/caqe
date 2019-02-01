@@ -1237,7 +1237,7 @@ impl Abstraction {
         sat: &mut cryptominisat::Solver,
         b_literals: &Vec<(ClauseId, Lit)>,
         t_literals: &mut Vec<(ClauseId, Lit)>,
-        reverse_t_literals: &mut FxHashMap<u32, Variable>,
+        reverse_t_literals: &mut FxHashMap<u32, ClauseId>,
     ) -> Lit {
         // first check if there is a b-literal for clause
         // if yes, just return it (the currents scope influences clause since there is at least one variable contained)

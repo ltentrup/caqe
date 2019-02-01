@@ -54,9 +54,9 @@ impl Clause {
         let max = self
             .literals
             .iter()
-            .filter(|l| !prefix.variables().get(l.variable()).is_universal)
+            .filter(|l| !prefix.variables().get(l.variable()).is_universal())
             .fold(0, |max, l| {
-                let level = prefix.variables().get(l.variable()).scope;
+                let level = prefix.variables().get(l.variable()).level;
                 if level > max {
                     level
                 } else {
@@ -65,7 +65,7 @@ impl Clause {
             });
         self.literals.retain(|l| {
             let info = prefix.variables().get(l.variable());
-            !info.is_universal || info.scope < max
+            !info.is_universal() || info.level < max
         });
     }
 
@@ -211,8 +211,8 @@ mod tests {
 
     #[test]
     fn clause_normalization() {
-        let lit1 = Literal::new(0, false);
-        let lit2 = Literal::new(1, false);
+        let lit1 = Literal::new(0u32, false);
+        let lit2 = Literal::new(1u32, false);
         let literals = vec![lit2, lit1, lit2];
         let clause1 = Clause::new(literals);
         let clause2 = Clause::new_normalized(vec![lit1, lit2]);
@@ -223,17 +223,17 @@ mod tests {
     fn clause_reduce_universal_qbf() {
         // cretate a qbf prefix
         let mut prefix = HierarchicalPrefix::new(3);
-        let exists1 = prefix.new_scope(Quantifier::Existential);
-        let forall = prefix.new_scope(Quantifier::Universal);
-        let exists2 = prefix.new_scope(Quantifier::Existential);
+        let exists1 = prefix.new_scope(ScopeId::OUTERMOST, Quantifier::Existential);
+        let forall = prefix.new_scope(exists1, Quantifier::Universal);
+        let exists2 = prefix.new_scope(forall, Quantifier::Existential);
 
-        prefix.add_variable(1, exists1);
-        prefix.add_variable(2, forall);
-        prefix.add_variable(3, exists2);
+        prefix.add_variable(1u32, exists1);
+        prefix.add_variable(2u32, forall);
+        prefix.add_variable(3u32, exists2);
 
-        let lit1 = Literal::new(1, false);
-        let lit2 = Literal::new(2, false);
-        let lit3 = Literal::new(3, false);
+        let lit1 = Literal::new(1u32, false);
+        let lit2 = Literal::new(2u32, false);
+        let lit3 = Literal::new(3u32, false);
 
         // no universal reduction
         let mut clause1 = Clause::new(vec![lit1, lit2, lit3]);
@@ -250,9 +250,9 @@ mod tests {
 
     #[test]
     fn clause_subset_wrt_predicate() {
-        let lit1 = Literal::new(0, false);
-        let lit2 = Literal::new(1, false);
-        let lit3 = Literal::new(2, false);
+        let lit1 = Literal::new(0u32, false);
+        let lit2 = Literal::new(1u32, false);
+        let lit3 = Literal::new(2u32, false);
         let clause1 = Clause::new(vec![lit1, -lit2, lit3]);
         let clause2 = Clause::new(vec![lit1, lit2, lit3]);
         assert!(!clause1.is_subset(&clause2));
@@ -261,9 +261,9 @@ mod tests {
 
     #[test]
     fn clause_equal_wrt_predicate() {
-        let lit1 = Literal::new(0, false);
-        let lit2 = Literal::new(1, false);
-        let lit3 = Literal::new(2, false);
+        let lit1 = Literal::new(0u32, false);
+        let lit2 = Literal::new(1u32, false);
+        let lit3 = Literal::new(2u32, false);
         let clause1 = Clause::new(vec![lit1, -lit2, lit3]);
         let clause2 = Clause::new(vec![lit1, lit3]);
         assert!(!clause1.is_equal(&clause2));
@@ -272,25 +272,25 @@ mod tests {
 
     #[test]
     fn clause_is_satisifed() {
-        let lit1 = Literal::new(0, false);
-        let lit2 = Literal::new(1, false);
-        let lit3 = Literal::new(2, false);
+        let lit1 = Literal::new(0u32, false);
+        let lit2 = Literal::new(1u32, false);
+        let lit3 = Literal::new(2u32, false);
         let clause = Clause::new(vec![lit1, -lit2, lit3]);
-        let mut assignment = FxHashMap::default();
-        assignment.insert(1, true);
-        assignment.insert(2, false);
+        let mut assignment: FxHashMap<Variable, bool> = FxHashMap::default();
+        assignment.insert(1u32.into(), true);
+        assignment.insert(2u32.into(), false);
         assert!(!clause.is_satisfied_by_assignment(&assignment));
-        assignment.insert(0, true);
+        assignment.insert(0u32.into(), true);
         assert!(clause.is_satisfied_by_assignment(&assignment));
-        assignment.insert(0, false);
+        assignment.insert(0u32.into(), false);
         assert!(!clause.is_satisfied_by_assignment(&assignment));
     }
 
     #[test]
     fn clause_dimacs() {
-        let lit1 = Literal::new(1, false);
-        let lit2 = Literal::new(2, false);
-        let lit3 = Literal::new(3, false);
+        let lit1 = Literal::new(1u32, false);
+        let lit2 = Literal::new(2u32, false);
+        let lit3 = Literal::new(3u32, false);
         let clause = Clause::new(vec![lit1, -lit2, lit3]);
         assert_eq!(clause.dimacs(), "1 -2 3 0");
     }

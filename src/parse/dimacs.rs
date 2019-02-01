@@ -31,7 +31,7 @@ pub enum DimacsToken {
 impl Into<Literal> for DimacsToken {
     fn into(self) -> Literal {
         match self {
-            DimacsToken::Zero => Literal::new(0, false),
+            DimacsToken::Zero => Literal::new(0u32, false),
             DimacsToken::Lit(l) => l,
             _ => panic!("cannot convert {:?} into Literal", self),
         }
@@ -92,7 +92,7 @@ impl<'a> DimacsTokenStream<'a> {
                     return Err(ParseError {
                         msg: format!("Encountered unknown token `{}` during lexing", c),
                         pos: self.chars.pos,
-                    })
+                    });
                 }
             }
         }
@@ -135,7 +135,7 @@ pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), Par
     }
     //lexer.expect_next(DimacsToken::EOL);
     let num_variables = match lexer.next()? {
-        DimacsToken::Zero => 0,
+        DimacsToken::Zero => 0u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
@@ -154,11 +154,11 @@ pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), Par
                     token
                 ),
                 pos: lexer.pos(),
-            })
+            });
         }
     };
     let num_clauses = match lexer.next()? {
-        DimacsToken::Zero => 0,
+        DimacsToken::Zero => 0u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
@@ -177,10 +177,10 @@ pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), Par
                     token
                 ),
                 pos: lexer.pos(),
-            })
+            });
         }
     };
-    Ok((num_variables as usize, num_clauses as usize))
+    Ok((num_variables.into(), num_clauses.into()))
 }
 
 pub fn parse_matrix<P: Prefix>(
@@ -238,7 +238,7 @@ pub fn parse_matrix<P: Prefix>(
                 return Err(ParseError {
                     msg: format!("Unexpected token `{:?}` while reading clause", current),
                     pos: lexer.pos(),
-                })
+                });
             }
         }
         current = lexer.next()?;

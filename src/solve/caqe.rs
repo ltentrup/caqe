@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 #[cfg(feature = "statistics")]
 use crate::utils::statistics::TimingStats;
 
-type QMatrix = Matrix<TreePrefix>;
+type QMatrix = Matrix<HierarchicalPrefix>;
 
 pub struct CaqeSolver<'a> {
     matrix: &'a QMatrix,
@@ -24,9 +24,9 @@ impl<'a> CaqeSolver<'a> {
 
     pub fn new_with_options(matrix: &QMatrix, options: CaqeSolverOptions) -> CaqeSolver {
         let mut abstractions = Vec::new();
-        for scope_node in matrix.prefix.roots.iter() {
+        for scope_id in matrix.prefix.roots.iter() {
             abstractions.push(ScopeRecursiveSolver::init_abstraction_recursively(
-                matrix, options, scope_node,
+                matrix, options, *scope_id,
             ));
         }
         debug_assert!(!matrix.conflict());
@@ -58,13 +58,11 @@ impl<'a> CaqeSolver<'a> {
         // get the first scope that contains variables (the scope 0 may be empty)
         let mut top_level = Vec::new();
         let is_universal;
-        if self
-            .matrix
-            .prefix
-            .roots
-            .iter()
-            .fold(true, |val, node| val && node.scope.variables.is_empty())
-        {
+        if self.matrix.prefix.roots.iter().fold(true, |val, scope_id| {
+            val && self.matrix.prefix.scopes[scope_id.to_usize()]
+                .variables
+                .is_empty()
+        }) {
             // top-level existential scope is empty
             for abstraction in self.abstraction.iter() {
                 top_level.extend(&abstraction.next);
@@ -96,7 +94,7 @@ impl<'a> CaqeSolver<'a> {
                 let value = scope.data.assignments[variable];
                 let info = &self.matrix.prefix.variables().get(*variable);
                 let mut orig_variable;
-                if info.copy_of != 0 {
+                if info.copy_of != 0u32.into() {
                     orig_variable = info.copy_of;
                 } else {
                     orig_variable = *variable;
@@ -196,6 +194,7 @@ struct ScopeSolverData {
 
     is_universal: bool,
     scope_id: ScopeId,
+    level: u32,
 
     options: CaqeSolverOptions,
 
@@ -239,8 +238,9 @@ impl ScopeSolverData {
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
             relevant_clauses: relevant_clauses,
             sat_solver_assumptions: Vec::new(),
-            is_universal: scope.id % 2 != 0,
+            is_universal: scope.quant == Quantifier::Universal,
             scope_id: scope.id,
+            level: scope.level,
             options: options,
             strong_unsat_cache: FxHashMap::default(),
             conjunction: Vec::new(),
@@ -263,15 +263,15 @@ impl ScopeSolverData {
             let mut outer = None;
             let mut inner = None;
             let mut current = None;
-            let mut scopes = MinMax::new();
+            let mut levels = MinMax::new();
 
             for &literal in clause.iter() {
-                let var_scope = matrix.prefix.variables().get(literal.variable()).scope;
-                scopes.update(var_scope);
+                let var_level = matrix.prefix.variables().get(literal.variable()).level;
+                levels.update(var_level);
                 if !self.variable_to_sat.contains_key(&literal.variable()) {
-                    if var_scope < scope.id {
+                    if var_level < scope.level {
                         outer = Some(literal);
-                    } else if var_scope > scope.id {
+                    } else if var_level > scope.level {
                         inner = Some(literal);
                     }
                     continue;
@@ -283,16 +283,18 @@ impl ScopeSolverData {
             }
 
             // add t- and b-lits to existential quantifiers:
-            // * we add t-lit if scope is between min- and max-scope of current clause
-            // * we add b-lit if scope is between min- and max-scope of current clause, excluding max-scope
-            let (min_scope, max_scope) = scopes.get();
-            let need_t_lit = contains_variables && min_scope < scope.id && scope.id <= max_scope;
-            let need_b_lit = contains_variables && min_scope <= scope.id && scope.id < max_scope;
+            // * we add t-lit if level is between min- and max-level of current clause
+            // * we add b-lit if level is between min- and max-level of current clause, excluding max-scope
+            let (min_level, max_level) = levels.get();
+            let need_t_lit =
+                contains_variables && min_level < scope.level && scope.level <= max_level;
+            let need_b_lit =
+                contains_variables && min_level <= scope.level && scope.level < max_level;
 
             let mut outer_equal_to = None;
             let mut inner_equal_to = None;
 
-            if min_scope > self.scope_id {
+            if min_level > self.level {
                 // remove the clause from relevant clauses as current scope (nor any outer) influence it
                 self.relevant_clauses.set(clause_id as usize, false);
             }
@@ -314,7 +316,7 @@ impl ScopeSolverData {
                         let other_clause = &matrix.clauses[other_clause_id as usize];
                         if clause.is_equal_wrt_predicate(other_clause, |l| {
                             let info = matrix.prefix.variables().get(l.variable());
-                            info.scope <= scope.id
+                            info.level <= scope.level
                         }) {
                             debug_assert!(need_b_lit);
                             let pos = self
@@ -337,7 +339,7 @@ impl ScopeSolverData {
                         let other_clause = &matrix.clauses[other_clause_id as usize];
                         if clause.is_equal_wrt_predicate(other_clause, |l| {
                             let info = matrix.prefix.variables().get(l.variable());
-                            info.scope < scope.id
+                            info.level < scope.level
                         }) {
                             debug_assert!(need_t_lit);
                             let pos = self
@@ -359,7 +361,7 @@ impl ScopeSolverData {
                         let other_clause = &matrix.clauses[other_clause_id as usize];
                         if clause.is_equal_wrt_predicate(other_clause, |l| {
                             let info = matrix.prefix.variables().get(l.variable());
-                            info.scope > scope.id
+                            info.level > scope.level
                         }) {
                             debug_assert!(need_b_lit);
                             let pos = self
@@ -406,12 +408,12 @@ impl ScopeSolverData {
             self.sat.add_clause(sat_clause.as_ref());
             sat_clause.clear();
 
-            if max_scope == scope.id {
+            if max_level == scope.level {
                 self.max_clauses.set(clause_id, true);
             }
         }
 
-        debug!("Scope {}", scope.id);
+        debug!("Scope {} with level {}", scope.id, scope.level);
         debug!("t-literals: {}", self.t_literals.len());
         debug!("b-literals: {}", self.b_literals.len());
 
@@ -438,15 +440,15 @@ impl ScopeSolverData {
 
             let clause_id = clause_id as ClauseId;
 
-            let mut scopes = MinMax::new();
+            let mut levels = MinMax::new();
 
-            // check if there is at most one variable bound in current scope (and no outer variables)
+            // check if there is at most one variable bound in current level (and no outer variables)
             // then one can replace the b-literal by the variable itself
             let mut single_literal = None;
             let mut num_scope_variables = 0;
             for &literal in clause.iter() {
-                let var_scope = matrix.prefix.variables().get(literal.variable()).scope;
-                scopes.update(var_scope);
+                let var_level = matrix.prefix.variables().get(literal.variable()).level;
+                levels.update(var_level);
                 if !self.variable_to_sat.contains_key(&literal.variable()) {
                     continue;
                 }
@@ -456,13 +458,13 @@ impl ScopeSolverData {
                     single_literal = Some(literal);
                 }
             }
-            let (min_scope, max_scope) = scopes.get();
+            let (min_level, max_level) = levels.get();
 
             // We check whether the clause is equal to a prior clause w.r.t. outer and current variables.
             // In this case, we can re-use the b-literal from other clause (and can omit t-literal all together).
             if self.options.abstraction_literal_optimization
                 && single_literal.is_some()
-                && (num_scope_variables > 1 || min_scope < scope.id)
+                && (num_scope_variables > 1 || min_level < scope.level)
             {
                 let literal = single_literal.unwrap();
                 // iterate only over prior clauses
@@ -473,7 +475,7 @@ impl ScopeSolverData {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     if clause.is_equal_wrt_predicate(other_clause, |l| {
                         let info = matrix.prefix.variables().get(l.variable());
-                        info.scope <= scope.id
+                        info.level <= scope.level
                     }) {
                         let pos = self
                             .b_literals
@@ -491,7 +493,7 @@ impl ScopeSolverData {
             // there is a single literal and no outer variables, replace t-literal by literal
             if self.options.abstraction_literal_optimization
                 && num_scope_variables == 1
-                && min_scope == scope.id
+                && min_level == scope.level
             {
                 let literal = single_literal.unwrap();
                 sat_var = !self.lit_to_sat_lit(literal);
@@ -513,11 +515,11 @@ impl ScopeSolverData {
 
             debug_assert!(self.relevant_clauses[clause_id as usize]);
 
-            let need_t_lit = min_scope < scope.id && scope.id <= max_scope;
-            let need_b_lit = min_scope <= scope.id && scope.id <= max_scope;
+            let need_t_lit = min_level < scope.level && scope.level <= max_level;
+            let need_b_lit = min_level <= scope.level && scope.level <= max_level;
 
-            debug_assert!(min_scope <= scope.id);
-            debug_assert!(max_scope >= scope.id);
+            debug_assert!(min_level <= scope.level);
+            debug_assert!(max_level >= scope.level);
 
             if need_t_lit {
                 self.t_literals.push((clause_id as ClauseId, sat_var));
@@ -530,12 +532,12 @@ impl ScopeSolverData {
                 self.b_literals.push((clause_id as ClauseId, sat_var));
             }
 
-            if min_scope == scope.id {
+            if min_level == scope.level {
                 self.max_clauses.set(clause_id as usize, true);
             }
         }
 
-        debug!("Scope {}", scope.id);
+        debug!("Scope {} with level {}", scope.id, scope.level);
         debug!("t-literals: {}", self.t_literals.len());
         debug!("b-literals: {}", self.b_literals.len());
 
@@ -778,14 +780,14 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         for (i, _val) in self.entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
-            let mut min = ScopeId::max_value();
+            let mut min = std::u32::MAX;
             for &literal in clause.iter() {
-                let otherscope = matrix.prefix.variables().get(literal.variable()).scope;
+                let otherscope = matrix.prefix.variables().get(literal.variable()).level;
                 if otherscope < min {
                     min = otherscope;
                 }
             }
-            assert!(min < self.scope_id);
+            assert!(min < self.level);
         }
     }
 
@@ -871,7 +873,7 @@ impl ScopeSolverData {
         blocking_clause.clear();
 
         let entry = &next.data.entry;
-        let scope_id = self.scope_id;
+        let level = self.level;
 
         // was the clause processed before?
         for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
@@ -900,7 +902,7 @@ impl ScopeSolverData {
                 let info = matrix.prefix.variables().get(literal.variable());
 
                 // Consider only existential variables that have a lower level
-                if info.is_universal() || info.scope <= self.scope_id {
+                if info.is_universal() || info.level <= self.level {
                     continue;
                 }
 
@@ -917,7 +919,7 @@ impl ScopeSolverData {
                         };
 
                         if other_clause.is_subset_wrt_predicate(clause, |l| {
-                            matrix.prefix.variables().get(l.variable()).scope > scope_id
+                            matrix.prefix.variables().get(l.variable()).level > level
                         }) {
                             debug_assert!(!self.max_clauses[other_clause_id as usize]);
                             self.conjunction.insert(pos, other_clause_id);
@@ -986,7 +988,7 @@ impl ScopeSolverData {
             let clause = &matrix.clauses[i];
             for &literal in clause.iter() {
                 let info = matrix.prefix.variables().get(literal.variable());
-                if info.scope > self.scope_id {
+                if info.level > self.level {
                     // do not consider inner variables
                     continue;
                 }
@@ -1000,13 +1002,13 @@ impl ScopeSolverData {
                         continue;
                     }
                     let other_clause = &matrix.clauses[other_clause_id as usize];
-                    let current_scope = self.scope_id;
+                    let current_level = self.level;
                     // check if other clause subsumes current
                     // check is done with respect to current and outer variables
                     if self.is_universal {
                         if other_clause.is_subset_wrt_predicate(clause, |l| {
                             let info = matrix.prefix.variables().get(l.variable());
-                            info.scope <= current_scope
+                            info.level <= current_level
                         }) {
                             entry.set(clause_id as usize, false);
                             successful = true;
@@ -1015,7 +1017,7 @@ impl ScopeSolverData {
                     } else {
                         if clause.is_subset_wrt_predicate(other_clause, |l| {
                             let info = matrix.prefix.variables().get(l.variable());
-                            info.scope <= current_scope
+                            info.level <= current_level
                         }) {
                             entry.set(clause_id as usize, false);
                             successful = true;
@@ -1068,17 +1070,17 @@ impl ScopeSolverData {
             let mut contains_outer_variables = false;
             for &literal in clause.iter() {
                 let info = matrix.prefix.variables().get(literal.variable());
-                if info.scope <= data.scope_id {
-                    if info.scope < self.scope_id {
+                if info.level <= data.level {
+                    if info.level < self.level {
                         contains_outer_variables = true;
                     }
                     continue;
                 }
-                if info.scope % 2 == 1 {
+                if info.is_universal() {
                     debug_assert!(universal_assignment.contains_key(&literal.variable()));
                     continue;
                 }
-                debug_assert!(info.scope > self.scope_id);
+                debug_assert!(info.level > self.level);
                 contains_variables = true;
 
                 let entry = self
@@ -1122,7 +1124,7 @@ impl ScopeSolverData {
         sat: &mut cryptominisat::Solver,
         b_literals: &Vec<(ClauseId, Lit)>,
         t_literals: &mut Vec<(ClauseId, Lit)>,
-        reverse_t_literals: &mut FxHashMap<u32, Variable>,
+        reverse_t_literals: &mut FxHashMap<u32, ClauseId>,
     ) -> Lit {
         // first check if there is a b-literal for clause
         // if yes, just return it (the currents scope influences clause since there is at least one variable contained)
@@ -1191,7 +1193,6 @@ impl ScopeRecursiveSolver {
         matrix: &QMatrix,
         options: CaqeSolverOptions,
         scope: &Scope,
-        quantifier: Quantifier,
         next: Vec<Box<ScopeRecursiveSolver>>,
     ) -> ScopeRecursiveSolver {
         let mut relevant_clauses = BitVec::from_elem(matrix.clauses.len(), false);
@@ -1218,7 +1219,7 @@ impl ScopeRecursiveSolver {
                 .insert(variable, candidate.data.sat.new_var());
         }
 
-        match quantifier {
+        match scope.quant {
             Quantifier::Existential => candidate.data.new_existential(matrix, scope),
             Quantifier::Universal => candidate.data.new_universal(matrix, scope),
         }
@@ -1229,22 +1230,18 @@ impl ScopeRecursiveSolver {
     fn init_abstraction_recursively(
         matrix: &QMatrix,
         options: CaqeSolverOptions,
-        scope_node: &ScopeNode,
+        scope_id: ScopeId,
     ) -> Box<ScopeRecursiveSolver> {
         let mut prev = Vec::new();
-        for child_node in scope_node.next.iter() {
+        for child_scope_id in matrix.prefix.next_scopes[scope_id.to_usize()].iter() {
             prev.push(Self::init_abstraction_recursively(
-                matrix, options, child_node,
+                matrix,
+                options,
+                *child_scope_id,
             ))
         }
-        let scope = &scope_node.scope;
-        let result = Box::new(ScopeRecursiveSolver::new(
-            matrix,
-            options,
-            scope,
-            Quantifier::from(scope.id),
-            prev,
-        ));
+        let scope = &matrix.prefix.scopes[scope_id.to_usize()];
+        let result = Box::new(ScopeRecursiveSolver::new(matrix, options, scope, prev));
 
         #[cfg(debug_assertions)]
         {
@@ -1428,8 +1425,8 @@ impl ScopeRecursiveSolver {
 }
 
 struct MinMax {
-    min: Option<i32>,
-    max: Option<i32>,
+    min: Option<u32>,
+    max: Option<u32>,
 }
 
 impl MinMax {
@@ -1440,7 +1437,7 @@ impl MinMax {
         }
     }
 
-    fn update(&mut self, value: i32) {
+    fn update(&mut self, value: u32) {
         match (self.min, self.max) {
             (None, None) => {
                 self.min = Some(value);
@@ -1458,15 +1455,15 @@ impl MinMax {
         }
     }
 
-    fn min(&self) -> i32 {
+    fn min(&self) -> u32 {
         self.min.unwrap()
     }
 
-    fn max(&self) -> i32 {
+    fn max(&self) -> u32 {
         self.max.unwrap()
     }
 
-    fn get(&self) -> (i32, i32) {
+    fn get(&self) -> (u32, u32) {
         (self.min(), self.max())
     }
 }
@@ -1487,8 +1484,8 @@ mod tests {
     #[test]
     fn test_true() {
         let instance = "p cnf 0 0";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 0 0\n");
@@ -1505,8 +1502,8 @@ e 3 4 0
 -3 -4 0
 -1 2 4 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\n");
@@ -1523,8 +1520,8 @@ e 3 4 0
 -3 -4 0
 1 2 4 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(
@@ -1566,8 +1563,8 @@ e 4 5 6 7 8 9 10 11 0
 -8 -10 11 0
 11 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 11 24\n");
@@ -1586,8 +1583,8 @@ e 2 0
 3 -4 0
 -2 -1 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
@@ -1601,9 +1598,8 @@ p cnf 1 2
 -1 0
 1 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
-        println!("{}", matrix.dimacs());
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 1 2\n");
@@ -1619,8 +1615,8 @@ e 3 0
 3 -2 0
 -3 -1 2 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 2\n");
@@ -1639,8 +1635,8 @@ e 3 0
 -3 -2 0
 3 -4 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 2 0\n");
@@ -1661,8 +1657,8 @@ e 2 4 0
 -4 -5 -1 0
 2 3 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 5\n");
@@ -1681,8 +1677,8 @@ e 2 0
 2 -3 -4 0
 -1 -4 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
@@ -1701,8 +1697,8 @@ e 2 0
 -2 3 0
 3 2 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 4\nV 3 0\n");
@@ -1721,8 +1717,8 @@ e 1 0
 -2 3 0
 3 1 -4 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
@@ -1745,8 +1741,8 @@ e 2 3 0
 -2 4 0
 5 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 5 5\n");
@@ -1765,8 +1761,8 @@ e 1 3 0
 3 -4 0
 -3 2 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\nV 2 0\n");
@@ -1785,8 +1781,8 @@ e 1 3 0
 4 -3 0
 1 2 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 4\n");
@@ -1810,8 +1806,8 @@ e 1 3 0
 -2 7 0
 -3 -2 -1 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 7 6\nV 7 0\n");
@@ -1832,8 +1828,8 @@ e 2 0
 4 0
 -4 2 1 3 0
 ";
-        let matrix = qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 4\nV 1 0\n");

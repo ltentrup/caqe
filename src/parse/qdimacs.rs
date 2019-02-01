@@ -20,6 +20,7 @@ pub fn parse_prefix(
     lexer: &mut DimacsTokenStream,
     matrix: &mut Matrix<HierarchicalPrefix>,
 ) -> Result<DimacsToken, ParseError> {
+    let mut pref_scope_id = *matrix.prefix.roots.first().expect("root cannot be empty");
     loop {
         // first character after newline, either `e`, `a`, or literal (in which case we return)
         match lexer.next()? {
@@ -32,7 +33,7 @@ pub fn parse_prefix(
                         pos: lexer.pos(),
                     }),
                 }?;
-                let scope_id = matrix.prefix.new_scope(quantifier);
+                let scope_id = matrix.prefix.new_scope(pref_scope_id, quantifier);
 
                 // add variables
                 loop {
@@ -62,6 +63,8 @@ pub fn parse_prefix(
                         }
                     }
                 }
+
+                pref_scope_id = scope_id;
             }
             DimacsToken::Lit(l) => return Ok(DimacsToken::Lit(l)),
             DimacsToken::Zero => return Ok(DimacsToken::Zero),
@@ -74,7 +77,7 @@ pub fn parse_prefix(
                 return Err(ParseError {
                     msg: format!("Expect `e`, `a`, or literal, but found `{:?}`", token),
                     pos: lexer.pos(),
-                })
+                });
             }
         }
     }
@@ -144,7 +147,7 @@ pub fn parse_qdimacs_certificate_header(
                     pos: lexer.pos(),
                 });
             }
-            if l.variable() == 1 {
+            if l.variable() == 1u32.into() {
                 if l.signed() {
                     SolverResult::Unknown
                 } else {
@@ -167,11 +170,11 @@ pub fn parse_qdimacs_certificate_header(
                     token
                 ),
                 pos: lexer.pos(),
-            })
+            });
         }
     };
     let num_variables = match lexer.next()? {
-        DimacsToken::Zero => 0,
+        DimacsToken::Zero => 0u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
@@ -190,11 +193,11 @@ pub fn parse_qdimacs_certificate_header(
                     token
                 ),
                 pos: lexer.pos(),
-            })
+            });
         }
     };
     let num_clauses = match lexer.next()? {
-        DimacsToken::Zero => 0,
+        DimacsToken::Zero => 0u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
@@ -213,10 +216,10 @@ pub fn parse_qdimacs_certificate_header(
                     token
                 ),
                 pos: lexer.pos(),
-            })
+            });
         }
     };
-    Ok((result, num_variables as usize, num_clauses as usize))
+    Ok((result, num_variables.into(), num_clauses.into()))
 }
 
 impl FromStr for PartialQDIMACSCertificate {
@@ -249,7 +252,8 @@ impl FromStr for PartialQDIMACSCertificate {
                                     token
                                 ),
                                 pos: lexer.pos(),
-                            }.into())
+                            }
+                            .into());
                         }
                     }
                     lexer.expect_next(DimacsToken::Zero)?;
@@ -259,7 +263,8 @@ impl FromStr for PartialQDIMACSCertificate {
                     return Err(ParseError {
                         msg: format!("Certificate line should start with `V`, found {:?}", token),
                         pos: lexer.pos(),
-                    }.into())
+                    }
+                    .into());
                 }
             }
         }
@@ -295,12 +300,17 @@ mod tests {
         assert!(result.is_ok());
         let matrix = result.unwrap();
 
+        let v1 = Variable::from(1u32);
+        let v2 = Variable::from(2u32);
+        let v3 = Variable::from(3u32);
+        let v4 = Variable::from(4u32);
+
         // prefix
         let variables = matrix.prefix.variables();
-        assert!(variables.get(1).is_universal());
-        assert!(variables.get(2).is_universal());
-        assert!(variables.get(3).is_existential());
-        assert!(variables.get(4).is_existential());
+        assert!(variables.get(v1).is_universal());
+        assert!(variables.get(v2).is_universal());
+        assert!(variables.get(v3).is_existential());
+        assert!(variables.get(v4).is_existential());
 
         // clauses
         let mut clause_iter = matrix.clauses.iter();
@@ -417,7 +427,7 @@ mod tests {
             result: SolverResult::Satisfiable,
             num_variables: 4,
             num_clauses: 3,
-            assignments: vec![Literal::new(2, true), Literal::new(3, false)],
+            assignments: vec![Literal::new(2u32, true), Literal::new(3u32, false)],
         };
         let dimacs_output = certificate.dimacs();
         assert_eq!(dimacs_output.as_str(), "s cnf 1 4 3\nV -2 0\nV 3 0\n");

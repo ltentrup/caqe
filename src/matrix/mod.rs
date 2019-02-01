@@ -22,7 +22,7 @@ pub trait Prefix {
     fn reduce_universal(&self, clause: &mut Clause);
 
     /// Checks if an existential variable `var` depends on `other`.
-    fn depends_on(&self, var: Variable, other: Variable) -> bool;
+    fn depends_on<V: Into<Variable>, U: Into<Variable>>(&self, var: V, other: U) -> bool;
 }
 
 #[derive(Debug)]
@@ -128,7 +128,7 @@ impl<V: VariableInfo> VariableStore<V> {
     }
 
     pub fn get(&self, variable: Variable) -> &V {
-        let index = variable as usize;
+        let index: usize = variable.into();
         if index >= self.variables.len() {
             // variable was not bound prior
             return &self.unbounded;
@@ -148,17 +148,18 @@ impl<V: VariableInfo> VariableStore<V> {
     /// Makes sure variable vector is large enough
     /// Also, marks the variable as `used`
     fn import(&mut self, variable: Variable) {
-        if self.variables.len() <= variable as usize {
-            self.variables.resize((variable + 1) as usize, V::new())
+        let index: usize = variable.into();
+        if self.variables.len() <= index {
+            self.variables.resize(index + 1, V::new())
         }
-        if self.used.len() <= variable as usize {
-            self.used.grow((variable + 1) as usize, false);
+        if self.used.len() <= index {
+            self.used.grow(index + 1, false);
         }
-        self.used.set(variable as usize, true);
+        self.used.set(index, true);
     }
 
     fn get_mut(&mut self, variable: Variable) -> &mut V {
-        let index = variable as usize;
+        let index: usize = variable.into();
         assert!(index < self.variables.len());
         &mut self.variables[index]
     }
@@ -166,9 +167,9 @@ impl<V: VariableInfo> VariableStore<V> {
     /// Returns the next unused variable
     pub fn next_unused(&self) -> Variable {
         if let Some((index, _)) = self.used.iter().enumerate().filter(|(_, val)| !val).next() {
-            index as Variable
+            index.into()
         } else {
-            self.used.len() as Variable
+            self.used.len().into()
         }
     }
 }
@@ -188,10 +189,10 @@ e 3 4 0
 -3 -4 0
 1 2 4 0
 ";
-        let lit1 = Literal::new(1, false);
-        let lit2 = Literal::new(2, false);
-        let lit3 = Literal::new(3, false);
-        let lit4 = Literal::new(4, false);
+        let lit1 = Literal::new(1u32, false);
+        let lit2 = Literal::new(2u32, false);
+        let lit3 = Literal::new(3u32, false);
+        let lit4 = Literal::new(4u32, false);
         let matrix = parse::qdimacs::parse(&instance).unwrap();
         assert_eq!(matrix.occurrences(lit1).len(), 2);
         assert_eq!(matrix.occurrences(-lit1).len(), 1);
@@ -236,8 +237,8 @@ e 7 8 9 10 0
 -10 -6 8 0
 -10 6 -8 0
 ";
-        let matrix = parse::qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         assert!(matrix.prefix.roots.len() == 2);
     }
 
@@ -251,8 +252,8 @@ e 3 4 0
 -3 -4 0
 1 2 4 0
 ";
-        let matrix = parse::qdimacs::parse(&instance).unwrap();
-        let matrix = Matrix::unprenex_by_miniscoping(matrix, false);
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
         let dimacs = matrix.dimacs();
         assert_eq!(instance, dimacs);
     }

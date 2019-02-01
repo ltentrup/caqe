@@ -117,7 +117,8 @@ impl<'a> CharIterator<'a> {
         let mut val = first
             .to_digit(10)
             .expect("internal error, character has to be digit");
-        while let Some(digit) = self.consume_if(|c| c.is_ascii_digit())
+        while let Some(digit) = self
+            .consume_if(|c| c.is_ascii_digit())
             .and_then(|c| c.to_digit(10))
         {
             val = val * 10 + digit;

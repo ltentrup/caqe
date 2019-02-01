@@ -286,8 +286,7 @@ impl CaqeConfig {
 
         matrix.refl_res_path_dep_scheme();
 
-        let matrix =
-            Matrix::unprenex_by_miniscoping(matrix, self.specific.options.collapse_empty_scopes);
+        matrix.unprenex_by_miniscoping(self.specific.options.collapse_empty_scopes);
 
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Initializing);

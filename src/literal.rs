@@ -1,16 +1,46 @@
 use std::ops;
 
-pub type Variable = u32;
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+pub struct Variable(u32);
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Hash)]
 pub struct Literal {
     x: u32,
 }
 
+impl Into<u32> for Variable {
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+impl Into<u32> for &Variable {
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
+impl Into<usize> for Variable {
+    fn into(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u32> for Variable {
+    fn from(val: u32) -> Self {
+        Variable(val)
+    }
+}
+impl From<usize> for Variable {
+    fn from(val: usize) -> Self {
+        Variable(val as u32)
+    }
+}
+
 impl Literal {
-    pub fn new(variable: Variable, signed: bool) -> Literal {
+    pub fn new<V: Into<Variable>>(variable: V, signed: bool) -> Literal {
+        let variable = variable.into();
         Literal {
-            x: variable << 1 | (signed as u32),
+            x: variable.0 << 1 | (signed as u32),
         }
     }
 
@@ -31,11 +61,11 @@ impl Literal {
     }
 
     pub fn variable(&self) -> Variable {
-        self.x >> 1
+        Variable(self.x >> 1)
     }
 
     pub fn dimacs(&self) -> i32 {
-        let base = self.variable() as i32;
+        let base = self.variable().0 as i32;
         if self.signed() {
             -base
         } else {
@@ -55,7 +85,7 @@ impl ops::Neg for Literal {
 impl From<i32> for Literal {
     fn from(literal: i32) -> Self {
         let signed = literal < 0;
-        let abs = literal.abs() as Variable;
+        let abs = Variable(literal.abs() as u32);
         Literal::new(abs, signed)
     }
 }
@@ -63,6 +93,12 @@ impl From<i32> for Literal {
 impl std::fmt::Debug for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "Literal({})", self.dimacs())
+    }
+}
+
+impl std::fmt::Display for Variable {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.0)
     }
 }
 
