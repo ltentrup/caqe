@@ -47,6 +47,7 @@ impl<P: Prefix> Matrix<P> {
                 if (!seen_pos.contains(&pos) || !seen_neg.contains(&pos))
                     || (!seen_neg.contains(&pos) && !seen_pos.contains(&neg))
                 {
+                    self.prefix.mut_vars().get_mut(evar).remove_dependency(var);
                     println!("{} {}", evar, var);
                 }
             }
@@ -117,6 +118,8 @@ e 2 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.refl_res_path_dep_scheme();
-        assert!(false);
+
+        assert!(!matrix.prefix.depends_on(2u32, 4u32));
+        assert!(!matrix.prefix.depends_on(3u32, 4u32));
     }
 }

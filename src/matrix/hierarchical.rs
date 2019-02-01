@@ -77,6 +77,10 @@ impl VariableInfo for QVariableInfo {
     fn is_bound(&self) -> bool {
         self.scope_id.is_some()
     }
+
+    fn remove_dependency(&mut self, spurious: Variable) {
+        self.dependencies.remove(&spurious);
+    }
 }
 
 impl Scope {
@@ -140,6 +144,9 @@ impl Prefix for HierarchicalPrefix {
     fn variables(&self) -> &VariableStore<Self::V> {
         &self.variables
     }
+    fn mut_vars(&mut self) -> &mut VariableStore<Self::V> {
+        &mut self.variables
+    }
 
     fn import(&mut self, variable: Variable) {
         if !self.variables().get(variable).is_bound() {
@@ -157,8 +164,14 @@ impl Prefix for HierarchicalPrefix {
         let other = other.into();
         let info = self.variables().get(var);
         debug_assert!(info.is_existential());
-        let other = self.variables().get(other);
-        other.level < info.level
+        let other_info = self.variables().get(other);
+        if other_info.is_universal {
+            info.dependencies.contains(&other)
+        } else {
+            let res = other_info.dependencies.is_subset(&info.dependencies);
+            debug_assert!(!res || other_info.level < info.level);
+            res
+        }
     }
 }
 
@@ -206,6 +219,52 @@ impl HierarchicalPrefix {
         variable_info.is_universal = scope.quant == Quantifier::Universal;
         variable_info.level = scope.level;
         scope.variables.push(variable);
+    }
+
+    /// Compute the dependency of existential variables by prefix tree traversal
+    pub(crate) fn compute_dependencies(&mut self) {
+        fn compute_dependencies_recursive(
+            scopes: &Vec<Scope>,
+            next_scopes: &Vec<Vec<ScopeId>>,
+            variables: &mut VariableStore<QVariableInfo>,
+            prior_deps: &FxHashSet<Variable>,
+            scope_id: ScopeId,
+        ) {
+            let scope = &scopes[scope_id.to_usize()];
+            let new_deps = match scope.quant {
+                Quantifier::Existential => {
+                    for var in &scope.variables {
+                        variables.get_mut(*var).dependencies = prior_deps.clone();
+                    }
+                    prior_deps.clone()
+                }
+                Quantifier::Universal => {
+                    let mut new = prior_deps.clone();
+                    new.extend(&scope.variables);
+                    new
+                }
+            };
+            for next_scope_id in &next_scopes[scope_id.to_usize()] {
+                compute_dependencies_recursive(
+                    scopes,
+                    next_scopes,
+                    variables,
+                    &new_deps,
+                    *next_scope_id,
+                );
+            }
+        }
+
+        let current_deps = FxHashSet::default();
+        for scope_id in &self.roots {
+            compute_dependencies_recursive(
+                &self.scopes,
+                &self.next_scopes,
+                &mut self.variables,
+                &current_deps,
+                *scope_id,
+            );
+        }
     }
 }
 
@@ -273,6 +332,8 @@ impl Matrix<HierarchicalPrefix> {
             *self.prefix.roots.first().unwrap(),
             collapse_empty_scopes,
         );
+
+        self.prefix.compute_dependencies();
     }
 
     fn unprenex_recursive(

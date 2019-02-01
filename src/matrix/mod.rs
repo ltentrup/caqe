@@ -14,6 +14,7 @@ pub trait Prefix {
     fn new(num_variables: usize) -> Self;
 
     fn variables(&self) -> &VariableStore<Self::V>;
+    fn mut_vars(&mut self) -> &mut VariableStore<Self::V>;
 
     /// This function is called in `Matrix::add` for every literal in clause
     fn import(&mut self, variable: Variable);
@@ -92,7 +93,7 @@ where
     }
 }
 
-pub trait VariableInfo: std::clone::Clone + std::fmt::Debug {
+pub trait VariableInfo: Clone + std::fmt::Debug {
     fn new() -> Self;
     fn is_universal(&self) -> bool;
     fn is_bound(&self) -> bool;
@@ -100,6 +101,8 @@ pub trait VariableInfo: std::clone::Clone + std::fmt::Debug {
     fn is_existential(&self) -> bool {
         !self.is_universal()
     }
+
+    fn remove_dependency(&mut self, spurious: Variable);
 }
 
 #[derive(Debug)]

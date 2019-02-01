@@ -11,6 +11,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, ParseError> {
     let mut matrix = Matrix::new(num_variables, num_clauses);
     let token = parse_prefix(&mut lexer, &mut matrix)?;
     parse_matrix(&mut lexer, &mut matrix, token, num_clauses)?;
+    matrix.prefix.compute_dependencies();
     Ok(matrix)
 }
 

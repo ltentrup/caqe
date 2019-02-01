@@ -28,6 +28,10 @@ impl VariableInfo for DQVariableInfo {
     fn is_bound(&self) -> bool {
         self.bound
     }
+
+    fn remove_dependency(&mut self, spurious: Variable) {
+        self.dependencies.remove(&spurious);
+    }
 }
 
 impl DQVariableInfo {
@@ -306,6 +310,9 @@ impl Prefix for DependencyPrefix {
 
     fn variables(&self) -> &VariableStore<Self::V> {
         &self.variables
+    }
+    fn mut_vars(&mut self) -> &mut VariableStore<Self::V> {
+        &mut self.variables
     }
 
     fn import(&mut self, variable: Variable) {
