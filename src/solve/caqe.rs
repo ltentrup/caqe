@@ -1030,16 +1030,16 @@ impl ScopeSolverData {
         successful
     }
 
-    fn is_expansion_refinement_applicable(&self, next: &mut Box<ScopeRecursiveSolver>) -> bool {
+    fn is_expansion_refinement_applicable(&self, next: &mut ScopeRecursiveSolver) -> bool {
         if self.is_universal {
             return false;
         }
         //return true;
-        debug_assert!(next.next.len() == 1);
-        return next.next[0].as_ref().next.is_empty();
+        debug_assert_eq!(next.next.len(), 1, "scope {:?}", self.scope_id);
+        next.next[0].as_ref().next.is_empty()
     }
 
-    fn expansion_refinement(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
+    fn expansion_refinement(&mut self, matrix: &QMatrix, next: &mut ScopeRecursiveSolver) {
         trace!("expansion_refinement");
         let universal_assignment = next.get_universal_assignmemnt(FxHashMap::default());
         let (data, next) = next.split();
@@ -1330,7 +1330,10 @@ impl ScopeRecursiveSolver {
 
         loop {
             debug!("");
-            info!("solve level {}", current.scope_id);
+            info!(
+                "solve scope {} at level {}",
+                current.scope_id, current.level
+            );
 
             #[cfg(feature = "statistics")]
             let mut timer = current

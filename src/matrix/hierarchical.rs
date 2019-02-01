@@ -384,21 +384,22 @@ impl Matrix<HierarchicalPrefix> {
             let id = self.prefix.create_scope(Quantifier::Existential, level);
             self.prefix.scopes[id.to_usize()].variables.push(var);
             scopes.push(id);
-            remaining_next.retain(|next_scope_id| {
-                let next_universal_scope = &self.prefix.scopes[next_scope_id.to_usize()];
+            remaining_next.retain(|next_univ_scope_id| {
+                let next_universal_scope = &self.prefix.scopes[next_univ_scope_id.to_usize()];
                 // TODO: check for empty universal scopes
                 assert!(!collapse_empty_scopes);
-                let next_scope_id = *self.prefix.next_scopes[next_universal_scope.id.to_usize()]
-                    .first()
-                    .expect("universal scopes have exactly one child");
-                let next_scope = &self.prefix.scopes[next_scope_id.to_usize()];
+                let next_exist_scope_id = *self.prefix.next_scopes
+                    [next_universal_scope.id.to_usize()]
+                .first()
+                .expect("universal scopes have exactly one child");
+                let next_scope = &self.prefix.scopes[next_exist_scope_id.to_usize()];
 
                 let nvar = next_scope
                     .variables
                     .first()
                     .expect("scopes should not be empty");
                 if table.unioned(var, *nvar) {
-                    self.prefix.next_scopes[id.to_usize()].push(next_scope_id);
+                    self.prefix.next_scopes[id.to_usize()].push(*next_univ_scope_id);
                     false
                 } else {
                     true
@@ -441,7 +442,7 @@ impl Matrix<HierarchicalPrefix> {
         // more than one successor, have to rename variables
 
         let mut scopes = Vec::new();
-        for i in 0..self.prefix.next_scopes[scope_id.to_usize()].len() {
+        for i in 1..self.prefix.next_scopes[scope_id.to_usize()].len() {
             let new_scope_id = self.prefix.create_scope(Quantifier::Universal, scope.level);
             let mut new_vars = Vec::new();
 
@@ -452,12 +453,12 @@ impl Matrix<HierarchicalPrefix> {
                 .expect("scope cannot be empty");
 
             // mapping from old variables to new copy
-            // is modified lazyly below
+            // is modified lazily below
             let mut renaming = FxHashMap::default();
 
             // update clauses and occurrence list
             let variables = &mut self.prefix.variables;
-            for (i, ref mut clause) in self.clauses.iter_mut().enumerate() {
+            for (i, clause) in self.clauses.iter_mut().enumerate() {
                 let clause_id = i as ClauseId;
                 // check if clause contains variables of inner group
                 let needs_renaming = clause.iter().any(|&literal| {
@@ -515,6 +516,10 @@ impl Matrix<HierarchicalPrefix> {
 
             scopes.push(new_scope_id);
         }
+        // update original scope
+        self.prefix.next_scopes[scope_id.to_usize()] =
+            vec![self.prefix.next_scopes[scope_id.to_usize()][0]];
+        scopes.insert(0, scope_id);
         debug_assert_eq!(next_scope_len, scopes.len());
         scopes
     }
