@@ -57,8 +57,14 @@ pub struct CommonSolverConfig<T: SolverSpecificConfig> {
     /// None for stdin
     filename: Option<String>,
     verbosity: LevelFilter,
-    statistics: bool,
+    statistics: Option<Statistics>,
     specific: T,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Statistics {
+    Overview,
+    Detailed,
 }
 
 impl<T: SolverSpecificConfig> CommonSolverConfig<T> {
@@ -87,6 +93,9 @@ impl<T: SolverSpecificConfig> CommonSolverConfig<T> {
             flags = flags.arg(
                 Arg::with_name("statistics")
                     .long("--statistics")
+                    .takes_value(true)
+                    .default_value("overview")
+                    .possible_values(&["overview", "detailed"])
                     .help("Enables collection and printing of solving statistics"),
             )
         }
@@ -103,7 +112,15 @@ impl<T: SolverSpecificConfig> CommonSolverConfig<T> {
             3 | _ => LevelFilter::Trace,
         };
 
-        let statistics = matches.is_present("statistics");
+        let statistics = if matches.is_present("statistics") {
+            match matches.value_of("statistics").unwrap() {
+                "detailed" => Some(Statistics::Detailed),
+                "overview" => Some(Statistics::Overview),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        };
 
         CommonSolverConfig {
             filename,
@@ -129,10 +146,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
     fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
         let default_options = CaqeSolverOptions::default();
 
-        let default = |val| match val {
-            true => "1",
-            false => "0",
-        };
+        let default = |val| if val { "1" } else { "0" };
         app.arg(
             Arg::with_name("preprocessor")
                 .help("Sets the preprocessor to use")
@@ -145,6 +159,26 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
             Arg::with_name("qdimacs-output")
                 .long("--qdo")
                 .help("Prints QDIMACS output (partial assignment) after solving"),
+        )
+        .arg(
+            Arg::with_name("miniscoping")
+                .long("--miniscoping")
+                .default_value(default(default_options.miniscoping))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether miniscoping should be used to build tree-shaped quantifier prefix"),
+        )
+        .arg(
+            Arg::with_name("dependency-schemes")
+                .long("--dependency-schemes")
+                .default_value(default(default_options.dependency_schemes))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether dependency scheme should be computed"),
         )
         .arg(
             Arg::with_name("strong-unsat-refinement")
@@ -208,6 +242,10 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
             }
         };
 
+        options.miniscoping = matches.value_of("miniscoping").unwrap() == "1";
+
+        options.dependency_schemes = matches.value_of("dependency-schemes").unwrap() == "1";
+
         options.strong_unsat_refinement =
             matches.value_of("strong-unsat-refinement").unwrap() == "1";
 
@@ -236,8 +274,24 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
 enum SolverPhases {
     Preprocessing,
     Parsing,
+    Miniscoping,
+    ComputeDepScheme,
     Initializing,
     Solving,
+}
+
+#[cfg(feature = "statistics")]
+impl std::fmt::Display for SolverPhases {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SolverPhases::Preprocessing => write!(f, "Preprocessing"),
+            SolverPhases::Parsing => write!(f, "Parsing"),
+            SolverPhases::Initializing => write!(f, "Initialization"),
+            SolverPhases::Solving => write!(f, "Solving"),
+            SolverPhases::Miniscoping => write!(f, "Miniscoping"),
+            SolverPhases::ComputeDepScheme => write!(f, "Compute Dep Scheme"),
+        }
+    }
 }
 
 impl CaqeConfig {
@@ -284,9 +338,25 @@ impl CaqeConfig {
             return Ok(SolverResult::Unsatisfiable);
         }
 
-        matrix.refl_res_path_dep_scheme();
+        if self.specific.options.miniscoping {
+            #[cfg(feature = "statistics")]
+            let mut timer = statistics.start(SolverPhases::Miniscoping);
 
-        matrix.unprenex_by_miniscoping(self.specific.options.collapse_empty_scopes);
+            matrix.unprenex_by_miniscoping(self.specific.options.collapse_empty_scopes);
+
+            #[cfg(feature = "statistics")]
+            timer.stop();
+        }
+
+        if self.specific.options.dependency_schemes {
+            #[cfg(feature = "statistics")]
+            let mut timer = statistics.start(SolverPhases::ComputeDepScheme);
+
+            matrix.refl_res_path_dep_scheme();
+
+            #[cfg(feature = "statistics")]
+            timer.stop();
+        }
 
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Initializing);
@@ -306,17 +376,27 @@ impl CaqeConfig {
 
         #[cfg(feature = "statistics")]
         {
-            if self.statistics {
+            if let Some(stats) = &self.statistics {
                 println!(
                     "Preprocessing took {:?}",
                     statistics.sum(SolverPhases::Preprocessing)
+                );
+                println!(
+                    "Miniscoping took {:?}",
+                    statistics.sum(SolverPhases::Miniscoping)
+                );
+                println!(
+                    "Compute Dependency Scheme took {:?}",
+                    statistics.sum(SolverPhases::ComputeDepScheme)
                 );
                 println!(
                     "Initializing took {:?}",
                     statistics.sum(SolverPhases::Initializing)
                 );
                 println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-                solver.print_statistics();
+                if stats == &Statistics::Detailed {
+                    solver.print_statistics();
+                }
             }
         }
 
@@ -357,10 +437,7 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
     fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
         let default_options = DCaqeSpecificSolverConfig::default();
 
-        let default = |val| match val {
-            true => "1",
-            false => "0",
-        };
+        let default = |val| if val { "1" } else { "0" };
         app.arg(
             Arg::with_name("expansion-refinement")
                 .long("--expansion-refinement")
@@ -431,14 +508,16 @@ impl DCaqeConfig {
 
         #[cfg(feature = "statistics")]
         {
-            if self.statistics {
+            if let Some(stats) = &self.statistics {
                 println!("Parsing took {:?}", statistics.sum(SolverPhases::Parsing));
                 println!(
                     "Initializing took {:?}",
                     statistics.sum(SolverPhases::Initializing)
                 );
                 println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-                solver.print_statistics();
+                if stats == &Statistics::Detailed {
+                    solver.print_statistics();
+                }
             }
         }
 

@@ -32,15 +32,15 @@ impl VariableInfo for DQVariableInfo {
     fn remove_dependency(&mut self, spurious: Variable) {
         self.dependencies.remove(&spurious);
     }
+
+    fn dependencies(&self) -> &FxHashSet<Variable> {
+        &self.dependencies
+    }
 }
 
 impl DQVariableInfo {
     pub fn get_scope_id(&self) -> &Option<ScopeId> {
         &self.scope_id
-    }
-
-    pub(crate) fn dependencies(&self) -> &FxHashSet<Variable> {
-        &self.dependencies
     }
 }
 

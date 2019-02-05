@@ -1,4 +1,5 @@
 use super::*;
+use dot;
 use ena::unify::{InPlaceUnificationTable, UnifyKey};
 use log::{debug, info};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -80,6 +81,10 @@ impl VariableInfo for QVariableInfo {
 
     fn remove_dependency(&mut self, spurious: Variable) {
         self.dependencies.remove(&spurious);
+    }
+
+    fn dependencies(&self) -> &FxHashSet<Variable> {
+        &self.dependencies
     }
 }
 
@@ -334,6 +339,10 @@ impl Matrix<HierarchicalPrefix> {
         );
 
         self.prefix.compute_dependencies();
+
+        //self.prefix.print_dot_repr();
+
+        self.prefix.fix_levels();
     }
 
     fn unprenex_recursive(
@@ -403,11 +412,25 @@ impl Matrix<HierarchicalPrefix> {
     ) -> Vec<ScopeId> {
         let mut scope = self.prefix.scopes[scope_id.to_usize()].clone();
         let mut scopes: Vec<ScopeId> = Vec::new();
+        let mut existentials: Vec<ScopeId> = Vec::new();
 
         let mut remaining_next = self.prefix.next_scopes[scope_id.to_usize()].clone();
 
+        // filter existential next scopes
+        remaining_next.retain(|&other_scope_id| {
+            let scope = &self.prefix.scopes[other_scope_id.to_usize()];
+            match scope.quant {
+                Quantifier::Universal => true,
+                Quantifier::Existential => {
+                    existentials.push(other_scope_id);
+                    false
+                }
+            }
+        });
+
         if scope.id == ScopeId::OUTERMOST && scope.variables.is_empty() {
-            return remaining_next
+            assert!(scopes.is_empty());
+            let mut res: Vec<ScopeId> = remaining_next
                 .into_iter()
                 .enumerate()
                 .map(|(i, next_scope_id)| {
@@ -416,15 +439,25 @@ impl Matrix<HierarchicalPrefix> {
                     } else {
                         self.prefix.create_scope(Quantifier::Existential, 0)
                     };
+                    /*debug_assert_eq!(
+                        self.prefix.scopes[next_scope_id.to_usize()].quant,
+                        Quantifier::Existential
+                    );*/
                     self.prefix.next_scopes[id.to_usize()] = vec![next_scope_id];
                     id
                 })
                 .collect();
+            res.extend(existentials);
+            return res;
         }
+
+        scopes.push(scope_id); // push original scope back in front
 
         let first = *scope.variables.first().expect("scopes should not be empty");
         let level = scope.level;
+
         scope.variables.retain(|&var| {
+            debug!("first {}, var {}", first, var);
             if table.unioned(var, first) {
                 // variable is in the same equivalence class
                 return true;
@@ -446,9 +479,13 @@ impl Matrix<HierarchicalPrefix> {
             self.prefix.scopes[id.to_usize()].variables.push(var);
             scopes.push(id);
             remaining_next.retain(|next_univ_scope_id| {
+                debug!(
+                    "check if {} is connected with var {}",
+                    next_univ_scope_id, var,
+                );
                 let next_universal_scope = &self.prefix.scopes[next_univ_scope_id.to_usize()];
-                // TODO: check for empty universal scopes
-                assert!(!collapse_empty_scopes);
+                debug_assert_eq!(next_universal_scope.quant, Quantifier::Universal);
+                debug_assert!(!next_universal_scope.variables.is_empty());
                 let next_exist_scope_id = *self.prefix.next_scopes
                     [next_universal_scope.id.to_usize()]
                 .first()
@@ -468,12 +505,97 @@ impl Matrix<HierarchicalPrefix> {
             });
             false
         });
+
+        // check if they are connnected with some scope
+        for existential_scope_id in existentials {
+            let existential_scope = &self.prefix.scopes[existential_scope_id.to_usize()].clone();
+            debug_assert_eq!(existential_scope.quant, Quantifier::Existential);
+            debug_assert!(!existential_scope.variables.is_empty());
+            let evar = existential_scope
+                .variables
+                .first()
+                .expect("existential scopes should not be empty");
+            let mut merged = false;
+            for other_id in &scopes {
+                debug!(
+                    "check if {} is connected to {}",
+                    existential_scope_id, other_id
+                );
+                let other_scope = &self.prefix.scopes[other_id.to_usize()];
+                let level = other_scope.level;
+                debug_assert_eq!(other_scope.quant, Quantifier::Existential);
+                debug_assert!(!other_scope.variables.is_empty());
+                let other_var = other_scope
+                    .variables
+                    .first()
+                    .expect("existential scopes should not be empty");
+                if table.unioned(*evar, *other_var) {
+                    // merge scopes
+                    merged = true;
+                    debug!("merge scope {} into {}", existential_scope_id, other_id);
+                    for move_var in &existential_scope.variables {
+                        if *other_id == scope.id {
+                            scope.variables.push(*move_var); // special cases since it is overwritten later
+                        } else {
+                            self.prefix.scopes[other_id.to_usize()]
+                                .variables
+                                .push(*move_var);
+                        }
+                        self.prefix.mut_vars().get_mut(*move_var).scope_id = Some(*other_id);
+                        self.prefix.mut_vars().get_mut(*move_var).level = level;
+                    }
+                    self.prefix.scopes[existential_scope_id.to_usize()]
+                        .variables
+                        .clear();
+                    let successors = std::mem::replace(
+                        &mut self.prefix.next_scopes[existential_scope_id.to_usize()],
+                        Vec::new(),
+                    );
+                    if *other_id == scope.id {
+                        remaining_next.extend(successors); // special cases since it is overwritten later
+                    } else {
+                        self.prefix.next_scopes[other_id.to_usize()].extend(successors);
+                    }
+
+                    break;
+                }
+            }
+            if !merged {
+                scopes.push(existential_scope_id)
+            }
+        }
+
+        // filter non-connected universal scopes
+        remaining_next.retain(|&next_univ_scope_id| {
+            let next_universal_scope = &self.prefix.scopes[next_univ_scope_id.to_usize()];
+            debug_assert_eq!(next_universal_scope.quant, Quantifier::Universal);
+
+            let next_exist_scope_id = *self.prefix.next_scopes[next_universal_scope.id.to_usize()]
+                .first()
+                .expect("universal scopes have exactly one child");
+            let next_scope = &self.prefix.scopes[next_exist_scope_id.to_usize()];
+
+            let nvar = next_scope
+                .variables
+                .first()
+                .expect("scopes should not be empty");
+            debug!(
+                "check if {} is connected with {}",
+                next_univ_scope_id, scope_id
+            );
+            if !table.unioned(first, *nvar) {
+                scopes.push(next_univ_scope_id);
+                false
+            } else {
+                true
+            }
+        });
+
         self.prefix.scopes[scope_id.to_usize()] = scope;
         self.prefix.next_scopes[scope_id.to_usize()] = remaining_next;
 
-        scopes.insert(0, scope_id); // push original scope back in front
-
         info!("detected {} partitions at level {}", scopes.len(), level);
+        //dbg!(&scopes);
         scopes
     }
 
@@ -484,31 +606,67 @@ impl Matrix<HierarchicalPrefix> {
         scope_id: ScopeId,
         table: &mut InPlaceUnificationTable<Variable>,
     ) -> Vec<ScopeId> {
-        let next_scope_len = {
-            let next_scopes = &self.prefix.next_scopes[scope_id.to_usize()];
-            debug_assert!(!next_scopes.is_empty());
+        let mut remaining_next = self.prefix.next_scopes[scope_id.to_usize()].clone();
+        debug_assert!(!remaining_next.is_empty());
 
-            if next_scopes.len() == 1 {
-                // do not need to copy and rename
-                return vec![scope_id];
-            }
-            debug_assert!(next_scopes.len() > 1);
-            next_scopes.len()
-        };
+        if remaining_next.len() == 1 {
+            // do not need to copy and rename
+            debug_assert_eq!(
+                self.prefix.scopes[remaining_next[0].to_usize()].quant,
+                Quantifier::Universal
+            );
+            return vec![scope_id];
+        }
+        debug_assert!(remaining_next.len() > 1);
 
         let mut scope = self.prefix.scopes[scope_id.to_usize()].clone();
-
-        scope.variables.sort();
-
-        // more than one successor, have to rename variables
+        scope.variables.sort(); // for binary search
 
         let mut scopes = Vec::new();
-        for i in 1..self.prefix.next_scopes[scope_id.to_usize()].len() {
-            let new_scope_id = self.prefix.create_scope(Quantifier::Universal, scope.level);
-            let mut new_vars = Vec::new();
 
-            let next_scope = &self.prefix.next_scopes[scope_id.to_usize()][i];
-            let scope_var = *self.prefix.scopes[next_scope.to_usize()]
+        // filter universal scopes and add them to this level
+        remaining_next.retain(|&next_scope_id| {
+            let next_scope = &self.prefix.scopes[next_scope_id.to_usize()];
+            match next_scope.quant {
+                Quantifier::Existential => true,
+                Quantifier::Universal => {
+                    scopes.push(next_scope_id);
+
+                    let mut renaming = FxHashMap::default();
+
+                    debug_assert_eq!(self.prefix.next_scopes[next_scope_id.to_usize()].len(), 1);
+                    let exist_scope_id = self.prefix.next_scopes[next_scope_id.to_usize()]
+                        .first()
+                        .expect("has exactly one successor");
+                    let scope_var = self.prefix.scopes[exist_scope_id.to_usize()]
+                        .variables
+                        .first()
+                        .expect("existential scopes should not be empty");
+
+                    let new_vars = self.rename_universals(
+                        &scope,
+                        table,
+                        &mut renaming,
+                        *scope_var,
+                        next_scope_id,
+                    );
+                    self.prefix.scopes[next_scope_id.to_usize()]
+                        .variables
+                        .extend(new_vars);
+                    false
+                }
+            }
+        });
+
+        // more than one successor, have to rename variables
+        for &next_scope_id in remaining_next.iter().skip(1) {
+            let new_scope_id = self.prefix.create_scope(Quantifier::Universal, scope.level);
+
+            debug_assert_eq!(
+                self.prefix.scopes[next_scope_id.to_usize()].quant,
+                Quantifier::Existential
+            );
+            let scope_var = *self.prefix.scopes[next_scope_id.to_usize()]
                 .variables
                 .first()
                 .expect("scope cannot be empty");
@@ -517,71 +675,183 @@ impl Matrix<HierarchicalPrefix> {
             // is modified lazily below
             let mut renaming = FxHashMap::default();
 
-            // update clauses and occurrence list
-            let variables = &mut self.prefix.variables;
-            for (i, clause) in self.clauses.iter_mut().enumerate() {
-                let clause_id = i as ClauseId;
-                // check if clause contains variables of inner group
-                let needs_renaming = clause.iter().any(|&literal| {
-                    let info = variables.get(literal.variable());
-                    if info.is_universal() || info.level < scope.level {
-                        return false;
-                    }
-                    table.unioned(literal.variable(), scope_var)
-                });
-                if !needs_renaming {
-                    continue;
-                }
+            let new_vars =
+                self.rename_universals(&scope, table, &mut renaming, scope_var, new_scope_id);
 
-                for literal in clause.iter_mut() {
-                    if scope.variables.binary_search(&literal.variable()).is_err() {
-                        // not a variable of current scope
-                        continue;
-                    }
-                    let var = literal.variable();
-                    let new_var = *renaming.entry(var).or_insert_with(|| {
-                        variables.variables.push(QVariableInfo {
-                            scope_id: Some(new_scope_id),
-                            is_universal: true,
-                            copy_of: var,
-                            level: scope.level,
-                            dependencies: FxHashSet::default(),
-                        });
-                        let new_var: Variable = variables.num_variables().into();
-                        new_vars.push(new_var);
-                        new_var
-                    });
+            if new_vars.is_empty() {
+                // universal scope is empty, push existential scope instead
+                scopes.push(next_scope_id);
+            } else {
+                self.prefix.scopes[new_scope_id.to_usize()].variables = new_vars;
+                self.prefix.next_scopes[new_scope_id.to_usize()] = vec![next_scope_id];
+                debug_assert_eq!(self.prefix.next_scopes[new_scope_id.to_usize()].len(), 1);
 
-                    {
-                        let entry = self
-                            .occurrences
-                            .entry(*literal)
-                            .or_insert_with(|| panic!("inconsistent state"));
-                        // remove old occurrence
-                        entry
-                            .iter()
-                            .position(|&other_clause_id| other_clause_id == clause_id)
-                            .map(|index| entry.remove(index));
-                    }
-                    *literal = Literal::new(new_var, literal.signed());
-                    let entry = self.occurrences.entry(*literal).or_insert_with(Vec::new);
-                    entry.push(clause_id);
-                }
+                scopes.push(new_scope_id);
             }
-            // it can happen that we build universal scopes without variables
-            // this gets cleaned-up in the outer existential quantifier
-
-            self.prefix.scopes[new_scope_id.to_usize()].variables = new_vars;
-            self.prefix.next_scopes[new_scope_id.to_usize()] = vec![*next_scope];
-            debug_assert_eq!(self.prefix.next_scopes[new_scope_id.to_usize()].len(), 1);
-
-            scopes.push(new_scope_id);
         }
         // update original scope
-        self.prefix.next_scopes[scope_id.to_usize()] =
-            vec![self.prefix.next_scopes[scope_id.to_usize()][0]];
+        self.prefix.next_scopes[scope_id.to_usize()] = vec![remaining_next[0]];
         scopes.insert(0, scope_id);
-        debug_assert_eq!(next_scope_len, scopes.len());
         scopes
+    }
+
+    fn rename_universals(
+        &mut self,
+        scope: &Scope,
+        table: &mut InPlaceUnificationTable<Variable>,
+        renaming: &mut FxHashMap<Variable, Variable>,
+        scope_var: Variable,
+        new_scope_id: ScopeId,
+    ) -> Vec<Variable> {
+        let mut new_vars = Vec::new();
+
+        // update clauses and occurrence list
+        let variables = &mut self.prefix.variables;
+        for (i, clause) in self.clauses.iter_mut().enumerate() {
+            let clause_id = i as ClauseId;
+            // check if clause contains variables of inner group
+            let needs_renaming = clause.iter().any(|&literal| {
+                let info = variables.get(literal.variable());
+                if info.is_universal() || info.level < scope.level {
+                    return false;
+                }
+                table.unioned(literal.variable(), scope_var)
+            });
+            if !needs_renaming {
+                continue;
+            }
+
+            for literal in clause.iter_mut() {
+                if scope.variables.binary_search(&literal.variable()).is_err() {
+                    // not a variable of current scope
+                    continue;
+                }
+                let var = literal.variable();
+                let new_var = *renaming.entry(var).or_insert_with(|| {
+                    variables.variables.push(QVariableInfo {
+                        scope_id: Some(new_scope_id),
+                        is_universal: true,
+                        copy_of: var,
+                        level: scope.level,
+                        dependencies: FxHashSet::default(),
+                    });
+                    let new_var: Variable = variables.num_variables().into();
+                    new_vars.push(new_var);
+                    new_var
+                });
+
+                {
+                    let entry = self
+                        .occurrences
+                        .entry(*literal)
+                        .or_insert_with(|| panic!("inconsistent state"));
+                    // remove old occurrence
+                    entry
+                        .iter()
+                        .position(|&other_clause_id| other_clause_id == clause_id)
+                        .map(|index| entry.remove(index));
+                }
+                *literal = Literal::new(new_var, literal.signed());
+                let entry = self.occurrences.entry(*literal).or_insert_with(Vec::new);
+                entry.push(clause_id);
+            }
+        }
+        new_vars
+    }
+}
+
+impl HierarchicalPrefix {
+    fn fix_levels(&mut self) {
+        fn fix_levels_recursive(
+            scopes: &mut Vec<Scope>,
+            next_scopes: &Vec<Vec<ScopeId>>,
+            variables: &mut VariableStore<QVariableInfo>,
+            level: u32,
+            scope_id: ScopeId,
+        ) {
+            let scope = &mut scopes[scope_id.to_usize()];
+            scope.level = level;
+
+            for var in &scope.variables {
+                variables.get_mut(*var).level = level;
+            }
+
+            for next_scope_id in &next_scopes[scope_id.to_usize()] {
+                fix_levels_recursive(scopes, next_scopes, variables, level + 1, *next_scope_id);
+            }
+        }
+
+        for scope_id in &self.roots {
+            fix_levels_recursive(
+                &mut self.scopes,
+                &self.next_scopes,
+                &mut self.variables,
+                0,
+                *scope_id,
+            );
+        }
+    }
+}
+
+type Nd = ScopeId;
+type Ed = (Nd, Nd);
+
+impl<'a> dot::Labeller<'a, Nd, Ed> for &HierarchicalPrefix {
+    fn graph_id(&'a self) -> dot::Id<'a> {
+        dot::Id::new("quantifier_prefix").unwrap()
+    }
+    fn node_id(&'a self, n: &Nd) -> dot::Id<'a> {
+        dot::Id::new(format!("N{}", n.0)).unwrap()
+    }
+    fn node_label<'b>(&'b self, n: &Nd) -> dot::LabelText<'b> {
+        if n.0 == std::u32::MAX {
+            dot::LabelText::LabelStr("root".into())
+        } else {
+            let scope = &self.scopes[n.to_usize()];
+            let vars: Vec<String> = scope.variables.iter().map(|v| format!("{}", v)).collect();
+            dot::LabelText::LabelStr(format!("SId {}\n{}", n, vars.join(", ")).into())
+        }
+    }
+    fn edge_label<'b>(&'b self, _: &Ed) -> dot::LabelText<'b> {
+        dot::LabelText::LabelStr("".into())
+    }
+}
+
+impl<'a> dot::GraphWalk<'a, Nd, Ed> for &HierarchicalPrefix {
+    fn nodes(&'a self) -> dot::Nodes<'a, Nd> {
+        let mut nodes: Vec<Nd> = self.scopes.iter().map(|s| s.id).collect();
+        nodes.push(ScopeId::new(std::u32::MAX as usize)); // dummy root node
+        nodes.into()
+    }
+    fn edges(&'a self) -> dot::Edges<'a, Ed> {
+        let mut edges: Vec<Ed> = self
+            .next_scopes
+            .iter()
+            .enumerate()
+            .map(|(i, next)| {
+                next.iter()
+                    .map(|&j| (ScopeId::new(i), j))
+                    .collect::<Vec<Ed>>()
+            })
+            .flatten()
+            .collect();
+        // root node
+        self.roots.iter().for_each(|&root| {
+            edges.push((ScopeId::new(std::u32::MAX as usize), root));
+        });
+        edges.into()
+    }
+    fn source(&self, e: &Ed) -> Nd {
+        e.0
+    }
+    fn target(&self, e: &Ed) -> Nd {
+        e.1
+    }
+}
+
+// Dot representation
+impl HierarchicalPrefix {
+    pub(crate) fn print_dot_repr(&self) {
+        dot::render(&self, &mut std::io::stdout()).unwrap_or_else(|e| println!("{}", e));
     }
 }

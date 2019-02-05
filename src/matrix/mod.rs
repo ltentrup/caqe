@@ -1,6 +1,6 @@
 use super::*;
 use bit_vec::BitVec;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub mod depenendcy;
 pub mod hierarchical;
@@ -103,6 +103,7 @@ pub trait VariableInfo: Clone + std::fmt::Debug {
     }
 
     fn remove_dependency(&mut self, spurious: Variable);
+    fn dependencies(&self) -> &FxHashSet<Variable>;
 }
 
 #[derive(Debug)]

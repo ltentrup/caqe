@@ -9,7 +9,7 @@
 use super::{Matrix, Prefix};
 use crate::literal::{Literal, Variable};
 use crate::matrix::VariableInfo;
-use log::trace;
+use log::{debug, trace};
 use rustc_hash::FxHashSet;
 
 impl<P: Prefix> Matrix<P> {
@@ -48,7 +48,7 @@ impl<P: Prefix> Matrix<P> {
                     || (!seen_neg.contains(&pos) && !seen_pos.contains(&neg))
                 {
                     self.prefix.mut_vars().get_mut(evar).remove_dependency(var);
-                    println!("{} {}", evar, var);
+                    debug!("detected spurious dependency {} of {}", var, evar);
                 }
             }
         }
@@ -93,7 +93,7 @@ impl<P: Prefix> Matrix<P> {
                 }
             }
         }
-        dbg!(seen);
+        //dbg!(seen);
     }
 }
 

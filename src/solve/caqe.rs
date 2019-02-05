@@ -134,6 +134,8 @@ pub struct CaqeSolverOptions {
     pub abstraction_literal_optimization: bool,
     /// flag whether to collpase empty (universal) scopes duging mini-scoping
     pub collapse_empty_scopes: bool,
+    pub miniscoping: bool,
+    pub dependency_schemes: bool,
 }
 
 impl Default for CaqeSolverOptions {
@@ -144,6 +146,8 @@ impl Default for CaqeSolverOptions {
             refinement_literal_subsumption: false,
             abstraction_literal_optimization: true,
             collapse_empty_scopes: false,
+            miniscoping: true,
+            dependency_schemes: true,
         }
     }
 }
@@ -202,8 +206,9 @@ struct ScopeSolverData {
     strong_unsat_cache: FxHashMap<ClauseId, (Lit, bool)>,
     conjunction: Vec<ClauseId>,
 
-    /// expansion related data structures
-    expansion_renaming: FxHashMap<Variable, Lit>,
+    /// store partially expanded variables
+    /// maps a variable and a cube representing the assignment of its dependencies to a SAT solver literal
+    expanded: FxHashMap<(Variable, Vec<Literal>), Lit>,
 
     /// stores the result of recursive calls to branches
     sub_result: SolverResult,
@@ -244,7 +249,7 @@ impl ScopeSolverData {
             options: options,
             strong_unsat_cache: FxHashMap::default(),
             conjunction: Vec::new(),
-            expansion_renaming: FxHashMap::default(),
+            expanded: FxHashMap::default(),
             sub_result: SolverResult::Unknown,
             #[cfg(feature = "statistics")]
             statistics: TimingStats::new(),
@@ -704,10 +709,7 @@ impl ScopeSolverData {
                     }
                     nonempty = true;
                     let value = self.assignments[&literal.variable()];
-                    if value && !literal.signed() {
-                        falsified = false;
-                        break;
-                    } else if !value && literal.signed() {
+                    if value && !literal.signed() || !value && literal.signed() {
                         falsified = false;
                         break;
                     }
@@ -1034,7 +1036,7 @@ impl ScopeSolverData {
         if self.is_universal {
             return false;
         }
-        //return true;
+        return true;
         debug_assert_eq!(next.next.len(), 1, "scope {:?}", self.scope_id);
         next.next[0].as_ref().next.is_empty()
     }
@@ -1044,9 +1046,6 @@ impl ScopeSolverData {
         let universal_assignment = next.get_universal_assignmemnt(FxHashMap::default());
         let (data, next) = next.split();
         let next = &next[0];
-
-        // add a new sat variable for every existential variable in inner scope (updated lazily)
-        self.expansion_renaming.clear();
 
         let sat = &mut self.sat;
         let sat_clause = &mut self.sat_solver_assumptions;
@@ -1071,6 +1070,7 @@ impl ScopeSolverData {
             for &literal in clause.iter() {
                 let info = matrix.prefix.variables().get(literal.variable());
                 if info.level <= data.level {
+                    debug_assert_eq!(data.level, self.level + 1);
                     if info.level < self.level {
                         contains_outer_variables = true;
                     }
@@ -1081,11 +1081,20 @@ impl ScopeSolverData {
                     continue;
                 }
                 debug_assert!(info.level > self.level);
+                debug_assert!(info.is_existential());
                 contains_variables = true;
 
+                // porject universal assignment to dependencies of variable
+                let mut deps: Vec<Literal> = universal_assignment
+                    .iter()
+                    .filter(|(var, _val)| info.dependencies().contains(var))
+                    .map(|(&var, val)| Literal::new(var, !val))
+                    .collect();
+                deps.sort(); // make it unique
+
                 let entry = self
-                    .expansion_renaming
-                    .entry(literal.variable())
+                    .expanded
+                    .entry((literal.variable(), deps))
                     .or_insert_with(|| sat.new_var());
                 let mut sat_var = *entry;
                 if literal.signed() {
@@ -1094,6 +1103,9 @@ impl ScopeSolverData {
                 sat_clause.push(sat_var);
             }
             let clause_id = i as ClauseId;
+            if !contains_variables {
+                continue;
+            }
             // TODO: check if we can move `if !contains_variables` up
             if self
                 .b_literals
@@ -1110,9 +1122,7 @@ impl ScopeSolverData {
                 );
                 sat_clause.push(sat_lit);
             }
-            if !contains_variables {
-                continue;
-            }
+
             if !sat_clause.is_empty() {
                 sat.add_clause(sat_clause.as_ref());
             }
@@ -1836,5 +1846,31 @@ e 2 0
         let mut solver = CaqeSolver::new(&matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 4\nV 1 0\n");
+    }
+
+    #[test]
+    fn test_miniscoping_regression() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 8 5
+e 1 6 0
+a 5 0
+e 2 4 0
+a 3 0
+e 7 8 0
+-8 0
+-2 0
+-6 -7 5 0
+7 -3 0
+4 1 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping(false);
+        let mut solver = CaqeSolver::new(&matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 8 5\nV -1 0\nV 4 0\nV -5 0\nV -6 0\nV -8 0\n"
+        );
     }
 }
