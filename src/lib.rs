@@ -38,7 +38,7 @@ pub use crate::solve::dcaqe::DCaqeSolver;
 pub use crate::solve::{Solver, SolverResult};
 
 #[cfg(feature = "statistics")]
-use utils::statistics::TimingStats;
+use utils::statistics::{CountingStats, TimingStats};
 
 // Command line parsing
 
@@ -61,7 +61,7 @@ pub struct CommonSolverConfig<T: SolverSpecificConfig> {
     specific: T,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Statistics {
     Overview,
     Detailed,
@@ -230,6 +230,16 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
                 .hide_possible_values(true)
                 .help("Controls whether empty universal scopes are collapsed during mini-scoping"),
         )
+        .arg(
+            Arg::with_name("build-conflict-clauses")
+                .long("--build-conflict-clauses")
+                .default_value(default(default_options.build_conflict_clauses))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether conflict clauses should be build during solving"),
+        )
     }
 
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
@@ -260,6 +270,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
             == "1";
 
         options.collapse_empty_scopes = matches.value_of("collapse-empty-scopes").unwrap() == "1";
+        options.build_conflict_clauses = matches.value_of("build-conflict-clauses").unwrap() == "1";
 
         CaqeSpecificSolverConfig {
             options,
@@ -294,6 +305,21 @@ impl std::fmt::Display for SolverPhases {
     }
 }
 
+#[cfg(feature = "statistics")]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum MatrixStats {
+    RemovedDependencies,
+}
+
+#[cfg(feature = "statistics")]
+impl std::fmt::Display for MatrixStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MatrixStats::RemovedDependencies => write!(f, "Dependencies removed: "),
+        }
+    }
+}
+
 impl CaqeConfig {
     pub fn run(&self) -> Result<SolverResult, Box<Error>> {
         #[cfg(debug_assertions)]
@@ -306,6 +332,9 @@ impl CaqeConfig {
 
         #[cfg(feature = "statistics")]
         let statistics = TimingStats::new();
+
+        #[cfg(feature = "statistics")]
+        let mut counter = CountingStats::new();
 
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Preprocessing);
@@ -352,7 +381,10 @@ impl CaqeConfig {
             #[cfg(feature = "statistics")]
             let mut timer = statistics.start(SolverPhases::ComputeDepScheme);
 
-            matrix.refl_res_path_dep_scheme();
+            let _removed = matrix.refl_res_path_dep_scheme();
+
+            #[cfg(feature = "statistics")]
+            counter.inc_by(MatrixStats::RemovedDependencies, _removed);
 
             #[cfg(feature = "statistics")]
             timer.stop();
@@ -361,7 +393,7 @@ impl CaqeConfig {
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Initializing);
 
-        let mut solver = CaqeSolver::new_with_options(&matrix, self.specific.options);
+        let mut solver = CaqeSolver::new_with_options(&mut matrix, self.specific.options);
 
         #[cfg(feature = "statistics")]
         timer.stop();
@@ -394,9 +426,8 @@ impl CaqeConfig {
                     statistics.sum(SolverPhases::Initializing)
                 );
                 println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-                if stats == &Statistics::Detailed {
-                    solver.print_statistics();
-                }
+                println!("{}", counter);
+                solver.print_statistics(*stats);
             }
         }
 

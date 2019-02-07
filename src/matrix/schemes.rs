@@ -13,8 +13,9 @@ use log::{debug, trace};
 use rustc_hash::FxHashSet;
 
 impl<P: Prefix> Matrix<P> {
-    pub(crate) fn refl_res_path_dep_scheme(&mut self) {
+    pub(crate) fn refl_res_path_dep_scheme(&mut self) -> usize {
         trace!("refl_res_path_dep_scheme");
+        let mut removed = 0;
         let mut seen_pos: FxHashSet<Literal> = FxHashSet::default();
         let mut seen_neg: FxHashSet<Literal> = FxHashSet::default();
         for var in 1..=self.prefix.variables().num_variables() {
@@ -49,9 +50,11 @@ impl<P: Prefix> Matrix<P> {
                 {
                     self.prefix.mut_vars().get_mut(evar).remove_dependency(var);
                     debug!("detected spurious dependency {} of {}", var, evar);
+                    removed += 1;
                 }
             }
         }
+        removed
     }
 
     fn search_resolution_path(&self, root: Literal, seen: &mut FxHashSet<Literal>) {

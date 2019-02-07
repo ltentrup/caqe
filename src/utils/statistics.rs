@@ -26,6 +26,11 @@ impl<E: Hash + Eq + Ord> CountingStats<E> {
         let val = self.values.entry(value).or_insert(0);
         *val += 1;
     }
+
+    pub fn inc_by(&mut self, value: E, val: usize) {
+        let val_entry = self.values.entry(value).or_insert(0);
+        *val_entry += val;
+    }
 }
 
 impl<E: fmt::Display + Hash + Eq + Ord + Copy> fmt::Display for CountingStats<E> {
