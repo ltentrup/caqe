@@ -322,7 +322,7 @@ impl UnifyKey for Variable {
 }
 
 impl Matrix<HierarchicalPrefix> {
-    pub fn unprenex_by_miniscoping(&mut self, collapse_empty_scopes: bool) {
+    pub fn unprenex_by_miniscoping(&mut self) {
         // we store for each variable the variable it is connected to (by some clause)
         let mut table: InPlaceUnificationTable<Variable> = InPlaceUnificationTable::new();
         table.reserve(self.prefix.variables().num_variables() + 1);
@@ -332,11 +332,8 @@ impl Matrix<HierarchicalPrefix> {
 
         debug_assert!(self.prefix.roots.len() == 1);
 
-        self.prefix.roots = self.unprenex_recursive(
-            &mut table,
-            *self.prefix.roots.first().unwrap(),
-            collapse_empty_scopes,
-        );
+        self.prefix.roots =
+            self.unprenex_recursive(&mut table, *self.prefix.roots.first().unwrap());
 
         self.prefix.compute_dependencies();
 
@@ -349,13 +346,12 @@ impl Matrix<HierarchicalPrefix> {
         &mut self,
         table: &mut InPlaceUnificationTable<Variable>,
         scope_id: ScopeId,
-        collapse_empty_scopes: bool,
     ) -> Vec<ScopeId> {
         // recursion
         let next_scope_ids = &self.prefix.next_scopes[scope_id.to_usize()];
         debug_assert!(next_scope_ids.len() <= 1);
         if let Some(&next_id) = next_scope_ids.first() {
-            let splitted = self.unprenex_recursive(table, next_id, collapse_empty_scopes);
+            let splitted = self.unprenex_recursive(table, next_id);
             if splitted.len() == 1 {
                 debug_assert_eq!(splitted, vec![next_id]);
                 return vec![scope_id];
@@ -367,7 +363,7 @@ impl Matrix<HierarchicalPrefix> {
         match scope.quant {
             Quantifier::Existential => {
                 self.union_over_connecting_sets(scope_id, table);
-                self.partition_scopes(scope_id, table, collapse_empty_scopes)
+                self.partition_scopes(scope_id, table)
             }
             Quantifier::Universal => self.split_universal(scope_id, table),
         }
@@ -408,7 +404,6 @@ impl Matrix<HierarchicalPrefix> {
         &mut self,
         scope_id: ScopeId,
         table: &mut InPlaceUnificationTable<Variable>,
-        collapse_empty_scopes: bool,
     ) -> Vec<ScopeId> {
         let mut scope = self.prefix.scopes[scope_id.to_usize()].clone();
         let mut scopes: Vec<ScopeId> = Vec::new();

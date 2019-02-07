@@ -221,16 +221,6 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
                 .help("Controls whether abstractions should be optimized using subsumption rules"),
         )
         .arg(
-            Arg::with_name("collapse-empty-scopes")
-                .long("--collapse-empty-scopes")
-                .default_value(default(default_options.collapse_empty_scopes))
-                .value_name("bool")
-                .takes_value(true)
-                .possible_values(&["0", "1"])
-                .hide_possible_values(true)
-                .help("Controls whether empty universal scopes are collapsed during mini-scoping"),
-        )
-        .arg(
             Arg::with_name("build-conflict-clauses")
                 .long("--build-conflict-clauses")
                 .default_value(default(default_options.build_conflict_clauses))
@@ -269,7 +259,6 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
             .unwrap()
             == "1";
 
-        options.collapse_empty_scopes = matches.value_of("collapse-empty-scopes").unwrap() == "1";
         options.build_conflict_clauses = matches.value_of("build-conflict-clauses").unwrap() == "1";
 
         CaqeSpecificSolverConfig {
@@ -371,7 +360,7 @@ impl CaqeConfig {
             #[cfg(feature = "statistics")]
             let mut timer = statistics.start(SolverPhases::Miniscoping);
 
-            matrix.unprenex_by_miniscoping(self.specific.options.collapse_empty_scopes);
+            matrix.unprenex_by_miniscoping();
 
             #[cfg(feature = "statistics")]
             timer.stop();

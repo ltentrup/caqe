@@ -242,7 +242,7 @@ e 7 8 9 10 0
 -10 6 -8 0
 ";
         let mut matrix = parse::qdimacs::parse(&instance).unwrap();
-        matrix.unprenex_by_miniscoping(false);
+        matrix.unprenex_by_miniscoping();
         assert!(matrix.prefix.roots.len() == 2);
     }
 
@@ -257,7 +257,7 @@ e 3 4 0
 1 2 4 0
 ";
         let mut matrix = parse::qdimacs::parse(&instance).unwrap();
-        matrix.unprenex_by_miniscoping(false);
+        matrix.unprenex_by_miniscoping();
         let dimacs = matrix.dimacs();
         assert_eq!(instance, dimacs);
     }
