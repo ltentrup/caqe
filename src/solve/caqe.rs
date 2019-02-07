@@ -824,28 +824,32 @@ impl ScopeSolverData {
         }
     }
 
-    fn refine(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
-        trace!("refine");
+    fn is_influenced_by_witness(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut Box<ScopeRecursiveSolver>,
+    ) -> bool {
+        trace!("is_influenced_by_witness");
+
+        // witness
+        let entry = &next.data.entry;
 
         // check if influenced by current scope
-        /*let mut max = 0;
-        for (i, _) in self.entry.iter().enumerate().filter(|&(_, val)| val) {
+        for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
 
             for &literal in clause.iter() {
-                let otherscope = matrix.prefix.variables().get(literal.variable()).scope;
-                if otherscope > self.scope_id {
-                    continue;
-                }
-                if otherscope > max {
-                    max = otherscope;
+                let other_scope_id = matrix.prefix.variables().get(literal.variable()).scope_id;
+                if other_scope_id.expect("variable is bound") == self.scope_id {
+                    return true;
                 }
             }
         }
-        if max < self.scope_id && self.scope_id > 1 {
-            println!("{} {}", max, self.scope_id);
-            panic!("a");
-        }*/
+        false
+    }
+
+    fn refine(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
+        trace!("refine");
 
         if self.options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
             self.expansion_refinement(matrix, next);
@@ -1442,7 +1446,7 @@ impl ScopeRecursiveSolver {
                     timer.stop();
 
                     current.sub_result = good_result;
-                    for ref mut scope in next.iter_mut() {
+                    for scope in next.iter_mut() {
                         let result = scope.solve_recursive(matrix);
                         if result == bad_result {
                             debug_assert!(result == bad_result);
@@ -1452,6 +1456,12 @@ impl ScopeRecursiveSolver {
                             let mut _timer =
                                 current.statistics.start(SolverScopeEvents::Refinement);
 
+                            if !current.is_influenced_by_witness(matrix, scope) {
+                                // copy witness
+                                current.entry.clear();
+                                current.entry.union(&scope.data.entry);
+                                return bad_result;
+                            }
                             current.refine(matrix, scope);
                             if current.options.build_conflict_clauses {
                                 current.extract_conflict_clause(matrix, scope);
@@ -1464,7 +1474,7 @@ impl ScopeRecursiveSolver {
                     } else {
                         // copy entries from inner quantifier
                         current.entry.clear();
-                        for ref scope in next.iter() {
+                        for scope in next.iter() {
                             current.entry.union(&scope.data.entry);
                         }
                         // apply entry optimization
