@@ -340,6 +340,9 @@ impl Matrix<HierarchicalPrefix> {
         //self.prefix.print_dot_repr();
 
         self.prefix.fix_levels();
+        self.prefix.renumber_scopes();
+
+        //self.prefix.print_dot_repr();
 
         #[cfg(feature = "debug_assertions")]
         self.prefix.check_invariants();
@@ -764,7 +767,7 @@ impl HierarchicalPrefix {
     fn fix_levels(&mut self) {
         fn fix_levels_recursive(
             scopes: &mut Vec<Scope>,
-            next_scopes: &Vec<Vec<ScopeId>>,
+            next_scopes: &[Vec<ScopeId>],
             variables: &mut VariableStore<QVariableInfo>,
             level: u32,
             scope_id: ScopeId,
@@ -792,8 +795,65 @@ impl HierarchicalPrefix {
         }
     }
 
+    /// Ensures that scopes are numbered in pre-order w.r.t. the quantifier prefix tree
+    fn renumber_scopes(&mut self) {
+        fn renumber_scopes_recursive(
+            variables: &mut VariableStore<QVariableInfo>,
+            scopes: &[Scope],
+            next_scopes: &[Vec<ScopeId>],
+            new_scopes: &mut Vec<Scope>,
+            new_next_scopes: &mut Vec<Vec<ScopeId>>,
+            scope_id: ScopeId,
+        ) -> ScopeId {
+            let mut scope = scopes[scope_id.to_usize()].clone();
+            let new_id = ScopeId::new(new_scopes.len());
+            scope.id = new_id;
+            for var in &scope.variables {
+                variables.get_mut(*var).scope_id = Some(new_id);
+            }
+            new_scopes.push(scope);
+            new_next_scopes.push(Vec::new());
+            debug_assert_eq!(new_scopes.len(), new_next_scopes.len());
+
+            for &next_scope_id in &next_scopes[scope_id.to_usize()] {
+                let new_next_id = renumber_scopes_recursive(
+                    variables,
+                    scopes,
+                    next_scopes,
+                    new_scopes,
+                    new_next_scopes,
+                    next_scope_id,
+                );
+                new_next_scopes[new_id.to_usize()].push(new_next_id);
+            }
+
+            new_id
+        }
+
+        let mut new_scopes = Vec::new();
+        let mut new_next_scopes = Vec::new();
+
+        let roots = self.roots.clone();
+        self.roots = roots
+            .iter()
+            .map(|&scope_id| {
+                renumber_scopes_recursive(
+                    &mut self.variables,
+                    &self.scopes,
+                    &self.next_scopes,
+                    &mut new_scopes,
+                    &mut new_next_scopes,
+                    scope_id,
+                )
+            })
+            .collect();
+        self.scopes = new_scopes;
+        self.next_scopes = new_next_scopes;
+    }
+
     /// Checks that the prefix maintains the following invariants
-    /// * a variable bound at some scope n has scope_id n in info
+    /// * a variable bound at some scope with id `n` has scope_id `n` in its variables info
+    /// * the scope_id's are numbered in pre-order of the prefix tree
     ///
     /// panics if an invariant does not hold
     fn check_invariants(&self) {
@@ -814,8 +874,14 @@ impl HierarchicalPrefix {
                 info
             );
         }
+        let mut prev_scope_id = ScopeId(0);
         for &next_scope_id in &self.next_scopes[scope_id.to_usize()] {
             self.check_invariants_recursive(next_scope_id);
+
+            // check that the scope-ids in the prefix tree are nubered correctly
+            assert!(next_scope_id > scope_id);
+            assert!(next_scope_id > prev_scope_id);
+            prev_scope_id = next_scope_id;
         }
     }
 }

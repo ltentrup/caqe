@@ -177,12 +177,11 @@ impl<'a> CaqeSolver<'a> {
             for variable in scope.data.variables.iter() {
                 let value = scope.data.assignments[variable];
                 let info = &self.matrix.prefix.variables().get(*variable);
-                let mut orig_variable;
-                if info.copy_of != 0u32.into() {
-                    orig_variable = info.copy_of;
+                let orig_variable = if info.copy_of != 0u32.into() {
+                    info.copy_of
                 } else {
-                    orig_variable = *variable;
-                }
+                    *variable
+                };
                 certificate.add_assignment(Literal::new(orig_variable, !value));
             }
 
@@ -466,7 +465,7 @@ impl ScopeRecursiveSolver {
     pub fn print_statistics(&self) {
         println!("scope id {}, level {}", self.data.scope_id, self.data.level);
         self.data.statistics.print();
-        for ref next in self.next.iter() {
+        for next in self.next.iter() {
             next.print_statistics()
         }
     }
@@ -482,7 +481,7 @@ impl ScopeRecursiveSolver {
         if self.data.is_universal {
             assignment.extend(self.data.assignments.iter());
         }
-        for ref next in self.next.iter() {
+        for next in self.next.iter() {
             assignment = next.get_universal_assignmemnt(assignment);
         }
         assignment
