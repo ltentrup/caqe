@@ -439,12 +439,14 @@ impl CaqeConfig {
 #[derive(Debug, Clone)]
 pub struct DCaqeSpecificSolverConfig {
     expansion_refinement: bool,
+    dependency_schemes: bool,
 }
 
 impl Default for DCaqeSpecificSolverConfig {
     fn default() -> Self {
         DCaqeSpecificSolverConfig {
             expansion_refinement: true,
+            dependency_schemes: true,
         }
     }
 }
@@ -468,13 +470,25 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
                 .hide_possible_values(true)
                 .help("Controls whether expansion refinement should be used"),
         )
+        .arg(
+            Arg::with_name("dependency-schemes")
+                .long("--dependency-schemes")
+                .default_value(default(default_options.dependency_schemes))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether dependency scheme should be computed"),
+        )
     }
 
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
         let expansion_refinement = matches.value_of("expansion-refinement").unwrap() == "1";
+        let dependency_schemes = matches.value_of("dependency-schemes").unwrap() == "1";
 
         DCaqeSpecificSolverConfig {
             expansion_refinement,
+            dependency_schemes,
         }
     }
 }
@@ -493,6 +507,9 @@ impl DCaqeConfig {
         let statistics = TimingStats::new();
 
         #[cfg(feature = "statistics")]
+        let mut counter = CountingStats::new();
+
+        #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Parsing);
 
         let mut file = File::open(self.filename.as_ref().unwrap())?;
@@ -508,6 +525,19 @@ impl DCaqeConfig {
 
         if matrix.conflict() {
             return Ok(SolverResult::Unsatisfiable);
+        }
+
+        if self.specific.dependency_schemes {
+            #[cfg(feature = "statistics")]
+            let mut timer = statistics.start(SolverPhases::ComputeDepScheme);
+
+            let _removed = matrix.refl_res_path_dep_scheme();
+
+            #[cfg(feature = "statistics")]
+            counter.inc_by(MatrixStats::RemovedDependencies, _removed);
+
+            #[cfg(feature = "statistics")]
+            timer.stop();
         }
 
         #[cfg(feature = "statistics")]
@@ -531,10 +561,15 @@ impl DCaqeConfig {
             if let Some(stats) = &self.statistics {
                 println!("Parsing took {:?}", statistics.sum(SolverPhases::Parsing));
                 println!(
+                    "Compute Dependency Scheme took {:?}",
+                    statistics.sum(SolverPhases::ComputeDepScheme)
+                );
+                println!(
                     "Initializing took {:?}",
                     statistics.sum(SolverPhases::Initializing)
                 );
                 println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
+                println!("{}", counter);
                 if stats == &Statistics::Detailed {
                     solver.print_statistics();
                 }
