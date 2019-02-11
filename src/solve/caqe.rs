@@ -11,10 +11,74 @@ use crate::utils::statistics::TimingStats;
 
 type QMatrix = Matrix<HierarchicalPrefix>;
 
+#[derive(Debug, Clone, Copy)]
+pub struct CaqeSolverOptions {
+    pub strong_unsat_refinement: bool,
+    pub expansion_refinement: bool,
+    pub refinement_literal_subsumption: bool,
+    pub abstraction_literal_optimization: bool,
+    pub miniscoping: bool,
+    pub dependency_schemes: bool,
+    pub build_conflict_clauses: bool,
+}
+
 pub struct CaqeSolver<'a> {
     matrix: &'a mut QMatrix,
     result: SolverResult,
     abstraction: Vec<Box<ScopeRecursiveSolver>>,
+}
+
+struct ScopeRecursiveSolver {
+    data: ScopeSolverData,
+    next: Vec<Box<ScopeRecursiveSolver>>,
+}
+
+struct ScopeSolverData {
+    sat: cryptominisat::Solver,
+    variables: Vec<Variable>,
+    variable_to_sat: FxHashMap<Variable, Lit>,
+    t_literals: Vec<(ClauseId, Lit)>,
+    b_literals: Vec<(ClauseId, Lit)>,
+
+    /// lookup from sat solver variables to clause id's
+    reverse_t_literals: FxHashMap<u32, ClauseId>,
+
+    assignments: FxHashMap<Variable, bool>,
+
+    /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
+    entry: BitVec,
+
+    /// Stores the clauses for which the current level is maximal, i.e.,
+    /// there is no literal of an inner scope contained.
+    /// For universal scopes, it stores the clauses which are only influenced by
+    /// the current, or some inner, scope.
+    max_clauses: BitVec,
+
+    /// Stores the clauses which are relevant, i.e., belong to the current branch in quantifier prefix tree
+    relevant_clauses: BitVec,
+
+    /// stores the assumptions given to sat solver
+    sat_solver_assumptions: Vec<Lit>,
+
+    is_universal: bool,
+    scope_id: ScopeId,
+    level: u32,
+
+    options: CaqeSolverOptions,
+
+    /// stores for clause-ids whether there is astrong-unsat optimized lit
+    strong_unsat_cache: FxHashMap<ClauseId, (Lit, bool)>,
+    conjunction: Vec<ClauseId>,
+
+    /// store partially expanded variables
+    /// maps a variable and a cube representing the assignment of its dependencies to a SAT solver literal
+    expanded: FxHashMap<(Variable, Vec<Literal>), Lit>,
+
+    /// stores the result of recursive calls to branches
+    sub_result: SolverResult,
+
+    #[cfg(feature = "statistics")]
+    statistics: TimingStats<SolverScopeEvents>,
 }
 
 impl<'a> CaqeSolver<'a> {
@@ -134,7 +198,7 @@ impl<'a> CaqeSolver<'a> {
 
 impl<'a> super::Solver for CaqeSolver<'a> {
     fn solve(&mut self) -> SolverResult {
-        for ref mut abstraction in self.abstraction.iter_mut() {
+        for abstraction in self.abstraction.iter_mut() {
             let result = abstraction.solve_recursive(self.matrix);
             if result == SolverResult::Unsatisfiable {
                 self.result = SolverResult::Unsatisfiable;
@@ -144,17 +208,6 @@ impl<'a> super::Solver for CaqeSolver<'a> {
         self.result = SolverResult::Satisfiable;
         self.result
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct CaqeSolverOptions {
-    pub strong_unsat_refinement: bool,
-    pub expansion_refinement: bool,
-    pub refinement_literal_subsumption: bool,
-    pub abstraction_literal_optimization: bool,
-    pub miniscoping: bool,
-    pub dependency_schemes: bool,
-    pub build_conflict_clauses: bool,
 }
 
 impl Default for CaqeSolverOptions {
@@ -181,59 +234,259 @@ enum SolverScopeEvents {
 #[cfg(feature = "statistics")]
 impl std::fmt::Display for SolverScopeEvents {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            &SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
-            &SolverScopeEvents::Refinement => write!(f, "Refinement"),
+        match *self {
+            SolverScopeEvents::SolveScopeAbstraction => write!(f, "SolveScopeAbstraction"),
+            SolverScopeEvents::Refinement => write!(f, "Refinement"),
         }
     }
 }
 
-struct ScopeSolverData {
-    sat: cryptominisat::Solver,
-    variables: Vec<Variable>,
-    variable_to_sat: FxHashMap<Variable, Lit>,
-    t_literals: Vec<(ClauseId, Lit)>,
-    b_literals: Vec<(ClauseId, Lit)>,
+impl ScopeRecursiveSolver {
+    fn new(
+        matrix: &QMatrix,
+        options: CaqeSolverOptions,
+        scope: &Scope,
+        next: Vec<Box<ScopeRecursiveSolver>>,
+    ) -> ScopeRecursiveSolver {
+        let mut relevant_clauses = BitVec::from_elem(matrix.clauses.len(), false);
+        for next_scope in next.iter() {
+            #[cfg(debug_assertions)]
+            {
+                // the branches have pairwise disjoint relevant clauses
+                let mut copy = relevant_clauses.clone();
+                copy.intersect(&next_scope.data.relevant_clauses);
+                assert!(copy.none());
+            }
+            relevant_clauses.union(&next_scope.data.relevant_clauses);
+        }
+        let mut candidate = ScopeRecursiveSolver {
+            data: ScopeSolverData::new(matrix, options, scope, relevant_clauses),
+            next: next,
+        };
 
-    /// lookup from sat solver variables to clause id's
-    reverse_t_literals: FxHashMap<u32, ClauseId>,
+        // add variables of scope to sat solver
+        for &variable in scope.variables.iter() {
+            candidate
+                .data
+                .variable_to_sat
+                .insert(variable, candidate.data.sat.new_var());
+        }
 
-    assignments: FxHashMap<Variable, bool>,
+        match scope.quant {
+            Quantifier::Existential => candidate.data.new_existential(matrix, scope),
+            Quantifier::Universal => candidate.data.new_universal(matrix, scope),
+        }
 
-    /// stores for every clause whether the clause is satisfied or not by assignments to outer variables
-    entry: BitVec,
+        candidate
+    }
 
-    /// Stores the clauses for which the current level is maximal, i.e.,
-    /// there is no literal of an inner scope contained.
-    /// For universal scopes, it stores the clauses which are only influenced by
-    /// the current, or some inner, scope.
-    max_clauses: BitVec,
+    fn init_abstraction_recursively(
+        matrix: &QMatrix,
+        options: CaqeSolverOptions,
+        scope_id: ScopeId,
+    ) -> Box<ScopeRecursiveSolver> {
+        let mut prev = Vec::new();
+        for child_scope_id in matrix.prefix.next_scopes[scope_id.to_usize()].iter() {
+            prev.push(Self::init_abstraction_recursively(
+                matrix,
+                options,
+                *child_scope_id,
+            ))
+        }
+        let scope = &matrix.prefix.scopes[scope_id.to_usize()];
+        let result = Box::new(ScopeRecursiveSolver::new(matrix, options, scope, prev));
 
-    /// Stores the clauses which are relevant, i.e., belong to the current branch in quantifier prefix tree
-    relevant_clauses: BitVec,
+        #[cfg(debug_assertions)]
+        {
+            // check consistency of interface literals
+            // for every b_lit in abstraction, there is a corresponding t_lit in one of its inner abstractions
+            /*for &(clause_id, _b_lit) in result.data.b_literals.iter() {
+                let mut current = &result;
+                let mut found = false;
+                while let Some(next) = current.next.as_ref() {
+                    if next.data
+                        .t_literals
+                        .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                        .is_ok()
+                    {
+                        found = true;
+                        break;
+                    }
+                    current = &next;
+                }
+                if !found {
+                    panic!(
+                        "missing t-literal for b-literal {} at scope {}",
+                        clause_id, scope.id
+                    );
+                }
+            }*/
 
-    /// stores the assumptions given to sat solver
-    sat_solver_assumptions: Vec<Lit>,
+            /*if scope_id == 0 {
+                let mut abstractions = Vec::new();
+                Self::verify_t_literals(&mut abstractions, result.as_ref());
+            }*/
+        }
 
-    is_universal: bool,
-    scope_id: ScopeId,
-    level: u32,
+        result
+    }
 
-    options: CaqeSolverOptions,
+    /*#[cfg(debug_assertions)]
+    fn verify_t_literals<'a>(
+        abstractions: &mut Vec<&'a ScopeRecursiveSolver>,
+        scope: &'a ScopeRecursiveSolver,
+    ) {
+        // check that for every clause containing a t-literal at this scope,
+        // there is a clause containing a b-literal in the previous scope
+        abstractions.push(scope);
+        for next in scope.next {
+            for &(clause_id, _t_lit) in next.data.t_literals.iter() {
+                let has_matching_b_lit = abstractions.iter().fold(false, |val, &abstraction| {
+                    val
+                        || abstraction
+                            .data
+                            .b_literals
+                            .binary_search_by(|elem| elem.0.cmp(&clause_id))
+                            .is_ok()
+                });
+                if !has_matching_b_lit {
+                    panic!(
+                        "missing b-literal for t-literal {} at scope {}",
+                        clause_id, next.data.scope_id
+                    );
+                }
+            }
 
-    /// stores for clause-ids whether there is astrong-unsat optimized lit
-    strong_unsat_cache: FxHashMap<ClauseId, (Lit, bool)>,
-    conjunction: Vec<ClauseId>,
+            Self::verify_t_literals(abstractions, next.as_ref());
+        }
+        abstractions.pop();
+    }*/
 
-    /// store partially expanded variables
-    /// maps a variable and a cube representing the assignment of its dependencies to a SAT solver literal
-    expanded: FxHashMap<(Variable, Vec<Literal>), Lit>,
+    fn solve_recursive(&mut self, matrix: &mut QMatrix) -> SolverResult {
+        trace!("solve_recursive");
 
-    /// stores the result of recursive calls to branches
-    sub_result: SolverResult,
+        // mutable split
+        let current = &mut self.data;
+        let next = &mut self.next;
+
+        let good_result = if current.is_universal {
+            SolverResult::Unsatisfiable
+        } else {
+            SolverResult::Satisfiable
+        };
+        let bad_result = if current.is_universal {
+            SolverResult::Satisfiable
+        } else {
+            SolverResult::Unsatisfiable
+        };
+        debug_assert!(good_result != bad_result);
+
+        loop {
+            debug!("");
+            info!(
+                "solve scope {} at level {}",
+                current.scope_id, current.level
+            );
+
+            #[cfg(feature = "statistics")]
+            let mut timer = current
+                .statistics
+                .start(SolverScopeEvents::SolveScopeAbstraction);
+
+            match current.check_candidate_exists(next) {
+                Lbool::True => {
+                    // there is a candidate solution, verify it recursively
+                    current.update_assignment();
+
+                    if next.is_empty() {
+                        // innermost scope, propagate result to outer scopes
+                        debug_assert!(!current.is_universal);
+                        //current.entry.clear();
+                        current.entry_minimization(matrix);
+                        return good_result;
+                    }
+
+                    current.get_assumptions(matrix, next);
+
+                    #[cfg(feature = "statistics")]
+                    timer.stop();
+
+                    current.sub_result = good_result;
+                    for scope in next.iter_mut() {
+                        let result = scope.solve_recursive(matrix);
+                        if result == bad_result {
+                            debug_assert!(result == bad_result);
+                            current.sub_result = bad_result;
+
+                            #[cfg(feature = "statistics")]
+                            let mut _timer =
+                                current.statistics.start(SolverScopeEvents::Refinement);
+
+                            if !current.is_influenced_by_witness(matrix, scope) {
+                                // copy witness
+                                current.entry.clear();
+                                current.entry.union(&scope.data.entry);
+                                return bad_result;
+                            }
+                            current.refine(matrix, scope);
+                            if current.options.build_conflict_clauses {
+                                current.extract_conflict_clause(matrix, scope);
+                            }
+                        }
+                    }
+
+                    if current.sub_result == bad_result {
+                        continue;
+                    } else {
+                        // copy entries from inner quantifier
+                        current.entry.clear();
+                        for scope in next.iter() {
+                            current.entry.union(&scope.data.entry);
+                        }
+                        // apply entry optimization
+                        if current.is_universal {
+                            current.unsat_propagation();
+                        } else {
+                            current.entry_minimization(matrix);
+                        }
+                        return good_result;
+                    }
+                }
+                Lbool::False => {
+                    // there is no candidate solution, return witness
+                    current.get_unsat_core();
+                    return bad_result;
+                }
+                _ => panic!("inconsistent internal state"),
+            }
+        }
+    }
 
     #[cfg(feature = "statistics")]
-    statistics: TimingStats<SolverScopeEvents>,
+    pub fn print_statistics(&self) {
+        println!("scope id {}, level {}", self.data.scope_id, self.data.level);
+        self.data.statistics.print();
+        for ref next in self.next.iter() {
+            next.print_statistics()
+        }
+    }
+
+    fn split(&mut self) -> (&mut ScopeSolverData, &mut Vec<Box<ScopeRecursiveSolver>>) {
+        (&mut self.data, &mut self.next)
+    }
+
+    fn get_universal_assignmemnt(
+        &self,
+        mut assignment: FxHashMap<Variable, bool>,
+    ) -> FxHashMap<Variable, bool> {
+        if self.data.is_universal {
+            assignment.extend(self.data.assignments.iter());
+        }
+        for ref next in self.next.iter() {
+            assignment = next.get_universal_assignmemnt(assignment);
+        }
+        assignment
+    }
 }
 
 impl ScopeSolverData {
@@ -1147,7 +1400,6 @@ impl ScopeSolverData {
             if !contains_variables {
                 continue;
             }
-            // TODO: check if we can move `if !contains_variables` up
             if self
                 .b_literals
                 .binary_search_by(|elem| elem.0.cmp(&clause_id))
@@ -1173,16 +1425,15 @@ impl ScopeSolverData {
     fn add_b_lit_and_adapt_abstraction(
         clause_id: ClauseId,
         sat: &mut cryptominisat::Solver,
-        b_literals: &Vec<(ClauseId, Lit)>,
+        b_literals: &[(ClauseId, Lit)],
         t_literals: &mut Vec<(ClauseId, Lit)>,
         reverse_t_literals: &mut FxHashMap<u32, ClauseId>,
     ) -> Lit {
         // first check if there is a b-literal for clause
         // if yes, just return it (the currents scope influences clause since there is at least one variable contained)
         // if no, we continue
-        match b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
-            Ok(pos) => return b_literals[pos].1,
-            Err(_) => {}
+        if let Ok(pos) = b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
+            return b_literals[pos].1;
         };
 
         // we then check, if there is a corresponding t-literal
@@ -1261,259 +1512,6 @@ impl ScopeSolverData {
         }
         debug!("conflict clause {:?}", literals);
         matrix.add(Clause::new(literals));
-    }
-}
-
-struct ScopeRecursiveSolver {
-    data: ScopeSolverData,
-    next: Vec<Box<ScopeRecursiveSolver>>,
-}
-
-impl ScopeRecursiveSolver {
-    fn new(
-        matrix: &QMatrix,
-        options: CaqeSolverOptions,
-        scope: &Scope,
-        next: Vec<Box<ScopeRecursiveSolver>>,
-    ) -> ScopeRecursiveSolver {
-        let mut relevant_clauses = BitVec::from_elem(matrix.clauses.len(), false);
-        for ref next_scope in next.iter() {
-            #[cfg(debug_assertions)]
-            {
-                // the branches have pairwise disjoint relevant clauses
-                let mut copy = relevant_clauses.clone();
-                copy.intersect(&next_scope.data.relevant_clauses);
-                assert!(copy.none());
-            }
-            relevant_clauses.union(&next_scope.data.relevant_clauses);
-        }
-        let mut candidate = ScopeRecursiveSolver {
-            data: ScopeSolverData::new(matrix, options, scope, relevant_clauses),
-            next: next,
-        };
-
-        // add variables of scope to sat solver
-        for &variable in scope.variables.iter() {
-            candidate
-                .data
-                .variable_to_sat
-                .insert(variable, candidate.data.sat.new_var());
-        }
-
-        match scope.quant {
-            Quantifier::Existential => candidate.data.new_existential(matrix, scope),
-            Quantifier::Universal => candidate.data.new_universal(matrix, scope),
-        }
-
-        candidate
-    }
-
-    fn init_abstraction_recursively(
-        matrix: &QMatrix,
-        options: CaqeSolverOptions,
-        scope_id: ScopeId,
-    ) -> Box<ScopeRecursiveSolver> {
-        let mut prev = Vec::new();
-        for child_scope_id in matrix.prefix.next_scopes[scope_id.to_usize()].iter() {
-            prev.push(Self::init_abstraction_recursively(
-                matrix,
-                options,
-                *child_scope_id,
-            ))
-        }
-        let scope = &matrix.prefix.scopes[scope_id.to_usize()];
-        let result = Box::new(ScopeRecursiveSolver::new(matrix, options, scope, prev));
-
-        #[cfg(debug_assertions)]
-        {
-            // check consistency of interface literals
-            // for every b_lit in abstraction, there is a corresponding t_lit in one of its inner abstractions
-            /*for &(clause_id, _b_lit) in result.data.b_literals.iter() {
-                let mut current = &result;
-                let mut found = false;
-                while let Some(next) = current.next.as_ref() {
-                    if next.data
-                        .t_literals
-                        .binary_search_by(|elem| elem.0.cmp(&clause_id))
-                        .is_ok()
-                    {
-                        found = true;
-                        break;
-                    }
-                    current = &next;
-                }
-                if !found {
-                    panic!(
-                        "missing t-literal for b-literal {} at scope {}",
-                        clause_id, scope.id
-                    );
-                }
-            }*/
-
-            /*if scope_id == 0 {
-                let mut abstractions = Vec::new();
-                Self::verify_t_literals(&mut abstractions, result.as_ref());
-            }*/
-        }
-
-        result
-    }
-
-    /*#[cfg(debug_assertions)]
-    fn verify_t_literals<'a>(
-        abstractions: &mut Vec<&'a ScopeRecursiveSolver>,
-        scope: &'a ScopeRecursiveSolver,
-    ) {
-        // check that for every clause containing a t-literal at this scope,
-        // there is a clause containing a b-literal in the previous scope
-        abstractions.push(scope);
-        for next in scope.next {
-            for &(clause_id, _t_lit) in next.data.t_literals.iter() {
-                let has_matching_b_lit = abstractions.iter().fold(false, |val, &abstraction| {
-                    val
-                        || abstraction
-                            .data
-                            .b_literals
-                            .binary_search_by(|elem| elem.0.cmp(&clause_id))
-                            .is_ok()
-                });
-                if !has_matching_b_lit {
-                    panic!(
-                        "missing b-literal for t-literal {} at scope {}",
-                        clause_id, next.data.scope_id
-                    );
-                }
-            }
-
-            Self::verify_t_literals(abstractions, next.as_ref());
-        }
-        abstractions.pop();
-    }*/
-
-    fn solve_recursive(&mut self, matrix: &mut QMatrix) -> SolverResult {
-        trace!("solve_recursive");
-
-        // mutable split
-        let current = &mut self.data;
-        let next = &mut self.next;
-
-        let good_result = if current.is_universal {
-            SolverResult::Unsatisfiable
-        } else {
-            SolverResult::Satisfiable
-        };
-        let bad_result = if current.is_universal {
-            SolverResult::Satisfiable
-        } else {
-            SolverResult::Unsatisfiable
-        };
-        debug_assert!(good_result != bad_result);
-
-        loop {
-            debug!("");
-            info!(
-                "solve scope {} at level {}",
-                current.scope_id, current.level
-            );
-
-            #[cfg(feature = "statistics")]
-            let mut timer = current
-                .statistics
-                .start(SolverScopeEvents::SolveScopeAbstraction);
-
-            match current.check_candidate_exists(next) {
-                Lbool::True => {
-                    // there is a candidate solution, verify it recursively
-                    current.update_assignment();
-
-                    if next.is_empty() {
-                        // innermost scope, propagate result to outer scopes
-                        debug_assert!(!current.is_universal);
-                        //current.entry.clear();
-                        current.entry_minimization(matrix);
-                        return good_result;
-                    }
-
-                    current.get_assumptions(matrix, next);
-
-                    #[cfg(feature = "statistics")]
-                    timer.stop();
-
-                    current.sub_result = good_result;
-                    for scope in next.iter_mut() {
-                        let result = scope.solve_recursive(matrix);
-                        if result == bad_result {
-                            debug_assert!(result == bad_result);
-                            current.sub_result = bad_result;
-
-                            #[cfg(feature = "statistics")]
-                            let mut _timer =
-                                current.statistics.start(SolverScopeEvents::Refinement);
-
-                            if !current.is_influenced_by_witness(matrix, scope) {
-                                // copy witness
-                                current.entry.clear();
-                                current.entry.union(&scope.data.entry);
-                                return bad_result;
-                            }
-                            current.refine(matrix, scope);
-                            if current.options.build_conflict_clauses {
-                                current.extract_conflict_clause(matrix, scope);
-                            }
-                        }
-                    }
-
-                    if current.sub_result == bad_result {
-                        continue;
-                    } else {
-                        // copy entries from inner quantifier
-                        current.entry.clear();
-                        for scope in next.iter() {
-                            current.entry.union(&scope.data.entry);
-                        }
-                        // apply entry optimization
-                        if current.is_universal {
-                            current.unsat_propagation();
-                        } else {
-                            current.entry_minimization(matrix);
-                        }
-                        return good_result;
-                    }
-                }
-                Lbool::False => {
-                    // there is no candidate solution, return witness
-                    current.get_unsat_core();
-                    return bad_result;
-                }
-                _ => panic!("inconsistent internal state"),
-            }
-        }
-    }
-
-    #[cfg(feature = "statistics")]
-    pub fn print_statistics(&self) {
-        println!("scope id {}, level {}", self.data.scope_id, self.data.level);
-        self.data.statistics.print();
-        for ref next in self.next.iter() {
-            next.print_statistics()
-        }
-    }
-
-    fn split(&mut self) -> (&mut ScopeSolverData, &mut Vec<Box<ScopeRecursiveSolver>>) {
-        (&mut self.data, &mut self.next)
-    }
-
-    fn get_universal_assignmemnt(
-        &self,
-        mut assignment: FxHashMap<Variable, bool>,
-    ) -> FxHashMap<Variable, bool> {
-        if self.data.is_universal {
-            assignment.extend(self.data.assignments.iter());
-        }
-        for ref next in self.next.iter() {
-            assignment = next.get_universal_assignmemnt(assignment);
-        }
-        assignment
     }
 }
 
