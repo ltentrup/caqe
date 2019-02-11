@@ -142,7 +142,7 @@ impl<'a> super::Solver for CaqeSolver<'a> {
             }
         }
         self.result = SolverResult::Satisfiable;
-        return self.result;
+        self.result
     }
 }
 
@@ -821,11 +821,7 @@ impl ScopeSolverData {
         }
     }
 
-    fn is_influenced_by_witness(
-        &mut self,
-        matrix: &QMatrix,
-        next: &mut Box<ScopeRecursiveSolver>,
-    ) -> bool {
+    fn is_influenced_by_witness(&self, matrix: &QMatrix, next: &mut ScopeRecursiveSolver) -> bool {
         trace!("is_influenced_by_witness");
 
         // witness
@@ -840,12 +836,13 @@ impl ScopeSolverData {
                 if other_scope_id.expect("variable is bound") == self.scope_id {
                     return true;
                 }
+                debug_assert!(!self.variables.contains(&literal.variable()));
             }
         }
         false
     }
 
-    fn refine(&mut self, matrix: &QMatrix, next: &mut Box<ScopeRecursiveSolver>) {
+    fn refine(&mut self, matrix: &QMatrix, next: &mut ScopeRecursiveSolver) {
         trace!("refine");
 
         if self.options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
@@ -896,7 +893,7 @@ impl ScopeSolverData {
     fn strong_unsat_refinement(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Box<ScopeRecursiveSolver>,
+        next: &mut ScopeRecursiveSolver,
     ) -> bool {
         trace!("strong_unsat_refinement");
         debug_assert!(!self.is_universal);
@@ -1014,7 +1011,7 @@ impl ScopeSolverData {
     fn refinement_literal_subsumption_optimization(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Box<ScopeRecursiveSolver>,
+        next: &mut ScopeRecursiveSolver,
     ) -> bool {
         let mut successful = false;
         let entry = &mut next.data.entry;

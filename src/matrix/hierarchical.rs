@@ -340,6 +340,9 @@ impl Matrix<HierarchicalPrefix> {
         //self.prefix.print_dot_repr();
 
         self.prefix.fix_levels();
+
+        #[cfg(feature = "debug_assertions")]
+        self.prefix.check_invariants();
     }
 
     fn unprenex_recursive(
@@ -466,12 +469,14 @@ impl Matrix<HierarchicalPrefix> {
                     *other.variables.first().expect("scopes should not be empty"),
                 ) {
                     other.variables.push(var);
+                    self.prefix.variables.get_mut(var).scope_id = Some(other_id);
                     return false;
                 }
             }
             // need to create new scope
             let id = self.prefix.create_scope(Quantifier::Existential, level);
             self.prefix.scopes[id.to_usize()].variables.push(var);
+            self.prefix.variables.get_mut(var).scope_id = Some(id);
             scopes.push(id);
             remaining_next.retain(|next_univ_scope_id| {
                 debug!(
@@ -784,6 +789,33 @@ impl HierarchicalPrefix {
                 0,
                 *scope_id,
             );
+        }
+    }
+
+    /// Checks that the prefix maintains the following invariants
+    /// * a variable bound at some scope n has scope_id n in info
+    ///
+    /// panics if an invariant does not hold
+    fn check_invariants(&self) {
+        self.roots
+            .iter()
+            .for_each(|&root| self.check_invariants_recursive(root));
+    }
+
+    fn check_invariants_recursive(&self, scope_id: ScopeId) {
+        let scope = &self.scopes[scope_id.to_usize()];
+        for &var in &scope.variables {
+            let info = self.variables().get(var);
+            assert_eq!(
+                scope.id,
+                info.scope_id.expect("variable is bound"),
+                "{:?}\n{:?}",
+                scope,
+                info
+            );
+        }
+        for &next_scope_id in &self.next_scopes[scope_id.to_usize()] {
+            self.check_invariants_recursive(next_scope_id);
         }
     }
 }
