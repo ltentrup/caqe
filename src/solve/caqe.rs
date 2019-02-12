@@ -5,6 +5,7 @@ use bit_vec::BitVec;
 use cryptominisat::*;
 use log::{debug, info, trace};
 use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 
 #[cfg(feature = "statistics")]
 use crate::utils::statistics::TimingStats;
@@ -44,8 +45,8 @@ struct GlobalSolverData {
 struct SatAndTranslation {
     sat: cryptominisat::Solver,
     variable_to_sat: FxHashMap<Variable, Lit>,
-    t_literals: Vec<(ClauseId, Lit)>,
-    b_literals: Vec<(ClauseId, Lit)>,
+    t_literals: BTreeMap<ClauseId, Lit>,
+    b_literals: BTreeMap<ClauseId, Lit>,
 
     /// lookup from sat solver variables to clause id's
     reverse_t_literals: FxHashMap<u32, ClauseId>,
@@ -526,8 +527,8 @@ impl SatAndTranslation {
         SatAndTranslation {
             sat,
             variable_to_sat: FxHashMap::default(),
-            t_literals: Vec::with_capacity(matrix.clauses.len()),
-            b_literals: Vec::with_capacity(matrix.clauses.len()),
+            t_literals: BTreeMap::new(),
+            b_literals: BTreeMap::new(),
             reverse_t_literals: FxHashMap::default(),
         }
     }
@@ -565,26 +566,20 @@ impl SatAndTranslation {
         // first check if there is a b-literal for clause
         // if yes, just return it (the currents scope influences clause since there is at least one variable contained)
         // if no, we continue
-        if let Ok(pos) = self
-            .b_literals
-            .binary_search_by(|elem| elem.0.cmp(&clause_id))
-        {
-            return self.b_literals[pos].1;
+        if let Some(&b_lit) = self.b_literals.get(&clause_id) {
+            return b_lit;
         };
 
         // we then check, if there is a corresponding t-literal
         // if yes, we return this instead
         // if no, we have to adapt the abstraction by inserting a new t-literal
-        let insert_pos = match self
-            .t_literals
-            .binary_search_by(|elem| elem.0.cmp(&clause_id))
-        {
-            Ok(pos) => return self.t_literals[pos].1,
-            Err(pos) => pos,
-        };
-        let sat_lit = self.sat.new_var();
-        self.t_literals.insert(insert_pos, (clause_id, sat_lit));
-        self.reverse_t_literals.insert(sat_lit.var(), clause_id);
+        let reverse = &mut self.reverse_t_literals;
+        let sat = &mut self.sat;
+        let entry = self.t_literals.entry(clause_id).or_insert_with(|| {
+            let var = sat.new_var();
+            reverse.insert(var.var(), clause_id);
+            var
+        });
 
         // note that, we could also adapt b_literals (with the same sat_literal)
         // however, this is not necessary and not directly obvious
@@ -594,7 +589,7 @@ impl SatAndTranslation {
         // 2) we do not *need* them, because abstraction entries are just copied from one
         //    scope to another
 
-        sat_lit
+        *entry
     }
 }
 
@@ -695,13 +690,8 @@ impl ScopeSolverData {
                         info.level <= scope.level
                     }) {
                         debug_assert!(need_b_lit);
-                        let pos = self
-                            .sat
-                            .b_literals
-                            .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
-                        if pos.is_ok() {
-                            let sat_var = self.sat.b_literals[pos.unwrap()].1;
-                            self.sat.b_literals.push((clause_id as ClauseId, sat_var));
+                        if let Some(&b_lit) = self.sat.b_literals.get(&other_clause_id) {
+                            self.sat.b_literals.insert(clause_id as ClauseId, b_lit);
                             sat_clause.clear();
                             continue 'next_clause;
                         }
@@ -719,7 +709,7 @@ impl ScopeSolverData {
                         info.level < scope.level
                     }) {
                         debug_assert!(need_t_lit);
-                        let pos = self
+                        /*let pos = self
                             .sat
                             .t_literals
                             .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
@@ -727,7 +717,7 @@ impl ScopeSolverData {
                             let sat_var = self.sat.t_literals[pos.unwrap()].1;
                             outer_equal_to = Some(sat_var);
                             break;
-                        }
+                        }*/
                     }
                 }
             }
@@ -742,7 +732,7 @@ impl ScopeSolverData {
                         info.level > scope.level
                     }) {
                         debug_assert!(need_b_lit);
-                        let pos = self
+                        /*let pos = self
                             .sat
                             .b_literals
                             .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
@@ -750,7 +740,7 @@ impl ScopeSolverData {
                             let sat_var = self.sat.b_literals[pos.unwrap()].1;
                             inner_equal_to = Some(sat_var);
                             break;
-                        }
+                        }*/
                     }
                 }
             }
@@ -759,7 +749,7 @@ impl ScopeSolverData {
                 if outer_equal_to.is_none() {
                     let t_lit = self.sat.new_var();
                     sat_clause.push(t_lit);
-                    self.sat.t_literals.push((clause_id as ClauseId, t_lit));
+                    self.sat.t_literals.insert(clause_id as ClauseId, t_lit);
                     self.sat
                         .reverse_t_literals
                         .insert(t_lit.var(), clause_id as ClauseId);
@@ -780,7 +770,7 @@ impl ScopeSolverData {
                     b_lit = inner_equal_to.unwrap();
                 }
                 sat_clause.push(!b_lit);
-                self.sat.b_literals.push((clause_id as ClauseId, b_lit));
+                self.sat.b_literals.insert(clause_id as ClauseId, b_lit);
             }
 
             debug_assert!(!sat_clause.is_empty());
@@ -800,13 +790,13 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         {
             let mut t_literals = String::new();
-            for &(clause_id, _) in self.sat.t_literals.iter() {
+            for (&clause_id, _) in self.sat.t_literals.iter() {
                 t_literals.push_str(&format!(" t{}", clause_id));
             }
             debug!("t-literals: {}", t_literals);
 
             let mut b_literals = String::new();
-            for &(clause_id, _) in self.sat.b_literals.iter() {
+            for (&clause_id, _) in self.sat.b_literals.iter() {
                 b_literals.push_str(&format!(" b{}", clause_id));
             }
             debug!("b-literals: {}", b_literals);
@@ -857,13 +847,8 @@ impl ScopeSolverData {
                         let info = matrix.prefix.variables().get(l.variable());
                         info.level <= scope.level
                     }) {
-                        let pos = self
-                            .sat
-                            .b_literals
-                            .binary_search_by(|elem| elem.0.cmp(&other_clause_id))
-                            .unwrap();
-                        let sat_var = self.sat.b_literals[pos].1;
-                        self.sat.b_literals.push((clause_id as ClauseId, sat_var));
+                        let sat_var = self.sat.b_literals.get(&other_clause_id).unwrap();
+                        self.sat.b_literals.insert(clause_id as ClauseId, *sat_var);
                         continue 'next_clause;
                     }
                 }
@@ -903,7 +888,7 @@ impl ScopeSolverData {
             debug_assert!(max_level >= scope.level);
 
             if need_t_lit {
-                self.sat.t_literals.push((clause_id as ClauseId, sat_var));
+                self.sat.t_literals.insert(clause_id as ClauseId, sat_var);
                 debug_assert!(!self.sat.reverse_t_literals.contains_key(&sat_var.var()));
                 self.sat
                     .reverse_t_literals
@@ -911,7 +896,7 @@ impl ScopeSolverData {
             }
 
             if need_b_lit {
-                self.sat.b_literals.push((clause_id as ClauseId, sat_var));
+                self.sat.b_literals.insert(clause_id as ClauseId, sat_var);
             }
 
             if min_level == scope.level {
@@ -926,13 +911,13 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         {
             let mut t_literals = String::new();
-            for &(clause_id, _) in self.sat.t_literals.iter() {
+            for (&clause_id, _) in self.sat.t_literals.iter() {
                 t_literals.push_str(&format!(" t{}", clause_id));
             }
             debug!("t-literals: {}", t_literals);
 
             let mut b_literals = String::new();
-            for &(clause_id, _) in self.sat.b_literals.iter() {
+            for (&clause_id, _) in self.sat.b_literals.iter() {
                 b_literals.push_str(&format!(" b{}", clause_id));
             }
             debug!("b-literals: {}", b_literals);
@@ -956,7 +941,8 @@ impl ScopeSolverData {
         // * clause from entry is not a t-lit: push entry to next quantifier
         // * clause is in entry and a t-lit: assume positively
         // * clause is not in entry and a t-lit: assume negatively
-        for &(clause_id, mut t_literal) in self.sat.t_literals.iter() {
+        for (&clause_id, &t_literal) in self.sat.t_literals.iter() {
+            let mut t_literal = t_literal;
             if !self.entry[clause_id as usize] {
                 t_literal = !t_literal;
             }
@@ -1029,7 +1015,7 @@ impl ScopeSolverData {
         let mut debug_print = String::new();
 
         if !self.is_universal {
-            for &(clause_id, b_lit) in self.sat.b_literals.iter() {
+            for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
                 if self.sat.sat.is_true(b_lit) {
                     next.iter_mut().for_each(|ref mut scope| {
                         scope.data.entry.set(clause_id as usize, true);
@@ -1059,7 +1045,7 @@ impl ScopeSolverData {
                 debug_print.push_str(&format!(" b{}", clause_id));
             }
         } else {
-            for &(clause_id, b_lit) in self.sat.b_literals.iter() {
+            for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
                 if self.sat.sat.is_true(b_lit) {
                     continue;
                 }
@@ -1094,11 +1080,7 @@ impl ScopeSolverData {
                     }*/
                 }
                 if !nonempty {
-                    debug_assert!(self
-                        .sat
-                        .t_literals
-                        .binary_search_by(|elem| elem.0.cmp(&clause_id))
-                        .is_ok());
+                    debug_assert!(self.sat.t_literals.get(&clause_id).is_some());
                     // we have already copied the value by copying current entry
                     continue;
                     /*if !self.entry[clause_id as usize] {
@@ -1540,10 +1522,7 @@ impl ScopeSolverData {
         debug_assert!(contains_variables);
         // need to add a b-literal if there are inner and outer variables but not necisarilly of current quantifier
         // note that it cannot happen that there are variables of the current quantifier but no b-literal, because in this case, there are no inner variables
-        if sat
-            .b_literals
-            .binary_search_by(|elem| elem.0.cmp(&clause_id))
-            .is_ok()
+        if sat.b_literals.get(&clause_id).is_some()
             || contains_variables && contains_outer_variables
         {
             let sat_lit = sat.add_b_lit_and_adapt_abstraction(clause_id);
@@ -1645,10 +1624,7 @@ impl ScopeSolverData {
             if !contains_variables {
                 continue;
             }
-            if sat
-                .b_literals
-                .binary_search_by(|elem| elem.0.cmp(&clause_id))
-                .is_ok()
+            if sat.b_literals.get(&clause_id).is_some()
                 || contains_variables && contains_outer_variables
             {
                 let sat_lit = sat.add_b_lit_and_adapt_abstraction(clause_id);
