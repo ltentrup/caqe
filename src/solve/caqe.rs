@@ -2130,4 +2130,27 @@ e 7 8 0
             "s cnf 1 8 5\nV -1 0\nV 4 0\nV -5 0\nV -6 0\nV -8 0\n"
         );
     }
+
+    #[test]
+    fn test_miniscoping_regression2() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 8 6
+a 7 0
+e 4 5 0
+a 1 8 0
+e 2 3 6 0
+-6 -1 0
+-4 0
+-3 8 -7 0
+6 0
+-2 0
+-3 -5 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 8 6\nV 1 0\n");
+    }
 }

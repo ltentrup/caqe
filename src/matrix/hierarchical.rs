@@ -739,7 +739,7 @@ impl Matrix<HierarchicalPrefix> {
                         level: scope.level,
                         dependencies: FxHashSet::default(),
                     });
-                    let new_var: Variable = variables.next_unused();
+                    let new_var: Variable = variables.max_variable_id().into();
                     new_vars.push(new_var);
                     new_var
                 });
