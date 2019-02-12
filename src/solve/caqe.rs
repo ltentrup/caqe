@@ -20,6 +20,7 @@ pub struct CaqeSolverOptions {
     pub miniscoping: bool,
     pub dependency_schemes: bool,
     pub build_conflict_clauses: bool,
+    pub conflict_clause_expansion: bool,
 }
 
 pub struct CaqeSolver<'a> {
@@ -234,6 +235,7 @@ impl Default for CaqeSolverOptions {
             miniscoping: true,
             dependency_schemes: true,
             build_conflict_clauses: true,
+            conflict_clause_expansion: false,
         }
     }
 }
@@ -1204,7 +1206,7 @@ impl ScopeSolverData {
         conflicts.push((next.data.entry.clone(), self.level));
 
         if options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
-            self.expansion_refinement(matrix, next, conflicts);
+            self.expansion_refinement(matrix, options, next, conflicts);
         }
 
         if !self.is_universal
@@ -1421,6 +1423,7 @@ impl ScopeSolverData {
     fn expansion_refinement(
         &mut self,
         matrix: &QMatrix,
+        options: &CaqeSolverOptions,
         next: &mut ScopeRecursiveSolver,
         conflicts: &mut Vec<(BitVec, u32)>,
     ) {
@@ -1444,7 +1447,9 @@ impl ScopeSolverData {
             self.expand_clause(matrix, i as ClauseId, clause, &universal_assignment);
         }
 
-        //return;
+        if !options.conflict_clause_expansion {
+            return;
+        }
 
         // build expansions for new conflict clauses and previous assignments (not including the current one)
         if self.next_conflict < conflicts.len() {
