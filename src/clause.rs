@@ -162,23 +162,12 @@ impl Clause {
     }
 
     pub fn is_satisfied_by_assignment(&self, assignment: &FxHashMap<Variable, bool>) -> bool {
-        self.literals.iter().fold(false, |satisifed, &l| {
-            if satisifed {
-                return satisifed;
-            }
-            match assignment.get(&l.variable()) {
-                None => return satisifed,
-                Some(&value) => {
-                    if l.signed() && !value {
-                        return true;
-                    } else if !l.signed() && value {
-                        return true;
-                    } else {
-                        return satisifed;
-                    }
-                }
-            }
-        })
+        self.literals
+            .iter()
+            .any(|&l| match assignment.get(&l.variable()) {
+                None => false,
+                Some(&value) => l.signed() && !value || !l.signed() && value,
+            })
     }
 }
 

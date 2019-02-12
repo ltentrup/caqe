@@ -325,8 +325,8 @@ impl Matrix<HierarchicalPrefix> {
     pub fn unprenex_by_miniscoping(&mut self) {
         // we store for each variable the variable it is connected to (by some clause)
         let mut table: InPlaceUnificationTable<Variable> = InPlaceUnificationTable::new();
-        table.reserve(self.prefix.variables().num_variables() + 1);
-        for i in 0..self.prefix.variables().num_variables() + 1 {
+        table.reserve(self.prefix.variables().max_variable_id() + 1);
+        for _ in 0..=self.prefix.variables().max_variable_id() {
             table.new_key(());
         }
 
@@ -339,6 +339,7 @@ impl Matrix<HierarchicalPrefix> {
 
         //self.prefix.print_dot_repr();
 
+        // post-processing: repair invariants
         self.prefix.fix_levels();
         self.prefix.renumber_scopes();
 
@@ -738,7 +739,7 @@ impl Matrix<HierarchicalPrefix> {
                         level: scope.level,
                         dependencies: FxHashSet::default(),
                     });
-                    let new_var: Variable = variables.num_variables().into();
+                    let new_var: Variable = variables.next_unused();
                     new_vars.push(new_var);
                     new_var
                 });

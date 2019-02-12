@@ -18,7 +18,7 @@ impl<P: Prefix> Matrix<P> {
         let mut removed = 0;
         let mut seen_pos: FxHashSet<Literal> = FxHashSet::default();
         let mut seen_neg: FxHashSet<Literal> = FxHashSet::default();
-        for var in 1..=self.prefix.variables().num_variables() {
+        for var in 1..=self.prefix.variables().max_variable_id() {
             let var: Variable = var.into();
             let info = self.prefix.variables().get(var);
             if !info.is_universal() {
@@ -32,7 +32,7 @@ impl<P: Prefix> Matrix<P> {
             self.search_resolution_path(Literal::new(var, false), &mut seen_pos);
             self.search_resolution_path(Literal::new(var, true), &mut seen_neg);
 
-            for evar in 1..self.prefix.variables().num_variables() {
+            for evar in 1..=self.prefix.variables().max_variable_id() {
                 let evar: Variable = evar.into();
                 let info = self.prefix.variables().get(evar);
                 if info.is_universal() {

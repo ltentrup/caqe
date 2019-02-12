@@ -81,7 +81,7 @@ where
         let mut dimacs = String::new();
         dimacs.push_str(&format!(
             "p cnf {} {}\n",
-            self.prefix.variables().num_variables(),
+            self.prefix.variables().max_variable_id(),
             self.clauses.len()
         ));
         dimacs.push_str(&self.prefix.dimacs().to_string());
@@ -140,12 +140,12 @@ impl<V: VariableInfo> VariableStore<V> {
         &self.variables[index]
     }
 
-    pub fn num_variables(&self) -> usize {
-        assert!(self.variables.len() > 0);
+    pub fn max_variable_id(&self) -> usize {
+        assert!(!self.variables.is_empty());
         self.variables.len() - 1
     }
 
-    pub fn orig_num_variables(&self) -> usize {
+    pub fn orig_max_variable_id(&self) -> usize {
         self.orig_num_variables
     }
 
