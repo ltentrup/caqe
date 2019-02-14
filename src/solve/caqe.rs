@@ -235,7 +235,7 @@ impl Default for CaqeSolverOptions {
             abstraction_literal_optimization: true,
             miniscoping: true,
             dependency_schemes: true,
-            build_conflict_clauses: true,
+            build_conflict_clauses: false,
             conflict_clause_expansion: false,
         }
     }
@@ -1186,7 +1186,9 @@ impl ScopeSolverData {
         let conflicts = &mut global.conflicts;
 
         // store entry in conflicts
-        conflicts.push((next.data.entry.clone(), self.level));
+        if options.conflict_clause_expansion {
+            conflicts.push((next.data.entry.clone(), self.level));
+        }
 
         if options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
             self.expansion_refinement(matrix, options, next, conflicts);
