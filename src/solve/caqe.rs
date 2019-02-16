@@ -236,7 +236,7 @@ impl Default for CaqeSolverOptions {
             miniscoping: true,
             dependency_schemes: true,
             build_conflict_clauses: false,
-            conflict_clause_expansion: false,
+            conflict_clause_expansion: true,
         }
     }
 }
@@ -1443,7 +1443,7 @@ impl ScopeSolverData {
                     continue;
                 }
                 for i in 0..self.expansions.len() {
-                    self.expand_conflict_clause(matrix, data, &conflict.0, i);
+                    self.expand_conflict_clause(matrix, data, &conflict.0, conflict.1, i);
                 }
             }
         }
@@ -1452,7 +1452,13 @@ impl ScopeSolverData {
 
         // build expansions for all conflict clauses with current assignment
         for conflict in conflicts.iter() {
-            self.expand_conflict_clause(matrix, data, &conflict.0, self.expansions.len() - 1);
+            self.expand_conflict_clause(
+                matrix,
+                data,
+                &conflict.0,
+                conflict.1,
+                self.expansions.len() - 1,
+            );
         }
 
         self.next_conflict = conflicts.len();
@@ -1541,6 +1547,7 @@ impl ScopeSolverData {
         matrix: &QMatrix,
         data: &ScopeSolverData,
         conflict: &BitVec,
+        max_level: u32,
         universal_assignment: usize,
     ) {
         debug_assert!(data.is_universal);
@@ -1584,9 +1591,14 @@ impl ScopeSolverData {
                     }
                     // ignore variables
                     continue;
+                } else if info.level > max_level {
+                    // not part of conflict clause
+                    continue;
                 }
                 if info.is_universal() {
                     // every inner universal variable is contained in the assignment
+                    // it can happen that the clause belongs to a different branch in the quantifier tree,
+                    // thus, the following assertion does not hold
                     //assert!(universal_assignment.contains_key(&literal.variable()));
                     continue;
                 }
@@ -1601,6 +1613,7 @@ impl ScopeSolverData {
                     }
                 }
                 debug_assert!(info.level > self.level);
+                debug_assert!(info.level <= max_level);
                 debug_assert!(info.is_existential());
                 contains_variables = true;
 

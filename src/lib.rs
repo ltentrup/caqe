@@ -415,7 +415,7 @@ impl CaqeConfig {
                     statistics.sum(SolverPhases::Initializing)
                 );
                 println!("Solving took {:?}", statistics.sum(SolverPhases::Solving));
-                println!("{}", counter);
+                print!("{}", counter);
                 solver.print_statistics(*stats);
             }
         }
