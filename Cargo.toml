@@ -15,13 +15,16 @@ rustc-hash = "1.0.1"  # fast, non-randomized HashMap/HashSet
 uncover = "0.1.1"     # test maintainence
 ena = "0.11"          # union-find implementation
 dot = "0.1.4"         # graphviz dot representation of structures
+jemallocator = { version = "0.1.9", optional = true }
 
 
 [patch.crates-io]
 #cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git" }
 
 [features]
+default = ["jemalloc"]
 statistics = [] # enable statistics
+jemalloc = ["jemallocator"] # use jemalloc allocator instead of system one
 
 [profile.release]
 opt-level = 3

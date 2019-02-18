@@ -7,6 +7,10 @@ use std::io::Read;
 use std::str::FromStr;
 use uncover::define_uncover_macros;
 
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 // This defines two macros, `covers!` and `covered_by!`.
 // They will be no-ops unless `cfg!(debug_assertions)` is true.
 define_uncover_macros!(enable_if(cfg!(debug_assertions)));
