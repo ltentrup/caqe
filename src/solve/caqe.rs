@@ -234,7 +234,7 @@ impl Default for CaqeSolverOptions {
             refinement_literal_subsumption: false,
             abstraction_literal_optimization: true,
             miniscoping: true,
-            dependency_schemes: true,
+            dependency_schemes: false,
             build_conflict_clauses: false,
             conflict_clause_expansion: true,
         }
