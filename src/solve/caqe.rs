@@ -1551,6 +1551,10 @@ impl ScopeSolverData {
         universal_assignment: usize,
     ) {
         debug_assert!(data.is_universal);
+        if self.level >= max_level {
+            return;
+        }
+        debug_assert!(self.level < max_level);
 
         let sat = &mut self.sat;
         let sat_clause = &mut self.sat_solver_assumptions;
@@ -1566,21 +1570,19 @@ impl ScopeSolverData {
         let universal_assignment = &self.expansions[universal_assignment];
 
         // build expansion for conflict clause
-        let mut contains_variables = false;
-        let mut contains_outer_variables = false;
-        let mut is_satisfied = false;
+        let mut contains_variables_global = false;
+        let mut needs_b_lit = Vec::new();
         for (i, _) in conflict.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
 
             // check if the universal assignment satisfies the clause
             if clause.is_satisfied_by_assignment(&universal_assignment) {
-                is_satisfied = true;
-                break;
+                return;
             }
 
             // add the clause to the abstraction
             // variables bound by inner existential quantifier have to be renamed
-
+            let mut contains_outer_variables = false;
             for &literal in clause.iter() {
                 let info = matrix.prefix.variables().get(literal.variable());
                 if info.level <= self.level {
@@ -1615,7 +1617,7 @@ impl ScopeSolverData {
                 debug_assert!(info.level > self.level);
                 debug_assert!(info.level <= max_level);
                 debug_assert!(info.is_existential());
-                contains_variables = true;
+                contains_variables_global = true;
 
                 // porject universal assignment to dependencies of variable
                 let mut deps: Vec<Literal> = universal_assignment
@@ -1636,20 +1638,23 @@ impl ScopeSolverData {
                 sat_clause.push(sat_var);
             }
             let clause_id = i as ClauseId;
-            if !contains_variables {
-                continue;
-            }
-            if sat.b_literals.get(&clause_id).is_some()
-                || contains_variables && contains_outer_variables
-            {
+            if sat.b_literals.get(&clause_id).is_some() {
                 let sat_lit = sat.add_b_lit_and_adapt_abstraction(clause_id);
                 sat_clause.push(sat_lit);
+            } else if contains_outer_variables {
+                needs_b_lit.push(clause_id);
             }
         }
-
-        if !is_satisfied && !sat_clause.is_empty() {
-            sat.add_clause(sat_clause.as_ref());
+        if !contains_variables_global {
+            return;
         }
+        assert!(!sat_clause.is_empty());
+        for &clause_id in &needs_b_lit {
+            let sat_lit = sat.add_b_lit_and_adapt_abstraction(clause_id);
+            sat_clause.push(sat_lit);
+        }
+
+        sat.add_clause(sat_clause.as_ref());
     }
 
     fn get_unsat_core(&mut self) {
@@ -2167,5 +2172,30 @@ e 2 3 6 0
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 8 6\nV 1 0\n");
+    }
+
+    #[test]
+    fn test_confl_clause_exp_regression() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 6 4
+e 1 5 0
+a 2 0
+e 4 0
+a 6 0
+e 3 0
+3 1 0
+-3 4 0
+-4 0
+5 -2 6 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 6 4\nV 1 0\nV 5 0\n"
+        );
     }
 }
