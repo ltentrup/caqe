@@ -234,6 +234,16 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
                 .hide_possible_values(true)
                 .help("Controls whether conflict clauses should be build during solving"),
         )
+        .arg(
+            Arg::with_name("conflict-clause-expansion")
+                .long("--conflict-clause-expansion")
+                .default_value(default(default_options.conflict_clause_expansion))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether conflict clauses should be used in expansion refinement"),
+        )
     }
 
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
@@ -253,6 +263,8 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         options.strong_unsat_refinement =
             matches.value_of("strong-unsat-refinement").unwrap() == "1";
 
+        options.conflict_clause_expansion =
+            matches.value_of("conflict-clause-expansion").unwrap() == "1";
         options.expansion_refinement = matches.value_of("expansion-refinement").unwrap() == "1";
 
         options.refinement_literal_subsumption =
