@@ -1186,7 +1186,7 @@ impl ScopeSolverData {
         let conflicts = &mut global.conflicts;
 
         // store entry in conflicts
-        if options.conflict_clause_expansion {
+        if !self.is_universal && options.conflict_clause_expansion {
             conflicts.push((next.data.entry.clone(), self.level));
         }
 
@@ -2197,5 +2197,41 @@ e 3 0
             solver.qdimacs_output().dimacs(),
             "s cnf 1 6 4\nV 1 0\nV 5 0\n"
         );
+    }
+
+    #[test]
+    fn test_confl_clause_exp_regression2() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 19 15
+a 1 2 3 0
+e 4 0
+a 5 0
+e 6 7 8 9 0
+a 10 0
+e 11 0
+a 12 13 0
+e 14 15 16 17 18 19 0
+11 0
+2 14 0
+-12 14 0
+1 15 0
+3 17 0
+5 6 -11 -14 -15 -17 0
+10 13 18 0
+-10 19 0
+-5 16 0
+-2 7 0
+-1 8 0
+-3 -6 9 0
+-6 -7 -8 0
+-6 -9 0
+-4 -16 -17 -18 -19 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 19 15\n");
     }
 }
