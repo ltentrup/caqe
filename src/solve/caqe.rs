@@ -1,6 +1,7 @@
 use super::super::matrix::hierarchical::*;
 use super::super::parse::qdimacs;
 use super::super::*;
+use crate::literal::Assignment;
 use bit_vec::BitVec;
 use cryptominisat::*;
 use log::{debug, info, trace};
@@ -22,6 +23,7 @@ pub struct CaqeSolverOptions {
     pub dependency_schemes: bool,
     pub build_conflict_clauses: bool,
     pub conflict_clause_expansion: bool,
+    pub flip_assignments_from_sat_solver: bool,
 }
 
 pub struct CaqeSolver<'a> {
@@ -69,7 +71,10 @@ struct ScopeSolverData {
     max_clauses: BitVec,
 
     /// Stores the clauses which are relevant, i.e., belong to the current branch in quantifier prefix tree
+    /// ... with removing the clause when the maximal influence is reached
     relevant_clauses: BitVec,
+    /// ... without removing clauses
+    clause_tree_branch: BitVec,
 
     /// stores the assumptions given to sat solver
     sat_solver_assumptions: Vec<Lit>,
@@ -82,12 +87,18 @@ struct ScopeSolverData {
     strong_unsat_cache: FxHashMap<ClauseId, (Lit, bool)>,
     conjunction: Vec<ClauseId>,
 
+    /// stores the previous universal assignment in order to determine progress
+    prev_assignment: Option<Assignment>,
+
     /// store partially expanded variables
     /// maps a variable and a cube representing the assignment of its dependencies to a SAT solver literal
     expanded: FxHashMap<(Variable, Vec<Literal>), Lit>,
+    /// previous expansions
     expansions: Vec<FxHashMap<Variable, bool>>,
     /// stores the index of the conflict (global vec `conflicts`) that is next to be used in expansion refinement
     next_conflict: usize,
+    /// the current, i.e., not yet completely refutation, expansion tree
+    current_expansions: Vec<FxHashMap<Variable, bool>>,
 
     /// stores the result of recursive calls to branches
     sub_result: SolverResult,
@@ -237,6 +248,7 @@ impl Default for CaqeSolverOptions {
             dependency_schemes: false,
             build_conflict_clauses: false,
             conflict_clause_expansion: true,
+            flip_assignments_from_sat_solver: false,
         }
     }
 }
@@ -275,6 +287,7 @@ impl ScopeRecursiveSolver {
         next: Vec<Box<ScopeRecursiveSolver>>,
     ) -> ScopeRecursiveSolver {
         let mut relevant_clauses = BitVec::from_elem(matrix.clauses.len(), false);
+        let mut clause_tree_branch = BitVec::from_elem(matrix.clauses.len(), false);
         for next_scope in next.iter() {
             #[cfg(debug_assertions)]
             {
@@ -284,9 +297,18 @@ impl ScopeRecursiveSolver {
                 assert!(copy.none());
             }
             relevant_clauses.union(&next_scope.data.relevant_clauses);
+
+            #[cfg(debug_assertions)]
+            {
+                // the branches have pairwise disjoint relevant clauses
+                let mut copy = clause_tree_branch.clone();
+                copy.intersect(&next_scope.data.clause_tree_branch);
+                assert!(copy.none());
+            }
+            clause_tree_branch.union(&next_scope.data.clause_tree_branch);
         }
         let mut candidate = ScopeRecursiveSolver {
-            data: ScopeSolverData::new(matrix, scope, relevant_clauses),
+            data: ScopeSolverData::new(matrix, scope, relevant_clauses, clause_tree_branch),
             next: next,
         };
 
@@ -412,6 +434,12 @@ impl ScopeRecursiveSolver {
         };
         debug_assert!(good_result != bad_result);
 
+        if !current.is_universal && global.options.expansion_refinement {
+            // move old expansion assignments
+            let prev = std::mem::replace(&mut current.current_expansions, Vec::new());
+            current.expansions.extend(prev);
+        }
+
         loop {
             debug!("");
             info!(
@@ -437,7 +465,7 @@ impl ScopeRecursiveSolver {
                         return good_result;
                     }
 
-                    current.get_assumptions(matrix, next);
+                    current.get_assumptions(matrix, next, &global.options);
 
                     #[cfg(feature = "statistics")]
                     timer.stop();
@@ -453,6 +481,7 @@ impl ScopeRecursiveSolver {
                             let mut _timer =
                                 current.statistics.start(SolverScopeEvents::Refinement);
 
+                            current.update_expansion_tree(matrix, scope, global);
                             if !current.is_influenced_by_witness(matrix, scope) {
                                 // copy witness
                                 current.entry.clear();
@@ -476,7 +505,7 @@ impl ScopeRecursiveSolver {
                         }
                         // apply entry optimization
                         if current.is_universal {
-                            current.unsat_propagation();
+                            current.unsat_propagation(matrix);
                         } else {
                             current.entry_minimization(matrix);
                         }
@@ -594,7 +623,12 @@ impl SatAndTranslation {
 }
 
 impl ScopeSolverData {
-    fn new(matrix: &QMatrix, scope: &Scope, relevant_clauses: BitVec) -> ScopeSolverData {
+    fn new(
+        matrix: &QMatrix,
+        scope: &Scope,
+        relevant_clauses: BitVec,
+        clause_tree_branch: BitVec,
+    ) -> ScopeSolverData {
         // assign all variables initially to zero, needed for expansion refinement
         let mut assignments = FxHashMap::default();
         for &variable in scope.variables.iter() {
@@ -607,15 +641,18 @@ impl ScopeSolverData {
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
             relevant_clauses: relevant_clauses,
+            clause_tree_branch: clause_tree_branch,
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.quant == Quantifier::Universal,
             scope_id: scope.id,
             level: scope.level,
             strong_unsat_cache: FxHashMap::default(),
             conjunction: Vec::new(),
+            prev_assignment: None,
             expanded: FxHashMap::default(),
             expansions: Vec::new(),
             next_conflict: 0,
+            current_expansions: Vec::new(),
             sub_result: SolverResult::Unknown,
             #[cfg(feature = "statistics")]
             statistics: TimingStats::new(),
@@ -645,6 +682,7 @@ impl ScopeSolverData {
                     debug_assert!(self.sat.variable_to_sat.contains_key(&literal.variable()));
                     debug_assert!(info.level == self.level);
                     self.relevant_clauses.set(clause_id as usize, true);
+                    self.clause_tree_branch.set(clause_id as usize, true);
                     current = Some(literal);
                     contains_variables = true;
                     sat_clause.push(self.sat.lit_to_sat_lit(literal));
@@ -823,6 +861,7 @@ impl ScopeSolverData {
                     continue;
                 }
                 self.relevant_clauses.set(clause_id as usize, true);
+                self.clause_tree_branch.set(clause_id as usize, true);
                 num_scope_variables += 1;
                 if single_literal.is_none() {
                     single_literal = Some(literal);
@@ -1006,95 +1045,175 @@ impl ScopeSolverData {
         debug!("assignment {}", debug_print);
     }
 
-    fn get_assumptions(&mut self, matrix: &QMatrix, next: &mut Vec<Box<ScopeRecursiveSolver>>) {
+    fn get_assumptions(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut Vec<Box<ScopeRecursiveSolver>>,
+        options: &CaqeSolverOptions,
+    ) {
         trace!("get_assumptions");
 
         // assumptions in `next` were already cleared in check_candidate_exists
 
+        if !self.is_universal {
+            self.get_existential_assumptions(matrix, next, options);
+        } else {
+            // universal quantifier
+            self.get_universal_assumptions(matrix, next, options);
+        }
+    }
+
+    fn get_existential_assumptions(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut Vec<Box<ScopeRecursiveSolver>>,
+        options: &CaqeSolverOptions,
+    ) {
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
-        if !self.is_universal {
-            for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
-                if self.sat.sat.is_true(b_lit) {
-                    next.iter_mut().for_each(|ref mut scope| {
-                        scope.data.entry.set(clause_id as usize, true);
-                    });
-                    continue;
-                }
-                /*debug_assert!(
-                    !self.entry[clause_id as usize] || assumptions[clause_id as usize],
-                    "entry -> assumption"
-                );*/
+        if options.flip_assignments_from_sat_solver {
+            for variable in self.variables.iter() {
+                let value = self.assignments[variable];
+                let literal = Literal::new(*variable, !value);
 
-                if self.entry[clause_id as usize] {
-                    //debug_assert!(assumptions[clause_id as usize]);
-                    continue;
-                }
-
-                // assumption literal was set, but it may be still true that the clause is satisfied
-                let clause = &matrix.clauses[clause_id as usize];
-                if clause.is_satisfied_by_assignment(&self.assignments) {
-                    next.iter_mut().for_each(|ref mut scope| {
-                        scope.data.entry.set(clause_id as usize, true);
-                    });
-                    continue;
-                }
-
-                #[cfg(debug_assertions)]
-                debug_print.push_str(&format!(" b{}", clause_id));
-            }
-        } else {
-            for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
-                if self.sat.sat.is_true(b_lit) {
-                    continue;
-                }
-
-                // assumption literal was set
-                // check if clause is falsified by current level
-                let clause = &matrix.clauses[clause_id as usize];
-                let mut falsified = true;
-                let mut nonempty = false;
-
-                for literal in clause.iter() {
-                    if !self.sat.variable_to_sat.contains_key(&literal.variable()) {
-                        // not a variable of current level
+                // check if assignment is needed, i.e., it can flip a bit in entry
+                let mut flip_improves_entry = false;
+                for &clause_id in matrix.occurrences(literal) {
+                    if clause_id as usize >= self.entry.len() {
+                        // clause was added to matrix but is not yet contained in solver
                         continue;
                     }
-                    nonempty = true;
-                    let value = self.assignments[&literal.variable()];
-                    if value && !literal.signed() || !value && literal.signed() {
-                        falsified = false;
+
+                    if !self.entry[clause_id as usize] {
+                        flip_improves_entry = false;
                         break;
                     }
                 }
-                if nonempty && falsified {
-                    // depending on t-literal, the assumption is already set
-                    continue;
-                    /*if self.t_literals.contains_key(&clause_id) {
-                        if !self.entry[clause_id as usize] {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }*/
+                if flip_improves_entry {
+                    //panic!("variable {} with val {}", variable, literal.dimacs());
+                    *self.assignments.get_mut(variable).unwrap() = !value;
                 }
-                if !nonempty {
-                    debug_assert!(self.sat.t_literals.get(&clause_id).is_some());
-                    // we have already copied the value by copying current entry
-                    continue;
-                    /*if !self.entry[clause_id as usize] {
-                        continue;
-                    }*/
-                }
+            }
+        }
 
+        for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
+            if self.sat.sat.is_true(b_lit) {
                 next.iter_mut().for_each(|ref mut scope| {
                     scope.data.entry.set(clause_id as usize, true);
                 });
-
-                #[cfg(debug_assertions)]
-                debug_print.push_str(&format!(" b{}", clause_id));
+                continue;
             }
+            /*debug_assert!(
+                !self.entry[clause_id as usize] || assumptions[clause_id as usize],
+                "entry -> assumption"
+            );*/
+
+            if self.entry[clause_id as usize] {
+                //debug_assert!(assumptions[clause_id as usize]);
+                continue;
+            }
+
+            // assumption literal was set, but it may be still true that the clause is satisfied
+            let clause = &matrix.clauses[clause_id as usize];
+            if clause.is_satisfied_by_assignment(&self.assignments) {
+                next.iter_mut().for_each(|ref mut scope| {
+                    scope.data.entry.set(clause_id as usize, true);
+                });
+                continue;
+            }
+
+            #[cfg(debug_assertions)]
+            debug_print.push_str(&format!(" b{}", clause_id));
+        }
+
+        #[cfg(debug_assertions)]
+        debug!("assumptions: {}", debug_print);
+    }
+
+    fn get_universal_assumptions(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut Vec<Box<ScopeRecursiveSolver>>,
+        options: &CaqeSolverOptions,
+    ) {
+        #[cfg(debug_assertions)]
+        let mut debug_print = String::new();
+
+        if options.flip_assignments_from_sat_solver {
+            for variable in self.variables.iter() {
+                let value = self.assignments[variable];
+                let literal = Literal::new(*variable, !value);
+
+                // check if assignment is needed, i.e., it can flip a bit in entry
+                let mut flip_worsen_entry = false;
+                for &clause_id in matrix.occurrences(-literal) {
+                    if clause_id as usize >= self.entry.len() {
+                        // clause was added to matrix but is not yet contained in solver
+                        continue;
+                    }
+
+                    if !self.entry[clause_id as usize] {
+                        flip_worsen_entry = true;
+                        break;
+                    }
+                }
+                if !flip_worsen_entry {
+                    //panic!("variable {} with val {}", variable, literal.dimacs());
+                    *self.assignments.get_mut(variable).unwrap() = !value;
+                }
+            }
+        }
+
+        for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
+            if self.sat.sat.is_true(b_lit) {
+                continue;
+            }
+
+            // assumption literal was set
+            // check if clause is falsified by current level
+            let clause = &matrix.clauses[clause_id as usize];
+            let mut falsified = true;
+            let mut nonempty = false;
+
+            for literal in clause.iter() {
+                if !self.sat.variable_to_sat.contains_key(&literal.variable()) {
+                    // not a variable of current level
+                    continue;
+                }
+                nonempty = true;
+                let value = self.assignments[&literal.variable()];
+                if value && !literal.signed() || !value && literal.signed() {
+                    falsified = false;
+                    break;
+                }
+            }
+            if nonempty && falsified {
+                // depending on t-literal, the assumption is already set
+                continue;
+                /*if self.t_literals.contains_key(&clause_id) {
+                    if !self.entry[clause_id as usize] {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }*/
+            }
+            if !nonempty {
+                debug_assert!(self.sat.t_literals.get(&clause_id).is_some());
+                // we have already copied the value by copying current entry
+                continue;
+                /*if !self.entry[clause_id as usize] {
+                    continue;
+                }*/
+            }
+
+            next.iter_mut().for_each(|ref mut scope| {
+                scope.data.entry.set(clause_id as usize, true);
+            });
+
+            #[cfg(debug_assertions)]
+            debug_print.push_str(&format!(" b{}", clause_id));
         }
 
         #[cfg(debug_assertions)]
@@ -1174,6 +1293,35 @@ impl ScopeSolverData {
         false
     }
 
+    fn update_expansion_tree(
+        &mut self,
+        matrix: &QMatrix,
+        next: &mut ScopeRecursiveSolver,
+        global: &mut GlobalSolverData,
+    ) {
+        trace!("update expansion tree");
+        if !self.is_universal {
+            // store universal assignment
+            debug_assert!(next.data.is_universal);
+            debug_assert_eq!(next.next.len(), 1);
+            let next_exist = &next.next[0].data;
+            let univ_assignment = &next.data.assignments;
+            for assignment in &next_exist.current_expansions {
+                let mut assignment = assignment.clone();
+                assignment.extend(univ_assignment);
+                let copy: Assignment = assignment.clone().into();
+                //println!("x {:?}", copy);
+                self.current_expansions.push(assignment);
+            }
+            if next.next[0].next.is_empty() {
+                // base case
+                let copy: Assignment = univ_assignment.clone().into();
+                //println!("y {:?}", copy);
+                self.current_expansions.push(univ_assignment.clone());
+            }
+        }
+    }
+
     fn refine(
         &mut self,
         matrix: &QMatrix,
@@ -1185,13 +1333,35 @@ impl ScopeSolverData {
         let options = &global.options;
         let conflicts = &mut global.conflicts;
 
+        #[cfg(debug_assertions)]
+        {
+            if !self.is_universal {
+                let current_univ_assignment: Assignment =
+                    next.get_universal_assignmemnt(FxHashMap::default()).into();
+                if let Some(prev_assignment) = &self.prev_assignment {
+                    print!("h{} ", prev_assignment.hamming(&current_univ_assignment));
+                    if !self.current_expansions.is_empty() {
+                        assert_ne!(*prev_assignment, current_univ_assignment);
+                    }
+                }
+                if !self.current_expansions.is_empty() {
+                    self.prev_assignment = Some(current_univ_assignment);
+                }
+            }
+        }
+
         // store entry in conflicts
         if !self.is_universal && options.conflict_clause_expansion {
             conflicts.push((next.data.entry.clone(), self.level));
         }
 
         if options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
-            self.expansion_refinement(matrix, options, next, conflicts);
+            //debug_assert!(!self.current_expansions.is_empty());
+            for assignment in self.current_expansions.clone() {
+                let copy: Assignment = assignment.clone().into();
+                //println!("exp {:?}", copy);
+                self.expansion_refinement(matrix, options, next, conflicts, &assignment);
+            }
         }
 
         if !self.is_universal
@@ -1411,9 +1581,10 @@ impl ScopeSolverData {
         options: &CaqeSolverOptions,
         next: &mut ScopeRecursiveSolver,
         conflicts: &mut Vec<(BitVec, u32)>,
+        universal_assignment: &FxHashMap<Variable, bool>,
     ) {
         trace!("expansion_refinement");
-        let universal_assignment = next.get_universal_assignmemnt(FxHashMap::default());
+        //let universal_assignment = next.get_universal_assignmemnt(FxHashMap::default());
         let (data, next) = next.split();
         debug_assert!(data.is_universal);
         debug_assert_eq!(next.len(), 1);
@@ -1425,16 +1596,20 @@ impl ScopeSolverData {
                 // clause was added to matrix, but not yet contained in solver
                 continue;
             }
-            if !next.data.relevant_clauses[i] {
+            if !next.data.clause_tree_branch[i] {
                 continue;
             }
 
-            self.expand_clause(matrix, i as ClauseId, clause, &universal_assignment);
+            self.expand_clause(matrix, data, i as ClauseId, clause, &universal_assignment);
         }
 
         if !options.conflict_clause_expansion {
             return;
         }
+
+        return;
+
+        /*
 
         // build expansions for new conflict clauses and previous assignments (not including the current one)
         if self.next_conflict < conflicts.len() {
@@ -1461,12 +1636,13 @@ impl ScopeSolverData {
             );
         }
 
-        self.next_conflict = conflicts.len();
+        self.next_conflict = conflicts.len();*/
     }
 
     fn expand_clause(
         &mut self,
         matrix: &QMatrix,
+        data: &ScopeSolverData,
         clause_id: ClauseId,
         clause: &Clause,
         universal_assignment: &FxHashMap<Variable, bool>,
@@ -1475,6 +1651,10 @@ impl ScopeSolverData {
         if clause.is_satisfied_by_assignment(&universal_assignment) {
             return;
         }
+
+        debug_assert!(self.clause_tree_branch[clause_id as usize]);
+
+        //println!("{}", clause.dimacs());
 
         let sat = &mut self.sat;
         let sat_clause = &mut self.sat_solver_assumptions;
@@ -1560,13 +1740,6 @@ impl ScopeSolverData {
         let sat_clause = &mut self.sat_solver_assumptions;
         sat_clause.clear();
 
-        // get next scope to determine relevant scopes
-        let next_scope_id = matrix.prefix.next_scopes[self.scope_id.to_usize()]
-            .iter()
-            .skip_while(|s| **s != data.scope_id)
-            .skip_while(|s| **s == data.scope_id)
-            .next();
-
         let universal_assignment = &self.expansions[universal_assignment];
 
         // build expansion for conflict clause
@@ -1574,6 +1747,10 @@ impl ScopeSolverData {
         let mut needs_b_lit = Vec::new();
         for (i, _) in conflict.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
+
+            if !self.clause_tree_branch[i] {
+                return;
+            }
 
             // check if the universal assignment satisfies the clause
             if clause.is_satisfied_by_assignment(&universal_assignment) {
@@ -1603,16 +1780,6 @@ impl ScopeSolverData {
                     // thus, the following assertion does not hold
                     //assert!(universal_assignment.contains_key(&literal.variable()));
                     continue;
-                }
-                if info.scope_id.unwrap() < data.scope_id {
-                    // not relevant for the current assignment
-                    continue;
-                }
-                if let Some(next) = next_scope_id {
-                    if info.scope_id.unwrap() >= *next {
-                        // not relevant for the current assignment
-                        continue;
-                    }
                 }
                 debug_assert!(info.level > self.level);
                 debug_assert!(info.level <= max_level);
@@ -1679,7 +1846,7 @@ impl ScopeSolverData {
     }
 
     /// filters those clauses that are only influenced by this quantifier (or inner)
-    fn unsat_propagation(&mut self) {
+    fn unsat_propagation(&mut self, matrix: &QMatrix) {
         self.entry.difference(&self.max_clauses);
     }
 

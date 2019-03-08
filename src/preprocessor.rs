@@ -1,6 +1,6 @@
-use super::*;
 use super::matrix::hierarchical::*;
 use super::parse::qdimacs;
+use super::*;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;

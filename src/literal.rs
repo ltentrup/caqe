@@ -1,3 +1,4 @@
+use rustc_hash::FxHashMap;
 use std::ops;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
@@ -7,6 +8,9 @@ pub struct Variable(u32);
 pub struct Literal {
     x: u32,
 }
+
+#[derive(PartialEq, Eq, Clone)]
+pub struct Assignment(FxHashMap<Variable, bool>);
 
 impl Into<u32> for Variable {
     fn into(self) -> u32 {
@@ -99,6 +103,34 @@ impl std::fmt::Debug for Literal {
 impl std::fmt::Display for Variable {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "{}", self.0)
+    }
+}
+
+impl Assignment {
+    pub(crate) fn hamming(&self, other: &Assignment) -> u32 {
+        let mut count = 0;
+        for (var, &val) in &self.0 {
+            if other.0[var] != val {
+                count += 1;
+            }
+        }
+        count
+    }
+}
+
+impl From<FxHashMap<Variable, bool>> for Assignment {
+    fn from(map: FxHashMap<Variable, bool>) -> Assignment {
+        Assignment(map)
+    }
+}
+
+impl std::fmt::Debug for Assignment {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        for (var, val) in &self.0 {
+            let x = Literal::new(*var, !val);
+            write!(f, "{} ", x.dimacs())?;
+        }
+        Ok(())
     }
 }
 

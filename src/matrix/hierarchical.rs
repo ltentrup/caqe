@@ -341,7 +341,7 @@ impl Matrix<HierarchicalPrefix> {
 
         // post-processing: repair invariants
         self.prefix.fix_levels();
-        self.prefix.renumber_scopes();
+        //self.prefix.renumber_scopes();
 
         //self.prefix.print_dot_repr();
 
@@ -875,7 +875,7 @@ impl HierarchicalPrefix {
                 info
             );
         }
-        let mut prev_scope_id = ScopeId(0);
+        /*let mut prev_scope_id = ScopeId(0);
         for &next_scope_id in &self.next_scopes[scope_id.to_usize()] {
             self.check_invariants_recursive(next_scope_id);
 
@@ -883,7 +883,7 @@ impl HierarchicalPrefix {
             assert!(next_scope_id > scope_id);
             assert!(next_scope_id > prev_scope_id);
             prev_scope_id = next_scope_id;
-        }
+        }*/
     }
 }
 
