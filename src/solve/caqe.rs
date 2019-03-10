@@ -1358,7 +1358,7 @@ impl ScopeSolverData {
         if options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
             //debug_assert!(!self.current_expansions.is_empty());
             for assignment in self.current_expansions.clone() {
-                let copy: Assignment = assignment.clone().into();
+                //let copy: Assignment = assignment.clone().into();
                 //println!("exp {:?}", copy);
                 self.expansion_refinement(matrix, options, next, conflicts, &assignment);
             }
@@ -1599,6 +1599,30 @@ impl ScopeSolverData {
             if !next.data.clause_tree_branch[i] {
                 continue;
             }
+            // check if assignment belongs to a different path in the prefix tree
+            // TODO: needs some optimization/caching
+            let mut wrong_tree_clause = false;
+            for (&var, _) in universal_assignment {
+                let info = matrix.prefix.variables().get(var);
+                for &literal in clause.iter() {
+                    let einfo = matrix.prefix.variables().get(literal.variable());
+                    if !einfo.is_existential() {
+                        continue;
+                    } else {
+                        if !universal_assignment.contains_key(&var) {
+                            wrong_tree_clause = true;
+                        }
+                    }
+                    if einfo.level >= info.level
+                        && !matrix.prefix.depends_on(literal.variable(), var)
+                    {
+                        wrong_tree_clause = true;
+                    }
+                }
+            }
+            if wrong_tree_clause {
+                continue;
+            }
 
             self.expand_clause(matrix, data, i as ClauseId, clause, &universal_assignment);
         }
@@ -1655,6 +1679,7 @@ impl ScopeSolverData {
         debug_assert!(self.clause_tree_branch[clause_id as usize]);
 
         //println!("{}", clause.dimacs());
+        //println!("{:?}", universal_assignment);
 
         let sat = &mut self.sat;
         let sat_clause = &mut self.sat_solver_assumptions;
@@ -2400,5 +2425,30 @@ e 14 15 16 17 18 19 0
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 19 15\n");
+    }
+
+    #[test]
+    fn test_exp_miniscoping_regression() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 8 7
+e 1 0
+a 2 0
+e 3 0
+a 4 0
+e 5 6 7 8 0
+1 -3 -5 0
+5 0
+-2 6 0
+3 0
+4 8 0
+-4 7 0
+-3 -7 -8 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 8 7\nV 1 0\nV -2 0\n");
     }
 }
