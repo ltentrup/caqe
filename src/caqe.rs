@@ -144,7 +144,7 @@ pub struct CaqeSolverOptions {
 impl CaqeSolverOptions {
     pub fn new() -> CaqeSolverOptions {
         CaqeSolverOptions {
-            strong_unsat_refinement: true,
+            strong_unsat_refinement: false,
             expansion_refinement: true,
             refinement_literal_subsumption: false,
             abstraction_literal_optimization: true,
