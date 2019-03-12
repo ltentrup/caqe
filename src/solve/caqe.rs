@@ -24,6 +24,7 @@ pub struct CaqeSolverOptions {
     pub build_conflict_clauses: bool,
     pub conflict_clause_expansion: bool,
     pub flip_assignments_from_sat_solver: bool,
+    pub skip_level: bool,
 }
 
 pub struct CaqeSolver<'a> {
@@ -249,6 +250,7 @@ impl Default for CaqeSolverOptions {
             build_conflict_clauses: false,
             conflict_clause_expansion: true,
             flip_assignments_from_sat_solver: false,
+            skip_level: true,
         }
     }
 }
@@ -482,7 +484,7 @@ impl ScopeRecursiveSolver {
                                 current.statistics.start(SolverScopeEvents::Refinement);
 
                             current.update_expansion_tree(matrix, scope, global);
-                            if !current.is_influenced_by_witness(matrix, scope) {
+                            if global.options.skip_level && !current.is_influenced_by_witness(matrix, scope) {
                                 // copy witness
                                 current.entry.clear();
                                 current.entry.union(&scope.data.entry);
