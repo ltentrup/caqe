@@ -244,6 +244,26 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
                 .hide_possible_values(true)
                 .help("Controls whether conflict clauses should be used in expansion refinement"),
         )
+        .arg(
+            Arg::with_name("skip-levels")
+                .long("--skip-levels")
+                .default_value(default(default_options.skip_levels))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether levels should be skipped if they do not influence conflict"),
+        )
+        .arg(
+            Arg::with_name("abstraction-equivalence")
+                .long("--abstraction-equivalence")
+                .default_value(default(default_options.abstraction_equivalence))
+                .value_name("bool")
+                .takes_value(true)
+                .possible_values(&["0", "1"])
+                .hide_possible_values(true)
+                .help("Controls whether equivalence constraint should be used in abstraction"),
+        )
     }
 
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
@@ -276,6 +296,10 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
             == "1";
 
         options.build_conflict_clauses = matches.value_of("build-conflict-clauses").unwrap() == "1";
+
+        options.skip_levels = matches.value_of("skip-levels").unwrap() == "1";
+
+        options.abstraction_equivalence = matches.value_of("abstraction-equivalence").unwrap() == "1";
 
         CaqeSpecificSolverConfig {
             options,

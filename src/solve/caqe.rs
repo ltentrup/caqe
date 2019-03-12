@@ -7,6 +7,7 @@ use cryptominisat::*;
 use log::{debug, info, trace};
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
+use std::ops::Not as _;
 
 #[cfg(feature = "statistics")]
 use crate::utils::statistics::TimingStats;
@@ -24,7 +25,8 @@ pub struct CaqeSolverOptions {
     pub build_conflict_clauses: bool,
     pub conflict_clause_expansion: bool,
     pub flip_assignments_from_sat_solver: bool,
-    pub skip_level: bool,
+    pub skip_levels: bool,
+    pub abstraction_equivalence: bool,
 }
 
 pub struct CaqeSolver<'a> {
@@ -250,7 +252,8 @@ impl Default for CaqeSolverOptions {
             build_conflict_clauses: false,
             conflict_clause_expansion: true,
             flip_assignments_from_sat_solver: false,
-            skip_level: true,
+            skip_levels: true,
+            abstraction_equivalence: false,
         }
     }
 }
@@ -484,7 +487,7 @@ impl ScopeRecursiveSolver {
                                 current.statistics.start(SolverScopeEvents::Refinement);
 
                             current.update_expansion_tree(matrix, scope, global);
-                            if global.options.skip_level && !current.is_influenced_by_witness(matrix, scope) {
+                            if global.options.skip_levels && !current.is_influenced_by_witness(matrix, scope) {
                                 // copy witness
                                 current.entry.clear();
                                 current.entry.union(&scope.data.entry);
@@ -808,6 +811,11 @@ impl ScopeSolverData {
                     b_lit = self.sat.new_var();
                 } else {
                     b_lit = inner_equal_to.unwrap();
+                }
+                if options.abstraction_equivalence {
+                    for lit in sat_clause.iter() {
+                        self.sat.sat.add_clause(&[lit.not(), b_lit]);
+                    }
                 }
                 sat_clause.push(!b_lit);
                 self.sat.b_literals.insert(clause_id as ClauseId, b_lit);
