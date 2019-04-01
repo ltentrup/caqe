@@ -12,10 +12,10 @@ pub enum SolverResult {
 
 impl Dimacs for SolverResult {
     fn dimacs(&self) -> String {
-        match self {
-            &SolverResult::Satisfiable => String::from("1"),
-            &SolverResult::Unsatisfiable => String::from("0"),
-            &SolverResult::Unknown => String::from("-1"),
+        match *self {
+            SolverResult::Satisfiable => String::from("1"),
+            SolverResult::Unsatisfiable => String::from("0"),
+            SolverResult::Unknown => String::from("-1"),
         }
     }
 }

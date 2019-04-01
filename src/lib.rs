@@ -1,3 +1,5 @@
+#![warn(clippy::all, clippy::pedantic)]
+
 use clap::{App, Arg};
 use simplelog::{CombinedLogger, LevelFilter, TermLogger};
 use std::default::Default;
@@ -126,7 +128,7 @@ impl<T: SolverSpecificConfig> CommonSolverConfig<T> {
             None
         };
 
-        CommonSolverConfig {
+        Self {
             filename,
             verbosity,
             statistics,
@@ -271,9 +273,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         let qdimacs_output = matches.is_present("qdimacs-output");
         let preprocessor = match matches.value_of("preprocessor") {
             None => None,
-            Some(ref s) => {
-                Some(QBFPreprocessor::from_str(s).unwrap())
-            }
+            Some(ref s) => Some(QBFPreprocessor::from_str(s).unwrap()),
         };
 
         options.miniscoping = matches.value_of("miniscoping").unwrap() == "1";
@@ -299,9 +299,10 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
 
         options.skip_levels = matches.value_of("skip-levels").unwrap() == "1";
 
-        options.abstraction_equivalence = matches.value_of("abstraction-equivalence").unwrap() == "1";
+        options.abstraction_equivalence =
+            matches.value_of("abstraction-equivalence").unwrap() == "1";
 
-        CaqeSpecificSolverConfig {
+        Self {
             options,
             qdimacs_output,
             preprocessor,
@@ -484,7 +485,7 @@ pub struct DCaqeSpecificSolverConfig {
 
 impl Default for DCaqeSpecificSolverConfig {
     fn default() -> Self {
-        DCaqeSpecificSolverConfig {
+        Self {
             expansion_refinement: true,
             dependency_schemes: true,
         }
@@ -497,7 +498,7 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
         "DCAQE is a solver for dependency quantified Boolean formulas (DQBF) in DQDIMACS format.";
 
     fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
-        let default_options = DCaqeSpecificSolverConfig::default();
+        let default_options = Self::default();
 
         let default = |val| if val { "1" } else { "0" };
         app.arg(
@@ -526,7 +527,7 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
         let expansion_refinement = matches.value_of("expansion-refinement").unwrap() == "1";
         let dependency_schemes = matches.value_of("dependency-schemes").unwrap() == "1";
 
-        DCaqeSpecificSolverConfig {
+        Self {
             expansion_refinement,
             dependency_schemes,
         }

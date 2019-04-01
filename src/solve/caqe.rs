@@ -487,7 +487,9 @@ impl ScopeRecursiveSolver {
                                 current.statistics.start(SolverScopeEvents::Refinement);
 
                             current.update_expansion_tree(matrix, scope, global);
-                            if global.options.skip_levels && !current.is_influenced_by_witness(matrix, scope) {
+                            if global.options.skip_levels
+                                && !current.is_influenced_by_witness(matrix, scope)
+                            {
                                 // copy witness
                                 current.entry.clear();
                                 current.entry.union(&scope.data.entry);
@@ -555,7 +557,7 @@ impl ScopeRecursiveSolver {
 }
 
 impl SatAndTranslation {
-    fn new(matrix: &QMatrix) -> Self {
+    fn new(_matrix: &QMatrix) -> Self {
         let mut sat = cryptominisat::Solver::new();
         sat.set_num_threads(1);
         SatAndTranslation {
@@ -1305,9 +1307,9 @@ impl ScopeSolverData {
 
     fn update_expansion_tree(
         &mut self,
-        matrix: &QMatrix,
+        _matrix: &QMatrix,
         next: &mut ScopeRecursiveSolver,
-        global: &mut GlobalSolverData,
+        _global: &mut GlobalSolverData,
     ) {
         trace!("update expansion tree");
         if !self.is_universal {
@@ -1319,13 +1321,13 @@ impl ScopeSolverData {
             for assignment in &next_exist.current_expansions {
                 let mut assignment = assignment.clone();
                 assignment.extend(univ_assignment);
-                let copy: Assignment = assignment.clone().into();
+                let _copy: Assignment = assignment.clone().into();
                 //println!("x {:?}", copy);
                 self.current_expansions.push(assignment);
             }
             if next.next[0].next.is_empty() {
                 // base case
-                let copy: Assignment = univ_assignment.clone().into();
+                let _copy: Assignment = univ_assignment.clone().into();
                 //println!("y {:?}", copy);
                 self.current_expansions.push(univ_assignment.clone());
             }
@@ -2459,6 +2461,9 @@ e 5 6 7 8 0
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
-        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 8 7\nV 1 0\nV -2 0\n");
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 8 7\nV 1 0\nV -2 0\n"
+        );
     }
 }

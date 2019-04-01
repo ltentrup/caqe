@@ -1,5 +1,4 @@
 use super::super::matrix::depenendcy::*;
-use super::super::parse::dqdimacs;
 use super::super::*;
 use bit_vec::BitVec;
 use cryptominisat::*;
@@ -1235,7 +1234,7 @@ impl Abstraction {
     fn add_b_lit_and_adapt_abstraction(
         clause_id: ClauseId,
         sat: &mut cryptominisat::Solver,
-        b_literals: &Vec<(ClauseId, Lit)>,
+        b_literals: &[(ClauseId, Lit)],
         t_literals: &mut Vec<(ClauseId, Lit)>,
         reverse_t_literals: &mut FxHashMap<u32, ClauseId>,
     ) -> Lit {
@@ -1496,8 +1495,8 @@ impl<T> MaxElements<T>
 where
     T: PartialOrd,
 {
-    fn new() -> MaxElements<T> {
-        MaxElements {
+    fn new() -> Self {
+        Self {
             elements: Vec::new(),
         }
     }
@@ -1519,8 +1518,7 @@ where
         self.elements
             .iter()
             .enumerate()
-            .filter(|(_, ele)| f(ele))
-            .map(|(i, _)| i)
+            .filter_map(|(i, ele)| if f(ele) { Some(i) } else { None })
             .next()
     }
 
@@ -1564,11 +1562,11 @@ struct SkolemFunctionLearner {
 
 /// Implements the part of learning the Skolem function during solving
 impl SkolemFunctionLearner {
-    fn new() -> SkolemFunctionLearner {
+    fn new() -> Self {
         let mut sat = cryptominisat::Solver::new();
         let incremental = sat.new_var();
         sat.add_clause(&[incremental]);
-        SkolemFunctionLearner {
+        Self {
             sat,
             incremental,
             variable2sat: FxHashMap::default(),
