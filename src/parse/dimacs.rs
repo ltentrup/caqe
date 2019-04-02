@@ -252,53 +252,62 @@ mod tests {
     #[test]
     fn test_lexer_simple() {
         let mut stream = DimacsTokenStream::new("p cnf 0 0\n");
-        assert_eq!(stream.next(), Ok(DimacsToken::Header));
-        assert_eq!(stream.next(), Ok(DimacsToken::Zero));
-        assert_eq!(stream.next(), Ok(DimacsToken::Zero));
-        assert_eq!(stream.next(), Ok(DimacsToken::EOL));
-        assert_eq!(stream.next(), Ok(DimacsToken::EOF));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Header));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Zero));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Zero));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::EOL));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::EOF));
     }
 
     #[test]
     fn test_lexer_all() {
         let mut stream = DimacsTokenStream::new("c comment\np cnf 0 0\ne a d\n-1 1 0\n");
-        assert_eq!(stream.next(), Ok(DimacsToken::Header));
-        assert_eq!(stream.next(), Ok(DimacsToken::Zero));
-        assert_eq!(stream.next(), Ok(DimacsToken::Zero));
-        assert_eq!(stream.next(), Ok(DimacsToken::EOL));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Header));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Zero));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Zero));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::EOL));
 
-        assert_eq!(stream.next(), Ok(DimacsToken::Quant(QuantKind::Exists)));
-        assert_eq!(stream.next(), Ok(DimacsToken::Quant(QuantKind::Forall)));
-        assert_eq!(stream.next(), Ok(DimacsToken::Quant(QuantKind::Henkin)));
-        assert_eq!(stream.next(), Ok(DimacsToken::EOL));
+        assert_eq!(
+            stream.next_token(),
+            Ok(DimacsToken::Quant(QuantKind::Exists))
+        );
+        assert_eq!(
+            stream.next_token(),
+            Ok(DimacsToken::Quant(QuantKind::Forall))
+        );
+        assert_eq!(
+            stream.next_token(),
+            Ok(DimacsToken::Quant(QuantKind::Henkin))
+        );
+        assert_eq!(stream.next_token(), Ok(DimacsToken::EOL));
 
-        assert_eq!(stream.next(), Ok(DimacsToken::Lit((-1).into())));
-        assert_eq!(stream.next(), Ok(DimacsToken::Lit(1.into())));
-        assert_eq!(stream.next(), Ok(DimacsToken::Zero));
-        assert_eq!(stream.next(), Ok(DimacsToken::EOL));
-        assert_eq!(stream.next(), Ok(DimacsToken::EOF));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Lit((-1).into())));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Lit(1.into())));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::Zero));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::EOL));
+        assert_eq!(stream.next_token(), Ok(DimacsToken::EOF));
     }
 
     #[test]
     fn test_lexer_error() {
         let mut stream = DimacsTokenStream::new("x");
-        assert!(stream.next().is_err());
+        assert!(stream.next_token().is_err());
 
         let mut stream = DimacsTokenStream::new("-a");
-        assert!(stream.next().is_err());
+        assert!(stream.next_token().is_err());
 
         let mut stream = DimacsTokenStream::new("- ");
-        assert!(stream.next().is_err());
+        assert!(stream.next_token().is_err());
 
         let mut stream = DimacsTokenStream::new("--1");
-        assert!(stream.next().is_err());
+        assert!(stream.next_token().is_err());
     }
 
     #[test]
     fn test_parse_matrix() {
         let mut lexer = DimacsTokenStream::new("-1  2 0\n2 -3 -4 0\n");
         let mut matrix = Matrix::<HierarchicalPrefix>::new(4, 2);
-        let current = lexer.next().unwrap();
+        let current = lexer.next_token().unwrap();
         assert!(parse_matrix(&mut lexer, &mut matrix, current, 2).is_ok());
         let mut clause_iter = matrix.clauses.iter();
         assert_eq!(
