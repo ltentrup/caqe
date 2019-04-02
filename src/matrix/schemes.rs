@@ -32,24 +32,24 @@ impl<P: Prefix> Matrix<P> {
             self.search_resolution_path(Literal::new(var, false), &mut seen_pos);
             self.search_resolution_path(Literal::new(var, true), &mut seen_neg);
 
-            for evar in 1..=self.prefix.variables().max_variable_id() {
-                let evar: Variable = evar.into();
-                let info = self.prefix.variables().get(evar);
+            for e_var in 1..=self.prefix.variables().max_variable_id() {
+                let e_var: Variable = e_var.into();
+                let info = self.prefix.variables().get(e_var);
                 if info.is_universal() {
                     continue;
                 }
-                if !self.prefix.depends_on(evar, var) {
+                if !self.prefix.depends_on(e_var, var) {
                     continue;
                 }
 
-                let pos = Literal::new(evar, false);
-                let neg = Literal::new(evar, true);
+                let pos = Literal::new(e_var, false);
+                let neg = Literal::new(e_var, true);
 
                 if (!seen_pos.contains(&pos) || !seen_neg.contains(&pos))
                     || (!seen_neg.contains(&pos) && !seen_pos.contains(&neg))
                 {
-                    self.prefix.mut_vars().get_mut(evar).remove_dependency(var);
-                    debug!("detected spurious dependency {} of {}", var, evar);
+                    self.prefix.mut_vars().get_mut(e_var).remove_dependency(var);
+                    debug!("detected spurious dependency {} of {}", var, e_var);
                     removed += 1;
                 }
             }

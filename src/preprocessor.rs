@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use std::str::FromStr;
 use tempfile::tempfile;
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
 pub enum QBFPreprocessor {
     Bloqqer,

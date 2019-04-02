@@ -6,6 +6,7 @@ use super::*;
 use std::error::Error;
 use std::str::Chars;
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Eq, PartialEq)]
 pub struct ParseError {
     pub msg: String,

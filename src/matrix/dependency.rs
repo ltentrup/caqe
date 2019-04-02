@@ -111,6 +111,7 @@ impl PartialOrd for Scope {
     }
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
 pub struct DependencyPrefix {
     variables: VariableStore<DQVariableInfo>,
@@ -217,11 +218,11 @@ impl DependencyPrefix {
         // sort scopes by superset inclusion
         let mut scopes: Vec<ScopeId> = (0..self.scopes.len()).collect();
         scopes.sort_unstable_by(|&scope, &other| {
-            let lhs = &self.scopes[scope];
-            let rhs = &self.scopes[other];
-            let res = match lhs.partial_cmp(rhs) {
+            let left = &self.scopes[scope];
+            let right = &self.scopes[other];
+            let res = match left.partial_cmp(right) {
                 Some(ord) => ord,
-                None => lhs.dependencies.len().cmp(&rhs.dependencies.len()),
+                None => left.dependencies.len().cmp(&right.dependencies.len()),
             };
             // reverse
             match res {

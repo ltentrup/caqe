@@ -17,7 +17,7 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, ParseError> {
 
 /// Parses the quantifier prefix of a QDIMACS file, e.g., `e 1 2\na 3 4\n`.
 /// Returns the first token *after* the matrix.
-pub fn parse_prefix(
+pub(crate) fn parse_prefix(
     lexer: &mut DimacsTokenStream,
     matrix: &mut Matrix<HierarchicalPrefix>,
 ) -> Result<DimacsToken, ParseError> {

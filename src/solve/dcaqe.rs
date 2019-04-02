@@ -1,4 +1,4 @@
-use super::super::matrix::depenendcy::*;
+use super::super::matrix::dependency::*;
 use super::super::*;
 use bit_vec::BitVec;
 use cryptominisat::*;
@@ -715,6 +715,7 @@ impl std::fmt::Display for SolverScopeEvents {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq)]
 enum AbstractionResult {
     CandidateFound,
@@ -819,7 +820,7 @@ impl Abstraction {
             abs.variable_to_sat.insert(variable, abs.sat.new_var());
         }
 
-        for (clause_id, clause) in matrix.clauses.iter().enumerate() {
+        for (clause_id, clause) in matrix.enumerate() {
             abs.encode_universal_clause(matrix, clause_id as ClauseId, clause, level_lookup);
         }
 
@@ -893,14 +894,8 @@ impl Abstraction {
             abs.variable_to_sat.insert(variable, abs.sat.new_var());
         }
 
-        for (clause_id, clause) in matrix.clauses.iter().enumerate() {
-            abs.encode_existential_clause(
-                matrix,
-                clause_id as ClauseId,
-                clause,
-                &mut sat_clause,
-                scope,
-            );
+        for (clause_id, clause) in matrix.enumerate() {
+            abs.encode_existential_clause(matrix, clause_id, clause, &mut sat_clause, scope);
         }
 
         debug!("Scope {}", scope_id);
@@ -1323,7 +1318,7 @@ impl Abstraction {
         let blocking_clause = &mut self.sat_solver_assumptions;
         let sat = &mut self.sat;
 
-        for (i, clause) in matrix.clauses.iter().enumerate() {
+        for (clause_id, clause) in matrix.enumerate() {
             // check if the universal assignment satisfies the clause
             if clause.is_satisfied_by_assignment(assignment) {
                 continue;
@@ -1398,7 +1393,6 @@ impl Abstraction {
                 continue;
             }
 
-            let clause_id = i as ClauseId;
             if self
                 .b_literals
                 .binary_search_by(|elem| elem.0.cmp(&clause_id))

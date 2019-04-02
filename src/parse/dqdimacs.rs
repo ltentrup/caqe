@@ -1,4 +1,4 @@
-use super::super::matrix::depenendcy::*;
+use super::super::matrix::dependency::*;
 use super::super::*;
 use super::dimacs::*;
 use super::ParseError;
@@ -16,7 +16,7 @@ pub fn parse(content: &str) -> Result<Matrix<DependencyPrefix>, ParseError> {
 
 /// Parses the quantifier prefix of a DQDIMACS file, e.g., `a 1 2\ne 3 0\nd 4 1\n`.
 /// Returns the first token *after* the matrix.
-pub fn parse_prefix(
+pub(crate) fn parse_prefix(
     lexer: &mut DimacsTokenStream,
     matrix: &mut Matrix<DependencyPrefix>,
 ) -> Result<DimacsToken, ParseError> {

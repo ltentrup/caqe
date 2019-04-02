@@ -36,6 +36,7 @@ impl From<u32> for Variable {
 }
 impl From<usize> for Variable {
     fn from(val: usize) -> Self {
+        #[allow(clippy::cast_possible_truncation)]
         Self(val as u32)
     }
 }
@@ -69,6 +70,7 @@ impl Literal {
     }
 
     pub fn dimacs(self) -> i32 {
+        #[allow(clippy::cast_possible_wrap)]
         let base = self.variable().0 as i32;
         if self.signed() {
             -base
@@ -89,6 +91,7 @@ impl ops::Neg for Literal {
 impl From<i32> for Literal {
     fn from(literal: i32) -> Self {
         let signed = literal < 0;
+        #[allow(clippy::cast_sign_loss)]
         let abs = Variable(literal.abs() as u32);
         Self::new(abs, signed)
     }

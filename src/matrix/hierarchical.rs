@@ -24,6 +24,7 @@ pub struct Scope {
     pub(crate) variables: Vec<Variable>,
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
 pub struct HierarchicalPrefix {
     /// storage of variables
@@ -50,6 +51,7 @@ impl std::fmt::Display for ScopeId {
 
 impl ScopeId {
     fn new(id: usize) -> Self {
+        #[allow(clippy::cast_possible_truncation)]
         Self(id as u32)
     }
 
@@ -589,11 +591,11 @@ impl Matrix<HierarchicalPrefix> {
                 "check if {} is connected with {}",
                 next_univ_scope_id, scope_id
             );
-            if !table.unioned(first, *nvar) {
+            if table.unioned(first, *nvar) {
+                true
+            } else {
                 scopes.push(next_univ_scope_id);
                 false
-            } else {
-                true
             }
         });
 
@@ -714,6 +716,7 @@ impl Matrix<HierarchicalPrefix> {
         // update clauses and occurrence list
         let variables = &mut self.prefix.variables;
         for (i, clause) in self.clauses.iter_mut().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
             let clause_id = i as ClauseId;
             // check if clause contains variables of inner group
             let needs_renaming = clause.iter().any(|&literal| {

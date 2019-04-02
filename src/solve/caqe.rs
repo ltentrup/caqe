@@ -37,6 +37,7 @@ pub enum ExpansionMode {
     Full,
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub struct CaqeSolver<'a> {
     matrix: &'a mut QMatrix,
     result: SolverResult,
@@ -141,8 +142,6 @@ impl<'a> CaqeSolver<'a> {
 
     #[cfg(feature = "statistics")]
     pub(crate) fn print_statistics(&self, statistics: Statistics) {
-        let mut iterations = 0;
-
         fn get_iterations_rec(scope: &ScopeRecursiveSolver) -> usize {
             let num = scope
                 .data
@@ -154,13 +153,15 @@ impl<'a> CaqeSolver<'a> {
                 .fold(0, |val, next| val + get_iterations_rec(next))
         }
 
-        for abstraction in self.abstraction.iter() {
+        let mut iterations = 0;
+
+        for abstraction in &self.abstraction {
             iterations += get_iterations_rec(abstraction);
         }
         println!("iterations: {}", iterations);
 
         if statistics == Statistics::Detailed {
-            for abstraction in self.abstraction.iter() {
+            for abstraction in &self.abstraction {
                 abstraction.print_statistics();
             }
         }
@@ -486,8 +487,7 @@ impl ScopeRecursiveSolver {
                             current.sub_result = bad_result;
 
                             #[cfg(feature = "statistics")]
-                            let mut _timer =
-                                current.statistics.start(SolverScopeEvents::Refinement);
+                            let mut timer = current.statistics.start(SolverScopeEvents::Refinement);
 
                             current.update_expansion_tree(matrix, scope, global);
                             if global.options.skip_levels
@@ -502,6 +502,9 @@ impl ScopeRecursiveSolver {
                             if global.options.build_conflict_clauses {
                                 current.extract_conflict_clause(matrix, scope);
                             }
+
+                            #[cfg(feature = "statistics")]
+                            timer.stop();
                         }
                     }
 
@@ -674,7 +677,7 @@ impl ScopeSolverData {
         sat_clause.clear();
 
         // build SAT instance for existential quantifier: abstract all literals that are not contained in quantifier into b- and t-literals
-        'next_clause: for (clause_id, clause) in matrix.clauses.iter().enumerate() {
+        'next_clause: for (clause_id, clause) in matrix.enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
             debug_assert!(sat_clause.is_empty());
 
@@ -730,7 +733,7 @@ impl ScopeSolverData {
             if options.abstraction_literal_optimization && need_b_lit && current.is_some() {
                 for &other_clause_id in matrix
                     .occurrences(current.unwrap())
-                    .filter(|&&id| id < clause_id as ClauseId)
+                    .filter(|&&id| id < clause_id)
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     let predicate = |l: &Literal| {
@@ -740,7 +743,7 @@ impl ScopeSolverData {
                     if clause.is_equal_wrt_predicate(other_clause, predicate) {
                         debug_assert!(need_b_lit);
                         if let Some(&b_lit) = self.sat.b_literals.get(&other_clause_id) {
-                            self.sat.b_literals.insert(clause_id as ClauseId, b_lit);
+                            self.sat.b_literals.insert(clause_id, b_lit);
                             sat_clause.clear();
                             continue 'next_clause;
                         }
@@ -750,7 +753,7 @@ impl ScopeSolverData {
             if false && options.abstraction_literal_optimization && outer.is_some() {
                 for &other_clause_id in matrix
                     .occurrences(outer.unwrap())
-                    .filter(|&&id| id < clause_id as ClauseId)
+                    .filter(|&&id| id < clause_id)
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     let predicate = |l: &Literal| {
@@ -774,7 +777,7 @@ impl ScopeSolverData {
             if false && options.abstraction_literal_optimization && inner.is_some() {
                 for &other_clause_id in matrix
                     .occurrences(inner.unwrap())
-                    .filter(|&&id| id < clause_id as ClauseId)
+                    .filter(|&&id| id < clause_id)
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
                     let predicate = |l: &Literal| {
@@ -800,10 +803,8 @@ impl ScopeSolverData {
                 if outer_equal_to.is_none() {
                     let t_lit = self.sat.new_var();
                     sat_clause.push(t_lit);
-                    self.sat.t_literals.insert(clause_id as ClauseId, t_lit);
-                    self.sat
-                        .reverse_t_literals
-                        .insert(t_lit.var(), clause_id as ClauseId);
+                    self.sat.t_literals.insert(clause_id, t_lit);
+                    self.sat.reverse_t_literals.insert(t_lit.var(), clause_id);
                 } else {
                     let t_lit = outer_equal_to.unwrap();
                     sat_clause.push(t_lit);
@@ -825,7 +826,7 @@ impl ScopeSolverData {
                     }
                 }
                 sat_clause.push(!b_lit);
-                self.sat.b_literals.insert(clause_id as ClauseId, b_lit);
+                self.sat.b_literals.insert(clause_id, b_lit);
             }
 
             debug_assert!(!sat_clause.is_empty());
@@ -834,7 +835,7 @@ impl ScopeSolverData {
 
             if !contains_inner_var {
                 debug_assert!(contains_variables);
-                self.max_clauses.set(clause_id, true);
+                self.max_clauses.set(clause_id as usize, true);
             }
         }
 
@@ -860,10 +861,8 @@ impl ScopeSolverData {
 
     fn new_universal(&mut self, matrix: &QMatrix, options: &SolverOptions, scope: &Scope) {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
-        'next_clause: for (clause_id, clause) in matrix.clauses.iter().enumerate() {
+        'next_clause: for (clause_id, clause) in matrix.enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
-
-            let clause_id = clause_id as ClauseId;
 
             let mut levels = MinMax::new();
 
@@ -984,7 +983,7 @@ impl ScopeSolverData {
     fn check_candidate_exists(&mut self, next: &mut Vec<ScopeRecursiveSolver>) -> Lbool {
         // we need to reset abstraction entries for next scopes, since some entries may be pushed down
         self.entry.intersect(&self.relevant_clauses);
-        for ref mut scope in next {
+        for scope in next {
             scope.data.entry.clone_from(&self.entry);
         }
 
@@ -1610,12 +1609,12 @@ impl ScopeSolverData {
         let next = &next[0];
 
         // create the refinement clauses
-        for (i, clause) in matrix.clauses.iter().enumerate() {
-            if i >= next.data.relevant_clauses.len() {
+        for (clause_id, clause) in matrix.enumerate() {
+            if clause_id as usize >= next.data.relevant_clauses.len() {
                 // clause was added to matrix, but not yet contained in solver
                 continue;
             }
-            if !next.data.clause_tree_branch[i] {
+            if !next.data.clause_tree_branch[clause_id as usize] {
                 continue;
             }
             // check if assignment belongs to a different path in the prefix tree
@@ -1624,14 +1623,14 @@ impl ScopeSolverData {
             for &var in universal_assignment.keys() {
                 let info = matrix.prefix.variables().get(var);
                 for &literal in clause.iter() {
-                    let einfo = matrix.prefix.variables().get(literal.variable());
-                    if !einfo.is_existential() {
+                    let e_info = matrix.prefix.variables().get(literal.variable());
+                    if !e_info.is_existential() {
                         continue;
                     }
                     if !universal_assignment.contains_key(&var) {
                         wrong_tree_clause = true;
                     }
-                    if einfo.level >= info.level
+                    if e_info.level >= info.level
                         && !matrix.prefix.depends_on(literal.variable(), var)
                     {
                         wrong_tree_clause = true;
@@ -1642,7 +1641,7 @@ impl ScopeSolverData {
                 continue;
             }
 
-            self.expand_clause(matrix, data, i as ClauseId, clause, &universal_assignment);
+            self.expand_clause(matrix, data, clause_id, clause, &universal_assignment);
         }
 
         if !options.conflict_clause_expansion {

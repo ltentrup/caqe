@@ -1,8 +1,9 @@
 use super::super::*;
 use super::{CharIterator, ParseError, SourcePos};
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Eq, PartialEq)]
-pub enum DimacsToken {
+pub(crate) enum DimacsToken {
     /// p cnf header
     Header,
 
@@ -45,6 +46,7 @@ pub enum QuantKind {
     Henkin,
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub struct DimacsTokenStream<'a> {
     chars: CharIterator<'a>,
 }
@@ -56,7 +58,7 @@ impl<'a> DimacsTokenStream<'a> {
         }
     }
 
-    pub fn next_token(&mut self) -> Result<DimacsToken, ParseError> {
+    pub(crate) fn next_token(&mut self) -> Result<DimacsToken, ParseError> {
         while let Some(c) = self.chars.next() {
             match c {
                 'c' => {
@@ -100,7 +102,7 @@ impl<'a> DimacsTokenStream<'a> {
         Ok(DimacsToken::EOF)
     }
 
-    pub fn expect_next(&mut self, token: &DimacsToken) -> Result<(), ParseError> {
+    pub(crate) fn expect_next(&mut self, token: &DimacsToken) -> Result<(), ParseError> {
         self.next_token().and_then(|next| {
             if next == *token {
                 Ok(())
@@ -113,7 +115,7 @@ impl<'a> DimacsTokenStream<'a> {
         })
     }
 
-    pub fn pos(&self) -> SourcePos {
+    pub(crate) fn pos(&self) -> SourcePos {
         self.chars.pos
     }
 }
@@ -181,7 +183,7 @@ pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), Par
     Ok((num_variables.into(), num_clauses.into()))
 }
 
-pub fn parse_matrix<P: Prefix>(
+pub(crate) fn parse_matrix<P: Prefix>(
     lexer: &mut DimacsTokenStream,
     matrix: &mut Matrix<P>,
     mut current: DimacsToken,
@@ -246,8 +248,8 @@ pub fn parse_matrix<P: Prefix>(
 #[cfg(test)]
 mod tests {
 
-    use super::matrix::hierarchical::HierarchicalPrefix;
     use super::*;
+    use crate::matrix::hierarchical::HierarchicalPrefix;
 
     #[test]
     fn test_lexer_simple() {

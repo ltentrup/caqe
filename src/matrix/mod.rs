@@ -2,7 +2,7 @@ use super::*;
 use bit_vec::BitVec;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-pub mod depenendcy;
+pub mod dependency;
 pub mod hierarchical;
 mod schemes;
 
@@ -47,6 +47,7 @@ impl<P: Prefix> Matrix<P> {
     }
 
     /// Adds a clause to the matrix and returns its `ClauseId`
+    #[allow(clippy::cast_possible_truncation)]
     pub fn add(&mut self, mut clause: Clause) -> ClauseId {
         self.prefix.reduce_universal(&mut clause);
         for &literal in clause.iter() {
@@ -70,6 +71,22 @@ impl<P: Prefix> Matrix<P> {
 
     pub fn conflict(&self) -> bool {
         self.conflict
+    }
+
+    pub fn enumerate(&self) -> impl Iterator<Item = (ClauseId, &Clause)> + '_ {
+        #[allow(clippy::cast_possible_truncation)]
+        self.clauses
+            .iter()
+            .enumerate()
+            .map(|(i, clause)| (i as ClauseId, clause))
+    }
+
+    pub fn enumerate_mut(&mut self) -> impl Iterator<Item = (ClauseId, &mut Clause)> + '_ {
+        #[allow(clippy::cast_possible_truncation)]
+        self.clauses
+            .iter_mut()
+            .enumerate()
+            .map(|(i, clause)| (i as ClauseId, clause))
     }
 }
 
@@ -193,10 +210,10 @@ e 3 4 0
 -3 -4 0
 1 2 4 0
 ";
-        let lit1 = Literal::new(1u32, false);
-        let lit2 = Literal::new(2u32, false);
-        let lit3 = Literal::new(3u32, false);
-        let lit4 = Literal::new(4u32, false);
+        let lit1 = Literal::new(1_u32, false);
+        let lit2 = Literal::new(2_u32, false);
+        let lit3 = Literal::new(3_u32, false);
+        let lit4 = Literal::new(4_u32, false);
         let matrix = parse::qdimacs::parse(&instance).unwrap();
         assert_eq!(matrix.occurrences(lit1).len(), 2);
         assert_eq!(matrix.occurrences(-lit1).len(), 1);
