@@ -89,8 +89,8 @@ impl VariableInfo for QVariableInfo {
 }
 
 impl Scope {
-    fn new(id: ScopeId, level: u32, quant: Quantifier) -> Scope {
-        Scope {
+    fn new(id: ScopeId, level: u32, quant: Quantifier) -> Self {
+        Self {
             id,
             level,
             quant,
@@ -98,6 +98,7 @@ impl Scope {
         }
     }
 
+    #[allow(dead_code)]
     pub fn contains(&self, variable: Variable) -> bool {
         self.variables.iter().any(|var| *var == variable)
     }
@@ -117,6 +118,7 @@ impl Dimacs for Scope {
 }
 
 impl Quantifier {
+    #[allow(dead_code)]
     pub fn swap(&self) -> Quantifier {
         match self {
             &Quantifier::Existential => Quantifier::Universal,
@@ -797,6 +799,7 @@ impl HierarchicalPrefix {
     }
 
     /// Ensures that scopes are numbered in pre-order w.r.t. the quantifier prefix tree
+    #[allow(dead_code)]
     fn renumber_scopes(&mut self) {
         fn renumber_scopes_recursive(
             variables: &mut VariableStore<QVariableInfo>,
@@ -857,12 +860,14 @@ impl HierarchicalPrefix {
     /// * the scope_id's are numbered in pre-order of the prefix tree
     ///
     /// panics if an invariant does not hold
+    #[cfg(feature = "debug_assertions")]
     fn check_invariants(&self) {
         self.roots
             .iter()
             .for_each(|&root| self.check_invariants_recursive(root));
     }
 
+    #[cfg(feature = "debug_assertions")]
     fn check_invariants_recursive(&self, scope_id: ScopeId) {
         let scope = &self.scopes[scope_id.to_usize()];
         for &var in &scope.variables {
@@ -945,6 +950,7 @@ impl<'a> dot::GraphWalk<'a, Nd, Ed> for &HierarchicalPrefix {
 
 // Dot representation
 impl HierarchicalPrefix {
+    #[allow(dead_code)]
     pub(crate) fn print_dot_repr(&self) {
         dot::render(&self, &mut std::io::stdout()).unwrap_or_else(|e| println!("{}", e));
     }

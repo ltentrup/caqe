@@ -15,9 +15,9 @@ use crate::utils::statistics::TimingStats;
 type QMatrix = Matrix<HierarchicalPrefix>;
 
 #[derive(Debug, Clone, Copy)]
-pub struct CaqeSolverOptions {
+pub struct SolverOptions {
     pub strong_unsat_refinement: bool,
-    pub expansion_refinement: bool,
+    pub expansion_refinement: Option<ExpansionMode>,
     pub refinement_literal_subsumption: bool,
     pub abstraction_literal_optimization: bool,
     pub miniscoping: bool,
@@ -27,6 +27,14 @@ pub struct CaqeSolverOptions {
     pub flip_assignments_from_sat_solver: bool,
     pub skip_levels: bool,
     pub abstraction_equivalence: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpansionMode {
+    /// Light expansion, i.e., innermost EAE quantifier only
+    Light,
+    /// Full expansion
+    Full,
 }
 
 pub struct CaqeSolver<'a> {
@@ -42,7 +50,7 @@ struct ScopeRecursiveSolver {
 }
 
 struct GlobalSolverData {
-    options: CaqeSolverOptions,
+    options: SolverOptions,
     conflicts: Vec<(BitVec, u32)>,
 }
 
@@ -112,10 +120,10 @@ struct ScopeSolverData {
 
 impl<'a> CaqeSolver<'a> {
     pub fn new(matrix: &mut QMatrix) -> CaqeSolver {
-        Self::new_with_options(matrix, CaqeSolverOptions::default())
+        Self::new_with_options(matrix, SolverOptions::default())
     }
 
-    pub fn new_with_options(matrix: &mut QMatrix, options: CaqeSolverOptions) -> CaqeSolver {
+    pub fn new_with_options(matrix: &mut QMatrix, options: SolverOptions) -> CaqeSolver {
         let mut abstractions = Vec::new();
         for scope_id in matrix.prefix.roots.iter() {
             abstractions.push(ScopeRecursiveSolver::init_abstraction_recursively(
@@ -240,11 +248,11 @@ impl<'a> super::Solver for CaqeSolver<'a> {
     }
 }
 
-impl Default for CaqeSolverOptions {
-    fn default() -> CaqeSolverOptions {
-        CaqeSolverOptions {
+impl Default for SolverOptions {
+    fn default() -> SolverOptions {
+        SolverOptions {
             strong_unsat_refinement: false,
-            expansion_refinement: true,
+            expansion_refinement: Some(ExpansionMode::Full),
             refinement_literal_subsumption: false,
             abstraction_literal_optimization: true,
             miniscoping: true,
@@ -259,7 +267,7 @@ impl Default for CaqeSolverOptions {
 }
 
 impl GlobalSolverData {
-    fn new(options: CaqeSolverOptions) -> GlobalSolverData {
+    fn new(options: SolverOptions) -> GlobalSolverData {
         GlobalSolverData {
             options,
             conflicts: Vec::new(),
@@ -287,7 +295,7 @@ impl std::fmt::Display for SolverScopeEvents {
 impl ScopeRecursiveSolver {
     fn new(
         matrix: &QMatrix,
-        options: &CaqeSolverOptions,
+        options: &SolverOptions,
         scope: &Scope,
         next: Vec<Box<ScopeRecursiveSolver>>,
     ) -> ScopeRecursiveSolver {
@@ -336,7 +344,7 @@ impl ScopeRecursiveSolver {
 
     fn init_abstraction_recursively(
         matrix: &QMatrix,
-        options: &CaqeSolverOptions,
+        options: &SolverOptions,
         scope_id: ScopeId,
     ) -> Box<ScopeRecursiveSolver> {
         let mut prev = Vec::new();
@@ -439,7 +447,7 @@ impl ScopeRecursiveSolver {
         };
         debug_assert!(good_result != bad_result);
 
-        if !current.is_universal && global.options.expansion_refinement {
+        if !current.is_universal && global.options.expansion_refinement.is_some() {
             // move old expansion assignments
             let prev = std::mem::replace(&mut current.current_expansions, Vec::new());
             current.expansions.extend(prev);
@@ -666,7 +674,7 @@ impl ScopeSolverData {
         }
     }
 
-    fn new_existential(&mut self, matrix: &QMatrix, options: &CaqeSolverOptions, scope: &Scope) {
+    fn new_existential(&mut self, matrix: &QMatrix, options: &SolverOptions, scope: &Scope) {
         let sat_clause = &mut self.sat_solver_assumptions;
         sat_clause.clear();
 
@@ -708,8 +716,8 @@ impl ScopeSolverData {
             let need_t_lit = contains_variables && contains_outer_var;
             let need_b_lit = contains_variables && contains_inner_var;
 
-            let mut outer_equal_to = None;
-            let mut inner_equal_to = None;
+            let outer_equal_to = None;
+            let inner_equal_to = None;
 
             if !contains_outer_var && !contains_variables && contains_inner_var {
                 // remove the clause from relevant clauses as current scope (nor any outer) influence it
@@ -853,7 +861,7 @@ impl ScopeSolverData {
         }
     }
 
-    fn new_universal(&mut self, matrix: &QMatrix, options: &CaqeSolverOptions, scope: &Scope) {
+    fn new_universal(&mut self, matrix: &QMatrix, options: &SolverOptions, scope: &Scope) {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
         'next_clause: for (clause_id, clause) in matrix.clauses.iter().enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
@@ -1061,7 +1069,7 @@ impl ScopeSolverData {
         &mut self,
         matrix: &QMatrix,
         next: &mut Vec<Box<ScopeRecursiveSolver>>,
-        options: &CaqeSolverOptions,
+        options: &SolverOptions,
     ) {
         trace!("get_assumptions");
 
@@ -1079,7 +1087,7 @@ impl ScopeSolverData {
         &mut self,
         matrix: &QMatrix,
         next: &mut Vec<Box<ScopeRecursiveSolver>>,
-        options: &CaqeSolverOptions,
+        options: &SolverOptions,
     ) {
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
@@ -1147,7 +1155,7 @@ impl ScopeSolverData {
         &mut self,
         matrix: &QMatrix,
         next: &mut Vec<Box<ScopeRecursiveSolver>>,
-        options: &CaqeSolverOptions,
+        options: &SolverOptions,
     ) {
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
@@ -1367,7 +1375,9 @@ impl ScopeSolverData {
             conflicts.push((next.data.entry.clone(), self.level));
         }
 
-        if options.expansion_refinement && self.is_expansion_refinement_applicable(next) {
+        if options.expansion_refinement.is_some()
+            && self.is_expansion_refinement_applicable(next, options)
+        {
             //debug_assert!(!self.current_expansions.is_empty());
             for assignment in self.current_expansions.clone() {
                 //let copy: Assignment = assignment.clone().into();
@@ -1484,7 +1494,7 @@ impl ScopeSolverData {
                 }
             }
 
-            debug_assert!(self.conjunction.len() > 0);
+            debug_assert!(!self.conjunction.is_empty());
             if self.conjunction.len() == 1 {
                 // do not need auxilliary variable
                 let clause_id = self.conjunction[0];
@@ -1497,7 +1507,7 @@ impl ScopeSolverData {
                 blocking_clause.push(aux_var);
                 self.strong_unsat_cache.insert(clause_id, (aux_var, true));
 
-                for &other_clause_id in self.conjunction.iter() {
+                for &other_clause_id in &self.conjunction {
                     let sat_lit = self.sat.add_b_lit_and_adapt_abstraction(other_clause_id);
                     self.sat.add_clause(&[!aux_var, sat_lit]);
                 }
@@ -1578,11 +1588,18 @@ impl ScopeSolverData {
         successful
     }
 
-    fn is_expansion_refinement_applicable(&self, next: &mut ScopeRecursiveSolver) -> bool {
+    fn is_expansion_refinement_applicable(
+        &self,
+        next: &mut ScopeRecursiveSolver,
+        options: &SolverOptions,
+    ) -> bool {
+        debug_assert!(options.expansion_refinement.is_some());
         if self.is_universal {
             return false;
         }
-        return true;
+        if options.expansion_refinement.unwrap() == ExpansionMode::Full {
+            return true;
+        }
         debug_assert_eq!(next.next.len(), 1, "scope {:?}", self.scope_id);
         next.next[0].as_ref().next.is_empty()
     }
@@ -1590,7 +1607,7 @@ impl ScopeSolverData {
     fn expansion_refinement(
         &mut self,
         matrix: &QMatrix,
-        options: &CaqeSolverOptions,
+        options: &SolverOptions,
         next: &mut ScopeRecursiveSolver,
         conflicts: &mut Vec<(BitVec, u32)>,
         universal_assignment: &FxHashMap<Variable, bool>,
@@ -1643,10 +1660,6 @@ impl ScopeSolverData {
             return;
         }
 
-        return;
-
-        /*
-
         // build expansions for new conflict clauses and previous assignments (not including the current one)
         if self.next_conflict < conflicts.len() {
             for conflict in conflicts.split_at(self.next_conflict).1 {
@@ -1659,7 +1672,7 @@ impl ScopeSolverData {
             }
         }
 
-        self.expansions.push(universal_assignment);
+        self.expansions.push(universal_assignment.clone());
 
         // build expansions for all conflict clauses with current assignment
         for conflict in conflicts.iter() {
@@ -1672,13 +1685,13 @@ impl ScopeSolverData {
             );
         }
 
-        self.next_conflict = conflicts.len();*/
+        self.next_conflict = conflicts.len();
     }
 
     fn expand_clause(
         &mut self,
         matrix: &QMatrix,
-        data: &ScopeSolverData,
+        _data: &ScopeSolverData,
         clause_id: ClauseId,
         clause: &Clause,
         universal_assignment: &FxHashMap<Variable, bool>,
@@ -1883,7 +1896,7 @@ impl ScopeSolverData {
     }
 
     /// filters those clauses that are only influenced by this quantifier (or inner)
-    fn unsat_propagation(&mut self, matrix: &QMatrix) {
+    fn unsat_propagation(&mut self, _matrix: &QMatrix) {
         self.entry.difference(&self.max_clauses);
     }
 

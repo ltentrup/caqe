@@ -39,7 +39,7 @@ pub mod parse;
 mod utils;
 
 pub mod solve;
-pub use crate::solve::caqe::{CaqeSolver, CaqeSolverOptions};
+pub use crate::solve::caqe::{CaqeSolver, ExpansionMode, SolverOptions};
 pub use crate::solve::dcaqe::DCaqeSolver;
 pub use crate::solve::{Solver, SolverResult};
 
@@ -139,7 +139,7 @@ impl<T: SolverSpecificConfig> CommonSolverConfig<T> {
 
 #[derive(Debug)]
 pub struct CaqeSpecificSolverConfig {
-    pub options: CaqeSolverOptions,
+    pub options: SolverOptions,
     pub qdimacs_output: bool,
     pub preprocessor: Option<QBFPreprocessor>,
 }
@@ -150,7 +150,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         "CAQE is a solver for quantified Boolean formulas (QBF) in QDIMACS format.";
 
     fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
-        let default_options = CaqeSolverOptions::default();
+        let default_options = SolverOptions::default();
 
         let default = |val| if val { "1" } else { "0" };
         app.arg(
@@ -199,11 +199,9 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         .arg(
             Arg::with_name("expansion-refinement")
                 .long("--expansion-refinement")
-                .default_value(default(default_options.expansion_refinement))
-                .value_name("bool")
+                .default_value("full")
                 .takes_value(true)
-                .possible_values(&["0", "1"])
-                .hide_possible_values(true)
+                .possible_values(&["0", "1", "none", "light", "full"])  // 0 and 1 for backwards compatibility
                 .help("Controls whether expansion refinement should be used"),
         )
         .arg(
@@ -269,7 +267,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
     }
 
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
-        let mut options = CaqeSolverOptions::default();
+        let mut options = SolverOptions::default();
         let qdimacs_output = matches.is_present("qdimacs-output");
         let preprocessor = match matches.value_of("preprocessor") {
             None => None,
@@ -285,7 +283,12 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
 
         options.conflict_clause_expansion =
             matches.value_of("conflict-clause-expansion").unwrap() == "1";
-        options.expansion_refinement = matches.value_of("expansion-refinement").unwrap() == "1";
+        options.expansion_refinement = match matches.value_of("expansion-refinement").unwrap() {
+            "0" | "none" => None,
+            "1" | "full" => Some(ExpansionMode::Full),
+            "light" => Some(ExpansionMode::Light),
+            _ => unreachable!(),
+        };
 
         options.refinement_literal_subsumption =
             matches.value_of("refinement-literal-subsumption").unwrap() == "1";

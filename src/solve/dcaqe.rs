@@ -13,7 +13,6 @@ type DQMatrix = Matrix<DependencyPrefix>;
 
 pub struct DCaqeSolver<'a> {
     matrix: &'a mut DQMatrix,
-    result: SolverResult,
     global: GlobalSolverData,
     levels: Vec<SolverLevel>,
 }
@@ -26,7 +25,6 @@ impl<'a> DCaqeSolver<'a> {
         let (levels, global) = Self::build_abstraction(matrix, config);
         DCaqeSolver {
             matrix,
-            result: SolverResult::Unknown,
             global,
             levels,
         }
@@ -1311,7 +1309,7 @@ impl Abstraction {
         &mut self,
         matrix: &DQMatrix,
         assignment: &FxHashMap<Variable, bool>,
-        level_lookup: &FxHashMap<Variable, usize>,
+        _level_lookup: &FxHashMap<Variable, usize>,
     ) {
         trace!("expansion refinement");
         debug_assert!(!assignment.is_empty());
@@ -1747,6 +1745,7 @@ impl SkolemFunctionLearner {
 mod tests {
 
     use super::*;
+    use crate::parse::dqdimacs;
     use crate::solve::Solver;
 
     #[test]

@@ -1,6 +1,5 @@
 pub mod dimacs;
 pub mod dqdimacs;
-pub mod qcir;
 pub mod qdimacs;
 
 use super::*;
@@ -87,45 +86,6 @@ impl<'a> CharIterator<'a> {
         }
     }
 
-    fn next_or_error(&mut self) -> Result<char, ParseError> {
-        if let Some(c) = self.next() {
-            Ok(c)
-        } else {
-            Err(ParseError {
-                msg: format!("Unexpected End-of-File"),
-                pos: self.pos,
-            })
-        }
-    }
-
-    fn peek(&self) -> &Option<char> {
-        &self.next_char
-    }
-
-    fn peek_or_error(&self) -> Result<&char, ParseError> {
-        if let Some(c) = self.peek() {
-            Ok(c)
-        } else {
-            Err(ParseError {
-                msg: format!("Unexpected End-of-File"),
-                pos: self.pos,
-            })
-        }
-    }
-
-    fn read_number(&mut self, first: char) -> Result<u32, ParseError> {
-        let mut val = first
-            .to_digit(10)
-            .expect("internal error, character has to be digit");
-        while let Some(digit) = self
-            .consume_if(|c| c.is_ascii_digit())
-            .and_then(|c| c.to_digit(10))
-        {
-            val = val * 10 + digit;
-        }
-        Ok(val)
-    }
-
     fn read_literal(&mut self, first: char) -> Result<Literal, ParseError> {
         let signed;
         let mut value;
@@ -165,35 +125,26 @@ impl<'a> CharIterator<'a> {
         } else {
             assert!(first == '-');
             return Err(ParseError {
-                msg: format!("Expect digits following `-` character"),
+                msg: "Expect digits following `-` character".to_string(),
                 pos: self.pos,
             });
         }
     }
 
-    fn read_identifier(&mut self, first: char) -> Result<String, ParseError> {
-        debug_assert!(first.is_ascii_alphabetic() || first == '_');
-        let mut value: String = first.to_string();
-        while let Some(c) = self.consume_if(|c| c.is_ascii_alphanumeric() || *c == '_') {
-            value.push(c);
-        }
-        Ok(value)
-    }
-
     fn expect_char(&mut self, expected: char) -> Result<(), ParseError> {
         match self.next() {
             None => Err(ParseError {
-                msg: format!("Unexpected end of input"),
+                msg: "Unexpected end of input".to_string(),
                 pos: self.pos,
             }),
             Some(c) => {
-                if c != expected {
+                if c == expected {
+                    Ok(())
+                } else {
                     Err(ParseError {
                         msg: format!("Expected character `{}`, but found `{}`", expected, c),
                         pos: self.pos,
                     })
-                } else {
-                    Ok(())
                 }
             }
         }
@@ -214,22 +165,6 @@ impl<'a> CharIterator<'a> {
             if !predicate(&c) {
                 break;
             }
-        }
-    }
-
-    fn consume_if<P>(&mut self, predicate: P) -> Option<char>
-    where
-        P: Fn(&char) -> bool,
-    {
-        let c = match self.peek() {
-            None => return None,
-            Some(c) => *c,
-        };
-        if predicate(&c) {
-            self.next();
-            Some(c)
-        } else {
-            None
         }
     }
 }
