@@ -31,7 +31,7 @@ pub enum DimacsToken {
 impl Into<Literal> for DimacsToken {
     fn into(self) -> Literal {
         match self {
-            DimacsToken::Zero => Literal::new(0u32, false),
+            DimacsToken::Zero => Literal::new(0_u32, false),
             DimacsToken::Lit(l) => l,
             _ => panic!("cannot convert {:?} into Literal", self),
         }
@@ -56,7 +56,7 @@ impl<'a> DimacsTokenStream<'a> {
         }
     }
 
-    pub fn next(&mut self) -> Result<DimacsToken, ParseError> {
+    pub fn next_token(&mut self) -> Result<DimacsToken, ParseError> {
         while let Some(c) = self.chars.next() {
             match c {
                 'c' => {
@@ -97,18 +97,18 @@ impl<'a> DimacsTokenStream<'a> {
             }
         }
         // end of file
-        return Ok(DimacsToken::EOF);
+        Ok(DimacsToken::EOF)
     }
 
-    pub fn expect_next(&mut self, token: DimacsToken) -> Result<(), ParseError> {
-        self.next().and_then(|next| {
-            if next != token {
+    pub fn expect_next(&mut self, token: &DimacsToken) -> Result<(), ParseError> {
+        self.next_token().and_then(|next| {
+            if next == *token {
+                Ok(())
+            } else {
                 Err(ParseError {
                     msg: format!("Expected token `{:?}` but found `{:?}`", token, next),
                     pos: self.chars.pos,
                 })
-            } else {
-                Ok(())
             }
         })
     }
@@ -122,7 +122,7 @@ impl<'a> DimacsTokenStream<'a> {
 pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), ParseError> {
     // first non-EOL token has to be `p cnf ` header
     loop {
-        match lexer.next()? {
+        match lexer.next_token()? {
             DimacsToken::EOL => continue,
             DimacsToken::Header => break,
             token => {
@@ -133,15 +133,14 @@ pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), Par
             }
         }
     }
-    //lexer.expect_next(DimacsToken::EOL);
-    let num_variables = match lexer.next()? {
-        DimacsToken::Zero => 0u32.into(),
+    //lexer.expect_next(&DimacsToken::EOL);
+    let num_variables = match lexer.next_token()? {
+        DimacsToken::Zero => 0_u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
-                    msg: format!(
-                        "Malformed `p cnf` header, found negative value for number of variables"
-                    ),
+                    msg: "Malformed `p cnf` header, found negative value for number of variables"
+                        .to_string(),
                     pos: lexer.pos(),
                 });
             }
@@ -157,14 +156,13 @@ pub fn parse_header(lexer: &mut DimacsTokenStream) -> Result<(usize, usize), Par
             });
         }
     };
-    let num_clauses = match lexer.next()? {
-        DimacsToken::Zero => 0u32.into(),
+    let num_clauses = match lexer.next_token()? {
+        DimacsToken::Zero => 0_u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
-                    msg: format!(
-                        "Malformed `p cnf` header, found negative value for number of clauses"
-                    ),
+                    msg: "Malformed `p cnf` header, found negative value for number of clauses"
+                        .to_string(),
                     pos: lexer.pos(),
                 });
             }
@@ -196,7 +194,7 @@ pub fn parse_matrix<P: Prefix>(
         match current {
             DimacsToken::Zero => {
                 // end of clause
-                lexer.expect_next(DimacsToken::EOL)?;
+                lexer.expect_next(&DimacsToken::EOL)?;
                 matrix.add(Clause::new(literals));
                 literals = Vec::new();
                 num_clauses_read += 1;
@@ -210,7 +208,7 @@ pub fn parse_matrix<P: Prefix>(
                 if !literals.is_empty() {
                     // End-of-line during clause read
                     return Err(ParseError {
-                        msg: format!("Unexpected end of line while reading clause"),
+                        msg: "Unexpected end of line while reading clause".to_string(),
                         pos: lexer.pos(),
                     });
                 }
@@ -219,7 +217,7 @@ pub fn parse_matrix<P: Prefix>(
                 if !literals.is_empty() {
                     // End-of-file during clause read
                     return Err(ParseError {
-                        msg: format!("Unexpected end of input while reading clause"),
+                        msg: "Unexpected end of input while reading clause".to_string(),
                         pos: lexer.pos(),
                     });
                 }
@@ -241,7 +239,7 @@ pub fn parse_matrix<P: Prefix>(
                 });
             }
         }
-        current = lexer.next()?;
+        current = lexer.next_token()?;
     }
 }
 

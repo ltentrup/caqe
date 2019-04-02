@@ -11,7 +11,7 @@ impl Clause {
     /// Creates a new clause from given literals
     ///
     /// The vector containing literals is sorted and deduplicated.
-    pub fn new(literals: Vec<Literal>) -> Clause {
+    pub fn new(literals: Vec<Literal>) -> Self {
         let mut l = literals;
         l.sort();
         l.dedup();
@@ -19,8 +19,8 @@ impl Clause {
     }
 
     /// Creates an empty clause
-    pub fn new_empty() -> Clause {
-        Clause {
+    pub fn new_empty() -> Self {
+        Self {
             literals: Vec::new(),
         }
     }
@@ -29,8 +29,8 @@ impl Clause {
     ///
     /// Assumes literals to be already normalized, i.e.,
     /// sorted and without duplication.
-    pub fn new_normalized(literals: Vec<Literal>) -> Clause {
-        Clause { literals: literals }
+    pub fn new_normalized(literals: Vec<Literal>) -> Self {
+        Self { literals }
     }
 
     pub fn len(&self) -> usize {
@@ -87,7 +87,7 @@ impl Clause {
     /// Returns true, if the literals contained in `self` are a subset of the literals in `other`.
     /// Only literals satisfying the predicate are considered.
     /// Note that literals in clauses are sorted.
-    pub fn is_subset_wrt_predicate<P>(&self, other: &Clause, predicate: P) -> bool
+    pub fn is_subset_wrt_predicate<P>(&self, other: &Self, predicate: P) -> bool
     where
         P: Fn(&Literal) -> bool,
     {
@@ -130,14 +130,14 @@ impl Clause {
         true
     }
 
-    pub fn is_subset(&self, other: &Clause) -> bool {
+    pub fn is_subset(&self, other: &Self) -> bool {
         self.is_subset_wrt_predicate(other, |_| true)
     }
 
     /// Returns true, if the literals contained in `self` are equal to the literals in `other`.
     /// Only literals satisfying the predicate are considered.
     /// Note that literals in clauses are sorted.
-    pub fn is_equal_wrt_predicate<P>(&self, other: &Clause, predicate: P) -> bool
+    pub fn is_equal_wrt_predicate<P>(&self, other: &Self, predicate: P) -> bool
     where
         P: Fn(&Literal) -> bool,
     {
@@ -157,7 +157,7 @@ impl Clause {
         }
     }
 
-    pub fn is_equal(&self, other: &Clause) -> bool {
+    pub fn is_equal(&self, other: &Self) -> bool {
         self.is_equal_wrt_predicate(other, |_| true)
     }
 
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn clause_normalization() {
-        let lit1 = Literal::new(0u32, false);
+        let lit1 = Literal::new(0_u32, false);
         let lit2 = Literal::new(1u32, false);
         let literals = vec![lit2, lit1, lit2];
         let clause1 = Clause::new(literals);
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn clause_subset_wrt_predicate() {
-        let lit1 = Literal::new(0u32, false);
+        let lit1 = Literal::new(0_u32, false);
         let lit2 = Literal::new(1u32, false);
         let lit3 = Literal::new(2u32, false);
         let clause1 = Clause::new(vec![lit1, -lit2, lit3]);
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn clause_equal_wrt_predicate() {
-        let lit1 = Literal::new(0u32, false);
+        let lit1 = Literal::new(0_u32, false);
         let lit2 = Literal::new(1u32, false);
         let lit3 = Literal::new(2u32, false);
         let clause1 = Clause::new(vec![lit1, -lit2, lit3]);
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn clause_is_satisifed() {
-        let lit1 = Literal::new(0u32, false);
+        let lit1 = Literal::new(0_u32, false);
         let lit2 = Literal::new(1u32, false);
         let lit3 = Literal::new(2u32, false);
         let clause = Clause::new(vec![lit1, -lit2, lit3]);
@@ -269,9 +269,9 @@ mod tests {
         assignment.insert(1u32.into(), true);
         assignment.insert(2u32.into(), false);
         assert!(!clause.is_satisfied_by_assignment(&assignment));
-        assignment.insert(0u32.into(), true);
+        assignment.insert(0_u32.into(), true);
         assert!(clause.is_satisfied_by_assignment(&assignment));
-        assignment.insert(0u32.into(), false);
+        assignment.insert(0_u32.into(), false);
         assert!(!clause.is_satisfied_by_assignment(&assignment));
     }
 

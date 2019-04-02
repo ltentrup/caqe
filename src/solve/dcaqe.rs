@@ -5,6 +5,7 @@ use cryptominisat::*;
 use log::{debug, error, info, log_enabled, trace};
 use rustc_hash::{FxHashMap, FxHashSet};
 use simplelog::Level;
+use std::cmp::Ordering;
 
 #[cfg(feature = "statistics")]
 use super::super::utils::statistics::{CountingStats, TimingStats};
@@ -45,17 +46,17 @@ impl<'a> DCaqeSolver<'a> {
         let mut global = GlobalSolverData::new(matrix, config);
 
         let mut bound_universals = FxHashSet::default();
-        for antichain in antichains.iter() {
+        for antichain in &antichains {
             let universals = antichain
                 .iter()
                 .fold(FxHashSet::default(), |val, &scope_id| {
                     let scope = &matrix.prefix.scopes[scope_id];
-                    val.union(&scope.dependencies).map(|x| *x).collect()
+                    val.union(&scope.dependencies).cloned().collect()
                 })
                 .difference(&bound_universals)
                 .cloned()
                 .collect();
-            bound_universals = bound_universals.union(&universals).map(|x| *x).collect();
+            bound_universals = bound_universals.union(&universals).cloned().collect();
 
             if !universals.is_empty() {
                 let level = abstractions.len();
@@ -63,12 +64,10 @@ impl<'a> DCaqeSolver<'a> {
                 for &var in &universals {
                     global.level_lookup.insert(var, level);
                 }
-                abstractions.push(SolverLevel::Universal(Abstraction::new_universal(
-                    matrix,
-                    &universals,
-                    &global.level_lookup,
-                    level,
-                )));
+                abstractions.push(SolverLevel::Universal(
+                    Abstraction::new_universal(matrix, &universals, &global.level_lookup, level)
+                        .into(),
+                ));
             }
             let level = abstractions.len();
             abstractions.push(SolverLevel::Existential(
@@ -90,7 +89,7 @@ impl<'a> DCaqeSolver<'a> {
         (abstractions, global)
     }
 
-    fn update_abstractions(&mut self, clauses: Vec<ClauseId>, variables: &[Variable]) {
+    fn update_abstractions(&mut self, clauses: &[ClauseId], variables: &[Variable]) {
         trace!("update_abstractions");
 
         for &variable in variables {
@@ -119,14 +118,13 @@ impl<'a> DCaqeSolver<'a> {
             }
         }
 
-        for level in self.levels.iter_mut() {
+        for level in &mut self.levels {
             match level {
                 SolverLevel::Universal(abstraction) => abstraction.reset(),
                 SolverLevel::Existential(abstractions) => {
                     for abstraction in abstractions.iter_mut() {
-                        match abstraction.learner.as_mut() {
-                            Some(l) => l.reset(),
-                            None => {}
+                        if let Some(l) = abstraction.learner.as_mut() {
+                            l.reset()
                         }
                     }
                 }
@@ -135,7 +133,7 @@ impl<'a> DCaqeSolver<'a> {
 
         self.global.unsat_core.grow(clauses.len(), false);
 
-        for level in self.levels.iter_mut() {
+        for level in &mut self.levels {
             level.add_clauses(&self.matrix, &self.global.level_lookup, &clauses);
         }
     }
@@ -143,7 +141,7 @@ impl<'a> DCaqeSolver<'a> {
     fn solve_level(&mut self, level: usize) -> SolveLevelResult {
         match self.levels[level] {
             SolverLevel::Universal(ref mut abstraction) => {
-                match abstraction.solve(&mut self.matrix, &mut self.global) {
+                match abstraction.solve(&self.matrix, &mut self.global) {
                     AbstractionResult::CandidateFound => {
                         // continue with inner level
                         SolveLevelResult::ContinueInner
@@ -156,7 +154,7 @@ impl<'a> DCaqeSolver<'a> {
                 let len = abstractions.len();
                 let mut result = SolveLevelResult::ContinueInner;
                 for abstraction in abstractions {
-                    match abstraction.solve(&mut self.matrix, &mut self.global) {
+                    match abstraction.solve(&self.matrix, &mut self.global) {
                         AbstractionResult::CandidateRefuted => {
                             // `global.unsat_core` represents the conflict clause
                             let level = self.global.get_unsat_level(&self.matrix, level);
@@ -192,13 +190,12 @@ impl<'a> DCaqeSolver<'a> {
         match result {
             SolveLevelResult::ContinueInner => level += 1,
             SolveLevelResult::UnsatConflict(target_level) => {
-                let target_level = match target_level {
-                    Some(l) => l,
-                    None => {
-                        // derived the empty clause
-                        covered_by!("unsat_universal_reduction");
-                        return Err(SolverResult::Unsatisfiable);
-                    }
+                let target_level = if let Some(l) = target_level {
+                    l
+                } else {
+                    // derived the empty clause
+                    covered_by!("unsat_universal_reduction");
+                    return Err(SolverResult::Unsatisfiable);
                 };
                 debug_assert!(target_level < level);
 
@@ -235,7 +232,7 @@ impl<'a> DCaqeSolver<'a> {
                 ) {
                     DepConfResResult::Split(clauses, variables) => {
                         // we applied dependency conflict resolution
-                        self.update_abstractions(clauses, &variables);
+                        self.update_abstractions(&clauses, &variables);
 
                         if self.global.config.expansion_refinement {
                             let mut scopes: Vec<ScopeId> = variables
@@ -385,7 +382,7 @@ impl<'a> DCaqeSolver<'a> {
 
         println!("{}", self.global.statistics);
         self.global.timings.print();
-        println!("");
+        println!();
 
         for level in &self.levels {
             match level {
@@ -402,7 +399,7 @@ impl<'a> DCaqeSolver<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum SolveLevelResult {
     ContinueInner,
     /// A conflict for the existential player, with level to refine
@@ -427,7 +424,7 @@ impl<'a> super::Solver for DCaqeSolver<'a> {
 }
 
 enum SolverLevel {
-    Universal(Abstraction),
+    Universal(Box<Abstraction>),
     Existential(Vec<Abstraction>),
 }
 
@@ -492,8 +489,8 @@ struct GlobalSolverData {
 }
 
 impl GlobalSolverData {
-    fn new(matrix: &DQMatrix, config: &DCaqeSpecificSolverConfig) -> GlobalSolverData {
-        GlobalSolverData {
+    fn new(matrix: &DQMatrix, config: &DCaqeSpecificSolverConfig) -> Self {
+        Self {
             assignments: FxHashMap::default(),
             level_lookup: FxHashMap::default(),
             unsat_core: BitVec::from_elem(matrix.clauses.len(), false),
@@ -654,8 +651,8 @@ impl GlobalSolverData {
                             || other.dependencies.is_subset(&meet.dependencies)
                     } else {
                         // universal variable not in difference of maximal element and meet
-                        !(scope.dependencies.contains(&literal.variable())
-                            && !meet.dependencies.contains(&literal.variable()))
+                        meet.dependencies.contains(&literal.variable())
+                            || !scope.dependencies.contains(&literal.variable())
                     }
                 })
                 .cloned()
@@ -774,21 +771,19 @@ impl Abstraction {
         level: usize,
         scope_id: Option<ScopeId>,
         needs_learner: bool,
-    ) -> Abstraction {
+    ) -> Self {
         let mut sat = cryptominisat::Solver::new();
         sat.set_num_threads(1);
-        let is_max_level = scope_id
-            .map(|scope_id| {
-                let scope = &matrix.prefix.scopes[scope_id];
-                matrix.prefix.is_maximal(scope)
-            })
-            .unwrap_or(false);
+        let is_max_level = scope_id.map_or(false, |scope_id| {
+            let scope = &matrix.prefix.scopes[scope_id];
+            matrix.prefix.is_maximal(scope)
+        });
         let learner = if needs_learner {
             Some(SkolemFunctionLearner::new())
         } else {
             None
         };
-        Abstraction {
+        Self {
             sat,
             variable_to_sat: FxHashMap::default(),
             b_literals: Vec::new(),
@@ -813,7 +808,7 @@ impl Abstraction {
         variables: &FxHashSet<Variable>,
         level_lookup: &FxHashMap<Variable, usize>,
         level: usize,
-    ) -> Abstraction {
+    ) -> Self {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
         debug_assert!(!variables.is_empty());
 
@@ -889,12 +884,12 @@ impl Abstraction {
         scope: &Scope,
         level: usize,
         needs_learner: bool,
-    ) -> Abstraction {
+    ) -> Self {
         let mut abs = Self::new(matrix, level, Some(scope_id), needs_learner);
         let mut sat_clause = Vec::new();
 
         // add variables of scope to sat solver
-        for &variable in scope.existentials.iter() {
+        for &variable in &scope.existentials {
             abs.variable_to_sat.insert(variable, abs.sat.new_var());
         }
 
@@ -1084,7 +1079,7 @@ impl Abstraction {
         // * clause from entry is not a t-lit: push entry to next quantifier
         // * clause is in entry and a t-lit: assume positively
         // * clause is not in entry and a t-lit: assume negatively
-        for &(clause_id, mut t_literal) in self.t_literals.iter() {
+        for &(clause_id, mut t_literal) in &self.t_literals {
             if !self.entry[clause_id as usize] {
                 t_literal = !t_literal;
             }
@@ -1128,7 +1123,7 @@ impl Abstraction {
         let mut debug_print = String::new();
 
         let model = self.sat.get_model();
-        for (&variable, &sat_var) in self.variable_to_sat.iter() {
+        for (&variable, &sat_var) in &self.variable_to_sat {
             let value = match model[sat_var.var() as usize] {
                 Lbool::True => true,
                 Lbool::False => false,
@@ -1189,7 +1184,7 @@ impl Abstraction {
         // add clauses to entry where the current scope is maximal
         global.unsat_core.union(&self.max_clauses);
 
-        for variable in scope.existentials.iter() {
+        for variable in &scope.existentials {
             let value = global.assignments[variable];
             let literal = Literal::new(*variable, !value);
 
@@ -1239,9 +1234,8 @@ impl Abstraction {
         // first check if there is a b-literal for clause
         // if yes, just return it (the currents scope influences clause since there is at least one variable contained)
         // if no, we continue
-        match b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
-            Ok(pos) => return b_literals[pos].1,
-            Err(_) => {}
+        if let Ok(pos) = b_literals.binary_search_by(|elem| elem.0.cmp(&clause_id)) {
+            return b_literals[pos].1;
         };
 
         // we then check, if there is a corresponding t-literal
@@ -1380,8 +1374,13 @@ impl Abstraction {
                 debug_assert!(info.is_existential());
                 let mut deps: Vec<Literal> = assignment
                     .iter()
-                    .filter(|(var, _val)| info.dependencies().contains(var))
-                    .map(|(&var, val)| Literal::new(var, !val))
+                    .filter_map(|(&var, val)| {
+                        if info.dependencies().contains(&var) {
+                            Some(Literal::new(var, !val))
+                        } else {
+                            None
+                        }
+                    })
                     .collect();
                 deps.sort(); // make it unique
                 let entry = self
@@ -1502,7 +1501,12 @@ where
     /// We remove all elements that are smaller than `element`.
     /// Then, we add `element` if there is no other element that is greater or equal.
     fn add(&mut self, element: T) {
-        self.elements.retain(|other| !(other < &element));
+        self.elements.retain(|other|
+            // !(other < &element)
+            match other.partial_cmp(&element) {
+                Some(Ordering::Less) => false,
+                _ => true,
+            });
         let subsumed = self.elements.iter().any(|other| other >= &element);
         if !subsumed {
             self.elements.push(element);

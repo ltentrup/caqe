@@ -36,8 +36,8 @@ pub struct Matrix<P: Prefix> {
 }
 
 impl<P: Prefix> Matrix<P> {
-    pub fn new(num_variables: usize, num_clauses: usize) -> Matrix<P> {
-        Matrix {
+    pub fn new(num_variables: usize, num_clauses: usize) -> Self {
+        Self {
             prefix: P::new(num_variables),
             clauses: Vec::with_capacity(num_clauses),
             occurrences: FxHashMap::default(),
@@ -85,7 +85,7 @@ where
             self.clauses.len()
         ));
         dimacs.push_str(&self.prefix.dimacs().to_string());
-        for clause in self.clauses.iter() {
+        for clause in &self.clauses {
             dimacs.push_str(&format!("{}\n", clause.dimacs()));
         }
 
@@ -123,8 +123,8 @@ impl<V: VariableInfo> VariableStore<V> {
         used.grow(num_variables + 1, false);
         used.set(0, true);
 
-        VariableStore {
-            variables: variables,
+        Self {
+            variables,
             used,
             orig_num_variables: num_variables,
             unbounded: V::new(),
@@ -170,7 +170,7 @@ impl<V: VariableInfo> VariableStore<V> {
 
     /// Returns the next unused variable
     pub fn next_unused(&self) -> Variable {
-        if let Some((index, _)) = self.used.iter().enumerate().filter(|(_, val)| !val).next() {
+        if let Some((index, _)) = self.used.iter().enumerate().find(|(_, val)| !val) {
             index.into()
         } else {
             self.used.len().into()

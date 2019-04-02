@@ -24,13 +24,13 @@ pub fn parse_prefix(
     let mut pref_scope_id = *matrix.prefix.roots.first().expect("root cannot be empty");
     loop {
         // first character after newline, either `e`, `a`, or literal (in which case we return)
-        match lexer.next()? {
+        match lexer.next_token()? {
             DimacsToken::Quant(q) => {
                 let quantifier = match q {
                     QuantKind::Exists => Ok(Quantifier::Existential),
                     QuantKind::Forall => Ok(Quantifier::Universal),
                     QuantKind::Henkin => Err(ParseError {
-                        msg: format!("Henkin quantifier (`d`) are not allowed in QDIMACS"),
+                        msg: "Henkin quantifier (`d`) are not allowed in QDIMACS".to_string(),
                         pos: lexer.pos(),
                     }),
                 }?;
@@ -38,7 +38,7 @@ pub fn parse_prefix(
 
                 // add variables
                 loop {
-                    match lexer.next()? {
+                    match lexer.next_token()? {
                         DimacsToken::Lit(l) => {
                             if l.signed() {
                                 return Err(ParseError {
@@ -53,7 +53,7 @@ pub fn parse_prefix(
                         }
                         DimacsToken::Zero => {
                             // end of quantifier block
-                            lexer.expect_next(DimacsToken::EOL)?;
+                            lexer.expect_next(&DimacsToken::EOL)?;
                             break;
                         }
                         token => {
@@ -94,12 +94,8 @@ pub struct PartialQDIMACSCertificate {
 }
 
 impl PartialQDIMACSCertificate {
-    pub fn new(
-        result: SolverResult,
-        num_variables: usize,
-        num_clauses: usize,
-    ) -> PartialQDIMACSCertificate {
-        PartialQDIMACSCertificate {
+    pub fn new(result: SolverResult, num_variables: usize, num_clauses: usize) -> Self {
+        Self {
             result,
             num_variables,
             num_clauses,
@@ -113,7 +109,7 @@ impl PartialQDIMACSCertificate {
         self.assignments.sort();
     }
 
-    pub fn extend_assignments(&mut self, qdo: PartialQDIMACSCertificate) {
+    pub fn extend_assignments(&mut self, qdo: Self) {
         for assignment in qdo.assignments {
             self.add_assignment(assignment);
         }
@@ -126,7 +122,7 @@ pub fn parse_qdimacs_certificate_header(
 ) -> Result<(SolverResult, usize, usize), ParseError> {
     // first non-EOL token has to be `s cnf ` header
     loop {
-        match lexer.next()? {
+        match lexer.next_token()? {
             DimacsToken::EOL => continue,
             DimacsToken::SolutionHeader => break,
             token => {
@@ -137,18 +133,17 @@ pub fn parse_qdimacs_certificate_header(
             }
         }
     }
-    let result = match lexer.next()? {
+    let result = match lexer.next_token()? {
         DimacsToken::Zero => SolverResult::Unsatisfiable,
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
-                    msg: format!(
-                        "Malformed `s cnf` header, found negative value for number of variables"
-                    ),
+                    msg: "Malformed `s cnf` header, found negative value for number of variables"
+                        .to_string(),
                     pos: lexer.pos(),
                 });
             }
-            if l.variable() == 1u32.into() {
+            if l.variable() == 1_u32.into() {
                 if l.signed() {
                     SolverResult::Unknown
                 } else {
@@ -174,14 +169,13 @@ pub fn parse_qdimacs_certificate_header(
             });
         }
     };
-    let num_variables = match lexer.next()? {
-        DimacsToken::Zero => 0u32.into(),
+    let num_variables = match lexer.next_token()? {
+        DimacsToken::Zero => 0_u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
-                    msg: format!(
-                        "Malformed `p cnf` header, found negative value for number of variables"
-                    ),
+                    msg: "Malformed `p cnf` header, found negative value for number of variables"
+                        .to_string(),
                     pos: lexer.pos(),
                 });
             }
@@ -197,14 +191,13 @@ pub fn parse_qdimacs_certificate_header(
             });
         }
     };
-    let num_clauses = match lexer.next()? {
-        DimacsToken::Zero => 0u32.into(),
+    let num_clauses = match lexer.next_token()? {
+        DimacsToken::Zero => 0_u32.into(),
         DimacsToken::Lit(l) => {
             if l.signed() {
                 return Err(ParseError {
-                    msg: format!(
-                        "Malformed `p cnf` header, found negative value for number of clauses"
-                    ),
+                    msg: "Malformed `p cnf` header, found negative value for number of clauses"
+                        .to_string(),
                     pos: lexer.pos(),
                 });
             }
@@ -229,10 +222,10 @@ impl FromStr for PartialQDIMACSCertificate {
         let mut lexer = DimacsTokenStream::new(s);
 
         let (result, num_variables, num_clauses) = parse_qdimacs_certificate_header(&mut lexer)?;
-        let mut certificate = PartialQDIMACSCertificate::new(result, num_variables, num_clauses);
+        let mut certificate = Self::new(result, num_variables, num_clauses);
 
         loop {
-            match lexer.next()? {
+            match lexer.next_token()? {
                 DimacsToken::EOL => {
                     // ignore empty lines
                     continue;
@@ -242,7 +235,7 @@ impl FromStr for PartialQDIMACSCertificate {
                 }
                 DimacsToken::V => {
                     // V <literal> 0\n
-                    match lexer.next()? {
+                    match lexer.next_token()? {
                         DimacsToken::Lit(l) => {
                             certificate.add_assignment(l);
                         }
@@ -257,8 +250,8 @@ impl FromStr for PartialQDIMACSCertificate {
                             .into());
                         }
                     }
-                    lexer.expect_next(DimacsToken::Zero)?;
-                    lexer.expect_next(DimacsToken::EOL)?;
+                    lexer.expect_next(&DimacsToken::Zero)?;
+                    lexer.expect_next(&DimacsToken::EOL)?;
                 }
                 token => {
                     return Err(ParseError {
@@ -283,7 +276,7 @@ impl Dimacs for PartialQDIMACSCertificate {
             self.num_variables,
             self.num_clauses,
         ));
-        for literal in self.assignments.iter() {
+        for literal in &self.assignments {
             dimacs.push_str(&format!("V {} 0\n", literal.dimacs()));
         }
         dimacs

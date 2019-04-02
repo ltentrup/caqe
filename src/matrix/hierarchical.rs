@@ -49,23 +49,23 @@ impl std::fmt::Display for ScopeId {
 }
 
 impl ScopeId {
-    fn new(id: usize) -> ScopeId {
-        ScopeId(id as u32)
+    fn new(id: usize) -> Self {
+        Self(id as u32)
     }
 
     pub(crate) fn to_usize(self) -> usize {
         self.0 as usize
     }
 
-    pub(crate) const OUTERMOST: ScopeId = ScopeId(0);
+    pub(crate) const OUTERMOST: Self = Self(0);
 }
 
 impl VariableInfo for QVariableInfo {
-    fn new() -> QVariableInfo {
-        QVariableInfo {
+    fn new() -> Self {
+        Self {
             scope_id: None,
             is_universal: false,
-            copy_of: 0u32.into(),
+            copy_of: 0_u32.into(),
             dependencies: FxHashSet::default(),
             level: 0,
         }
@@ -109,7 +109,7 @@ impl Dimacs for Scope {
         let mut dimacs = String::new();
         dimacs.push_str(&self.quant.dimacs());
         dimacs.push(' ');
-        for &variable in self.variables.iter() {
+        for &variable in &self.variables {
             dimacs.push_str(&format!("{} ", variable));
         }
         dimacs.push_str("0");
@@ -119,10 +119,10 @@ impl Dimacs for Scope {
 
 impl Quantifier {
     #[allow(dead_code)]
-    pub fn swap(&self) -> Quantifier {
+    pub fn swap(self) -> Self {
         match self {
-            &Quantifier::Existential => Quantifier::Universal,
-            &Quantifier::Universal => Quantifier::Existential,
+            Quantifier::Existential => Quantifier::Universal,
+            Quantifier::Universal => Quantifier::Existential,
         }
     }
 }
@@ -140,7 +140,7 @@ impl Prefix for HierarchicalPrefix {
     type V = QVariableInfo;
 
     fn new(num_variables: usize) -> Self {
-        HierarchicalPrefix {
+        Self {
             variables: VariableStore::new(num_variables),
             scopes: vec![Scope::new(ScopeId::OUTERMOST, 0, Quantifier::Existential)],
             next_scopes: vec![vec![]],
@@ -231,8 +231,8 @@ impl HierarchicalPrefix {
     /// Compute the dependency of existential variables by prefix tree traversal
     pub(crate) fn compute_dependencies(&mut self) {
         fn compute_dependencies_recursive(
-            scopes: &Vec<Scope>,
-            next_scopes: &Vec<Vec<ScopeId>>,
+            scopes: &[Scope],
+            next_scopes: &[Vec<ScopeId>],
             variables: &mut VariableStore<QVariableInfo>,
             prior_deps: &FxHashSet<Variable>,
             scope_id: ScopeId,
@@ -385,7 +385,7 @@ impl Matrix<HierarchicalPrefix> {
         table: &mut InPlaceUnificationTable<Variable>,
     ) {
         let scope: &Scope = &self.prefix.scopes[scope_id.to_usize()];
-        for clause in self.clauses.iter() {
+        for clause in &self.clauses {
             let mut connection = None;
             for &literal in clause.iter() {
                 let variable = literal.variable();
@@ -467,7 +467,7 @@ impl Matrix<HierarchicalPrefix> {
                 return true;
             }
             // check if variable belongs to already created scope
-            for &other_id in scopes.iter() {
+            for &other_id in &scopes {
                 let other = &mut self.prefix.scopes[other_id.to_usize()];
                 debug_assert!(!other.variables.is_empty());
                 if table.unioned(
@@ -903,7 +903,7 @@ impl<'a> dot::Labeller<'a, Nd, Ed> for &HierarchicalPrefix {
         dot::Id::new(format!("N{}", n.0)).unwrap()
     }
     fn node_label<'b>(&'b self, n: &Nd) -> dot::LabelText<'b> {
-        if n.0 == std::u32::MAX {
+        if n.0 == u32::max_value() {
             dot::LabelText::LabelStr("root".into())
         } else {
             let scope = &self.scopes[n.to_usize()];
@@ -919,7 +919,7 @@ impl<'a> dot::Labeller<'a, Nd, Ed> for &HierarchicalPrefix {
 impl<'a> dot::GraphWalk<'a, Nd, Ed> for &HierarchicalPrefix {
     fn nodes(&'a self) -> dot::Nodes<'a, Nd> {
         let mut nodes: Vec<Nd> = self.scopes.iter().map(|s| s.id).collect();
-        nodes.push(ScopeId::new(std::u32::MAX as usize)); // dummy root node
+        nodes.push(ScopeId::new(u32::max_value() as usize)); // dummy root node
         nodes.into()
     }
     fn edges(&'a self) -> dot::Edges<'a, Ed> {
@@ -927,16 +927,15 @@ impl<'a> dot::GraphWalk<'a, Nd, Ed> for &HierarchicalPrefix {
             .next_scopes
             .iter()
             .enumerate()
-            .map(|(i, next)| {
+            .flat_map(|(i, next)| {
                 next.iter()
                     .map(|&j| (ScopeId::new(i), j))
                     .collect::<Vec<Ed>>()
             })
-            .flatten()
             .collect();
         // root node
         self.roots.iter().for_each(|&root| {
-            edges.push((ScopeId::new(std::u32::MAX as usize), root));
+            edges.push((ScopeId::new(u32::max_value() as usize), root));
         });
         edges.into()
     }

@@ -41,12 +41,12 @@ pub struct CaqeSolver<'a> {
     matrix: &'a mut QMatrix,
     result: SolverResult,
     global: GlobalSolverData,
-    abstraction: Vec<Box<ScopeRecursiveSolver>>,
+    abstraction: Vec<ScopeRecursiveSolver>,
 }
 
 struct ScopeRecursiveSolver {
     data: ScopeSolverData,
-    next: Vec<Box<ScopeRecursiveSolver>>,
+    next: Vec<ScopeRecursiveSolver>,
 }
 
 struct GlobalSolverData {
@@ -125,14 +125,14 @@ impl<'a> CaqeSolver<'a> {
 
     pub fn new_with_options(matrix: &mut QMatrix, options: SolverOptions) -> CaqeSolver {
         let mut abstractions = Vec::new();
-        for scope_id in matrix.prefix.roots.iter() {
+        for scope_id in &matrix.prefix.roots {
             abstractions.push(ScopeRecursiveSolver::init_abstraction_recursively(
                 matrix, &options, *scope_id,
             ));
         }
         debug_assert!(!matrix.conflict());
         CaqeSolver {
-            matrix: matrix,
+            matrix,
             result: SolverResult::Unknown,
             global: GlobalSolverData::new(options),
             abstraction: abstractions,
@@ -186,7 +186,7 @@ impl<'a> CaqeSolver<'a> {
         });
         let is_universal = if all_outer_scopes_empty {
             // top-level existential scope is empty
-            for abstraction in self.abstraction.iter() {
+            for abstraction in &self.abstraction {
                 top_level.extend(&abstraction.next);
             }
             true
@@ -205,20 +205,20 @@ impl<'a> CaqeSolver<'a> {
         // go thorough all scopes in the level
         // for existential level: combine the assignments
         // for universal level: select only one level
-        for scope in top_level.iter() {
+        for scope in &top_level {
             if self.result == SolverResult::Unsatisfiable
                 && scope.data.sub_result != SolverResult::Unsatisfiable
             {
                 continue;
             }
 
-            for variable in scope.data.variables.iter() {
+            for variable in &scope.data.variables {
                 let value = scope.data.assignments[variable];
                 let info = &self.matrix.prefix.variables().get(*variable);
-                let orig_variable = if info.copy_of != 0u32.into() {
-                    info.copy_of
-                } else {
+                let orig_variable = if info.copy_of == 0_u32.into() {
                     *variable
+                } else {
+                    info.copy_of
                 };
                 certificate.add_assignment(Literal::new(orig_variable, !value));
             }
@@ -235,7 +235,7 @@ impl<'a> CaqeSolver<'a> {
 
 impl<'a> super::Solver for CaqeSolver<'a> {
     fn solve(&mut self) -> SolverResult {
-        for abstraction in self.abstraction.iter_mut() {
+        for abstraction in &mut self.abstraction {
             self.global.conflicts.clear();
             let result = abstraction.solve_recursive(self.matrix, &mut self.global);
             if result == SolverResult::Unsatisfiable {
@@ -249,8 +249,8 @@ impl<'a> super::Solver for CaqeSolver<'a> {
 }
 
 impl Default for SolverOptions {
-    fn default() -> SolverOptions {
-        SolverOptions {
+    fn default() -> Self {
+        Self {
             strong_unsat_refinement: false,
             expansion_refinement: Some(ExpansionMode::Full),
             refinement_literal_subsumption: false,
@@ -267,8 +267,8 @@ impl Default for SolverOptions {
 }
 
 impl GlobalSolverData {
-    fn new(options: SolverOptions) -> GlobalSolverData {
-        GlobalSolverData {
+    fn new(options: SolverOptions) -> Self {
+        Self {
             options,
             conflicts: Vec::new(),
         }
@@ -293,15 +293,10 @@ impl std::fmt::Display for SolverScopeEvents {
 }
 
 impl ScopeRecursiveSolver {
-    fn new(
-        matrix: &QMatrix,
-        options: &SolverOptions,
-        scope: &Scope,
-        next: Vec<Box<ScopeRecursiveSolver>>,
-    ) -> ScopeRecursiveSolver {
+    fn new(matrix: &QMatrix, options: &SolverOptions, scope: &Scope, next: Vec<Self>) -> Self {
         let mut relevant_clauses = BitVec::from_elem(matrix.clauses.len(), false);
         let mut clause_tree_branch = BitVec::from_elem(matrix.clauses.len(), false);
-        for next_scope in next.iter() {
+        for next_scope in &next {
             #[cfg(debug_assertions)]
             {
                 // the branches have pairwise disjoint relevant clauses
@@ -320,13 +315,13 @@ impl ScopeRecursiveSolver {
             }
             clause_tree_branch.union(&next_scope.data.clause_tree_branch);
         }
-        let mut candidate = ScopeRecursiveSolver {
+        let mut candidate = Self {
             data: ScopeSolverData::new(matrix, scope, relevant_clauses, clause_tree_branch),
-            next: next,
+            next,
         };
 
         // add variables of scope to sat solver
-        for &variable in scope.variables.iter() {
+        for &variable in &scope.variables {
             candidate
                 .data
                 .sat
@@ -346,9 +341,9 @@ impl ScopeRecursiveSolver {
         matrix: &QMatrix,
         options: &SolverOptions,
         scope_id: ScopeId,
-    ) -> Box<ScopeRecursiveSolver> {
+    ) -> Self {
         let mut prev = Vec::new();
-        for child_scope_id in matrix.prefix.next_scopes[scope_id.to_usize()].iter() {
+        for child_scope_id in &matrix.prefix.next_scopes[scope_id.to_usize()] {
             prev.push(Self::init_abstraction_recursively(
                 matrix,
                 options,
@@ -356,7 +351,7 @@ impl ScopeRecursiveSolver {
             ))
         }
         let scope = &matrix.prefix.scopes[scope_id.to_usize()];
-        let result = Box::new(ScopeRecursiveSolver::new(matrix, options, scope, prev));
+        let result = Self::new(matrix, options, scope, prev);
 
         #[cfg(debug_assertions)]
         {
@@ -541,12 +536,12 @@ impl ScopeRecursiveSolver {
     pub fn print_statistics(&self) {
         println!("scope id {}, level {}", self.data.scope_id, self.data.level);
         self.data.statistics.print();
-        for next in self.next.iter() {
+        for next in &self.next {
             next.print_statistics()
         }
     }
 
-    fn split(&mut self) -> (&mut ScopeSolverData, &mut Vec<Box<ScopeRecursiveSolver>>) {
+    fn split(&mut self) -> (&mut ScopeSolverData, &mut Vec<Self>) {
         (&mut self.data, &mut self.next)
     }
 
@@ -557,7 +552,7 @@ impl ScopeRecursiveSolver {
         if self.data.is_universal {
             assignment.extend(self.data.assignments.iter());
         }
-        for next in self.next.iter() {
+        for next in &self.next {
             assignment = next.get_universal_assignmemnt(assignment);
         }
         assignment
@@ -568,7 +563,7 @@ impl SatAndTranslation {
     fn new(_matrix: &QMatrix) -> Self {
         let mut sat = cryptominisat::Solver::new();
         sat.set_num_threads(1);
-        SatAndTranslation {
+        Self {
             sat,
             variable_to_sat: FxHashMap::default(),
             t_literals: BTreeMap::new(),
@@ -643,20 +638,20 @@ impl ScopeSolverData {
         scope: &Scope,
         relevant_clauses: BitVec,
         clause_tree_branch: BitVec,
-    ) -> ScopeSolverData {
+    ) -> Self {
         // assign all variables initially to zero, needed for expansion refinement
         let mut assignments = FxHashMap::default();
-        for &variable in scope.variables.iter() {
+        for &variable in &scope.variables {
             assignments.insert(variable, false);
         }
-        ScopeSolverData {
+        Self {
             sat: SatAndTranslation::new(matrix),
             variables: scope.variables.clone(),
-            assignments: assignments,
+            assignments,
             entry: BitVec::from_elem(matrix.clauses.len(), false),
             max_clauses: BitVec::from_elem(matrix.clauses.len(), false),
-            relevant_clauses: relevant_clauses,
-            clause_tree_branch: clause_tree_branch,
+            relevant_clauses,
+            clause_tree_branch,
             sat_solver_assumptions: Vec::new(),
             is_universal: scope.quant == Quantifier::Universal,
             scope_id: scope.id,
@@ -738,10 +733,11 @@ impl ScopeSolverData {
                     .filter(|&&id| id < clause_id as ClauseId)
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
-                    if clause.is_equal_wrt_predicate(other_clause, |l| {
+                    let predicate = |l: &Literal| {
                         let info = matrix.prefix.variables().get(l.variable());
                         info.level <= scope.level
-                    }) {
+                    };
+                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
                         debug_assert!(need_b_lit);
                         if let Some(&b_lit) = self.sat.b_literals.get(&other_clause_id) {
                             self.sat.b_literals.insert(clause_id as ClauseId, b_lit);
@@ -757,10 +753,11 @@ impl ScopeSolverData {
                     .filter(|&&id| id < clause_id as ClauseId)
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
-                    if clause.is_equal_wrt_predicate(other_clause, |l| {
+                    let predicate = |l: &Literal| {
                         let info = matrix.prefix.variables().get(l.variable());
                         info.level < scope.level
-                    }) {
+                    };
+                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
                         debug_assert!(need_t_lit);
                         /*let pos = self
                             .sat
@@ -780,10 +777,11 @@ impl ScopeSolverData {
                     .filter(|&&id| id < clause_id as ClauseId)
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
-                    if clause.is_equal_wrt_predicate(other_clause, |l| {
+                    let predicate = |l: &Literal| {
                         let info = matrix.prefix.variables().get(l.variable());
                         info.level > scope.level
-                    }) {
+                    };
+                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
                         debug_assert!(need_b_lit);
                         /*let pos = self
                             .sat
@@ -816,12 +814,11 @@ impl ScopeSolverData {
             }
 
             if need_b_lit {
-                let b_lit;
-                if inner_equal_to.is_none() {
-                    b_lit = self.sat.new_var();
+                let b_lit = if inner_equal_to.is_none() {
+                    self.sat.new_var()
                 } else {
-                    b_lit = inner_equal_to.unwrap();
-                }
+                    inner_equal_to.unwrap()
+                };
                 if options.abstraction_equivalence {
                     for lit in sat_clause.iter() {
                         self.sat.sat.add_clause(&[lit.not(), b_lit]);
@@ -848,13 +845,13 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         {
             let mut t_literals = String::new();
-            for (&clause_id, _) in self.sat.t_literals.iter() {
+            for &clause_id in self.sat.t_literals.keys() {
                 t_literals.push_str(&format!(" t{}", clause_id));
             }
             debug!("t-literals: {}", t_literals);
 
             let mut b_literals = String::new();
-            for (&clause_id, _) in self.sat.b_literals.iter() {
+            for &clause_id in self.sat.b_literals.keys() {
                 b_literals.push_str(&format!(" b{}", clause_id));
             }
             debug!("b-literals: {}", b_literals);
@@ -902,12 +899,13 @@ impl ScopeSolverData {
                     .filter(|&&id| id < clause_id as ClauseId)
                 {
                     let other_clause = &matrix.clauses[other_clause_id as usize];
-                    if clause.is_equal_wrt_predicate(other_clause, |l| {
+                    let predicate = |l: &Literal| {
                         let info = matrix.prefix.variables().get(l.variable());
                         info.level <= scope.level
-                    }) {
-                        let sat_var = self.sat.b_literals.get(&other_clause_id).unwrap();
-                        self.sat.b_literals.insert(clause_id as ClauseId, *sat_var);
+                    };
+                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
+                        let sat_var = self.sat.b_literals[&other_clause_id];
+                        self.sat.b_literals.insert(clause_id as ClauseId, sat_var);
                         continue 'next_clause;
                     }
                 }
@@ -970,20 +968,20 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         {
             let mut t_literals = String::new();
-            for (&clause_id, _) in self.sat.t_literals.iter() {
+            for &clause_id in self.sat.t_literals.keys() {
                 t_literals.push_str(&format!(" t{}", clause_id));
             }
             debug!("t-literals: {}", t_literals);
 
             let mut b_literals = String::new();
-            for (&clause_id, _) in self.sat.b_literals.iter() {
+            for &clause_id in self.sat.b_literals.keys() {
                 b_literals.push_str(&format!(" b{}", clause_id));
             }
             debug!("b-literals: {}", b_literals);
         }
     }
 
-    fn check_candidate_exists(&mut self, next: &mut Vec<Box<ScopeRecursiveSolver>>) -> Lbool {
+    fn check_candidate_exists(&mut self, next: &mut Vec<ScopeRecursiveSolver>) -> Lbool {
         // we need to reset abstraction entries for next scopes, since some entries may be pushed down
         self.entry.intersect(&self.relevant_clauses);
         for ref mut scope in next {
@@ -1000,7 +998,7 @@ impl ScopeSolverData {
         // * clause from entry is not a t-lit: push entry to next quantifier
         // * clause is in entry and a t-lit: assume positively
         // * clause is not in entry and a t-lit: assume negatively
-        for (&clause_id, &t_literal) in self.sat.t_literals.iter() {
+        for (&clause_id, &t_literal) in &self.sat.t_literals {
             let mut t_literal = t_literal;
             if !self.entry[clause_id as usize] {
                 t_literal = !t_literal;
@@ -1041,7 +1039,7 @@ impl ScopeSolverData {
         let mut debug_print = String::new();
 
         let model = self.sat.get_model();
-        for (&variable, &sat_var) in self.sat.variable_to_sat.iter() {
+        for (&variable, &sat_var) in &self.sat.variable_to_sat {
             let value = match model[sat_var.var() as usize] {
                 Lbool::True => true,
                 Lbool::False => false,
@@ -1068,32 +1066,31 @@ impl ScopeSolverData {
     fn get_assumptions(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Vec<Box<ScopeRecursiveSolver>>,
+        next: &mut Vec<ScopeRecursiveSolver>,
         options: &SolverOptions,
     ) {
         trace!("get_assumptions");
 
         // assumptions in `next` were already cleared in check_candidate_exists
 
-        if !self.is_universal {
-            self.get_existential_assumptions(matrix, next, options);
-        } else {
-            // universal quantifier
+        if self.is_universal {
             self.get_universal_assumptions(matrix, next, options);
+        } else {
+            self.get_existential_assumptions(matrix, next, options);
         }
     }
 
     fn get_existential_assumptions(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Vec<Box<ScopeRecursiveSolver>>,
+        next: &mut Vec<ScopeRecursiveSolver>,
         options: &SolverOptions,
     ) {
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
         if options.flip_assignments_from_sat_solver {
-            for variable in self.variables.iter() {
+            for variable in &self.variables {
                 let value = self.assignments[variable];
                 let literal = Literal::new(*variable, !value);
 
@@ -1117,7 +1114,7 @@ impl ScopeSolverData {
             }
         }
 
-        for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
+        for (&clause_id, &b_lit) in &self.sat.b_literals {
             if self.sat.sat.is_true(b_lit) {
                 next.iter_mut().for_each(|ref mut scope| {
                     scope.data.entry.set(clause_id as usize, true);
@@ -1154,14 +1151,14 @@ impl ScopeSolverData {
     fn get_universal_assumptions(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Vec<Box<ScopeRecursiveSolver>>,
+        next: &mut Vec<ScopeRecursiveSolver>,
         options: &SolverOptions,
     ) {
         #[cfg(debug_assertions)]
         let mut debug_print = String::new();
 
         if options.flip_assignments_from_sat_solver {
-            for variable in self.variables.iter() {
+            for variable in &self.variables {
                 let value = self.assignments[variable];
                 let literal = Literal::new(*variable, !value);
 
@@ -1185,7 +1182,7 @@ impl ScopeSolverData {
             }
         }
 
-        for (&clause_id, &b_lit) in self.sat.b_literals.iter() {
+        for (&clause_id, &b_lit) in &self.sat.b_literals {
             if self.sat.sat.is_true(b_lit) {
                 continue;
             }
@@ -1246,7 +1243,7 @@ impl ScopeSolverData {
         // add clauses to entry where the current scope is maximal
         self.entry.union(&self.max_clauses);
 
-        for variable in self.variables.iter() {
+        for variable in &self.variables {
             let value = self.assignments[variable];
             let literal = Literal::new(*variable, !value);
 
@@ -1281,7 +1278,7 @@ impl ScopeSolverData {
         #[cfg(debug_assertions)]
         for (i, _val) in self.entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
-            let mut min = std::u32::MAX;
+            let mut min = u32::max_value();
             for &literal in clause.iter() {
                 let otherscope = matrix.prefix.variables().get(literal.variable()).level;
                 if otherscope < min {
@@ -1440,15 +1437,12 @@ impl ScopeSolverData {
         // was the clause processed before?
         for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause_id = i as ClauseId;
-            match self.strong_unsat_cache.get(&clause_id) {
-                Some(&(literal, opt)) => {
-                    if opt {
-                        applied = true;
-                    }
-                    blocking_clause.push(literal);
-                    continue;
+            if let Some(&(literal, opt)) = self.strong_unsat_cache.get(&clause_id) {
+                if opt {
+                    applied = true;
                 }
-                None => {}
+                blocking_clause.push(literal);
+                continue;
             }
 
             // TODO: for implementation of stronger unsat rule (see "On Expansion and Resolution in CEGAR Based QBF Solving"),
@@ -1484,9 +1478,9 @@ impl ScopeSolverData {
                             Err(pos) => pos,   // position to insert
                         };
 
-                        if other_clause.is_subset_wrt_predicate(clause, |l| {
-                            matrix.prefix.variables().get(l.variable()).level > level
-                        }) {
+                        let predicate =
+                            |l: &Literal| matrix.prefix.variables().get(l.variable()).level > level;
+                        if other_clause.is_subset_wrt_predicate(clause, predicate) {
                             debug_assert!(!self.max_clauses[other_clause_id as usize]);
                             self.conjunction.insert(pos, other_clause_id);
                         }
@@ -1563,24 +1557,20 @@ impl ScopeSolverData {
                     let current_level = self.level;
                     // check if other clause subsumes current
                     // check is done with respect to current and outer variables
+                    let predicate = |l: &Literal| {
+                        let info = matrix.prefix.variables().get(l.variable());
+                        info.level <= current_level
+                    };
                     if self.is_universal {
-                        if other_clause.is_subset_wrt_predicate(clause, |l| {
-                            let info = matrix.prefix.variables().get(l.variable());
-                            info.level <= current_level
-                        }) {
+                        if other_clause.is_subset_wrt_predicate(clause, predicate) {
                             entry.set(clause_id as usize, false);
                             successful = true;
                             continue 'outer;
                         }
-                    } else {
-                        if clause.is_subset_wrt_predicate(other_clause, |l| {
-                            let info = matrix.prefix.variables().get(l.variable());
-                            info.level <= current_level
-                        }) {
-                            entry.set(clause_id as usize, false);
-                            successful = true;
-                            continue 'outer;
-                        }
+                    } else if clause.is_subset_wrt_predicate(other_clause, predicate) {
+                        entry.set(clause_id as usize, false);
+                        successful = true;
+                        continue 'outer;
                     }
                 }
             }
@@ -1601,7 +1591,7 @@ impl ScopeSolverData {
             return true;
         }
         debug_assert_eq!(next.next.len(), 1, "scope {:?}", self.scope_id);
-        next.next[0].as_ref().next.is_empty()
+        next.next[0].next.is_empty()
     }
 
     fn expansion_refinement(
@@ -1631,16 +1621,15 @@ impl ScopeSolverData {
             // check if assignment belongs to a different path in the prefix tree
             // TODO: needs some optimization/caching
             let mut wrong_tree_clause = false;
-            for (&var, _) in universal_assignment {
+            for &var in universal_assignment.keys() {
                 let info = matrix.prefix.variables().get(var);
                 for &literal in clause.iter() {
                     let einfo = matrix.prefix.variables().get(literal.variable());
                     if !einfo.is_existential() {
                         continue;
-                    } else {
-                        if !universal_assignment.contains_key(&var) {
-                            wrong_tree_clause = true;
-                        }
+                    }
+                    if !universal_assignment.contains_key(&var) {
+                        wrong_tree_clause = true;
                     }
                     if einfo.level >= info.level
                         && !matrix.prefix.depends_on(literal.variable(), var)
@@ -1691,7 +1680,7 @@ impl ScopeSolverData {
     fn expand_clause(
         &mut self,
         matrix: &QMatrix,
-        _data: &ScopeSolverData,
+        _data: &Self,
         clause_id: ClauseId,
         clause: &Clause,
         universal_assignment: &FxHashMap<Variable, bool>,
@@ -1737,8 +1726,13 @@ impl ScopeSolverData {
             // porject universal assignment to dependencies of variable
             let mut deps: Vec<Literal> = universal_assignment
                 .iter()
-                .filter(|(var, _val)| info.dependencies().contains(var))
-                .map(|(&var, val)| Literal::new(var, !val))
+                .filter_map(|(var, val)| {
+                    if info.dependencies().contains(var) {
+                        Some(Literal::new(*var, !val))
+                    } else {
+                        None
+                    }
+                })
                 .collect();
             deps.sort(); // make it unique
 
@@ -1775,7 +1769,7 @@ impl ScopeSolverData {
     fn expand_conflict_clause(
         &mut self,
         matrix: &QMatrix,
-        data: &ScopeSolverData,
+        data: &Self,
         conflict: &BitVec,
         max_level: u32,
         universal_assignment: usize,
@@ -1839,8 +1833,13 @@ impl ScopeSolverData {
                 // porject universal assignment to dependencies of variable
                 let mut deps: Vec<Literal> = universal_assignment
                     .iter()
-                    .filter(|(var, _val)| info.dependencies().contains(var))
-                    .map(|(&var, val)| Literal::new(var, !val))
+                    .filter_map(|(var, val)| {
+                        if info.dependencies().contains(var) {
+                            Some(Literal::new(*var, !val))
+                        } else {
+                            None
+                        }
+                    })
                     .collect();
                 deps.sort(); // make it unique
 
@@ -1901,11 +1900,7 @@ impl ScopeSolverData {
     }
 
     /// Extracts conflict clause from entry
-    fn extract_conflict_clause(
-        &mut self,
-        matrix: &mut QMatrix,
-        next: &mut Box<ScopeRecursiveSolver>,
-    ) {
+    fn extract_conflict_clause(&mut self, matrix: &mut QMatrix, next: &mut ScopeRecursiveSolver) {
         if self.is_universal {
             return;
         }
@@ -1937,8 +1932,8 @@ struct MinMax {
 }
 
 impl MinMax {
-    fn new() -> MinMax {
-        MinMax {
+    fn new() -> Self {
+        Self {
             min: None,
             max: None,
         }

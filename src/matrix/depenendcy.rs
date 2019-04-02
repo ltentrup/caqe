@@ -12,8 +12,8 @@ pub struct DQVariableInfo {
 }
 
 impl VariableInfo for DQVariableInfo {
-    fn new() -> DQVariableInfo {
-        DQVariableInfo {
+    fn new() -> Self {
+        Self {
             scope_id: None,
             bound: false,
             dependencies: FxHashSet::default(),
@@ -52,8 +52,8 @@ pub struct Scope {
 }
 
 impl Scope {
-    pub fn new(dependencies: &FxHashSet<Variable>) -> Scope {
-        Scope {
+    pub fn new(dependencies: &FxHashSet<Variable>) -> Self {
+        Self {
             dependencies: dependencies.clone(),
             existentials: Vec::new(),
         }
@@ -67,9 +67,9 @@ impl Scope {
 impl Dimacs for Scope {
     fn dimacs(&self) -> String {
         let mut dimacs = String::new();
-        for &variable in self.existentials.iter() {
+        for &variable in &self.existentials {
             dimacs.push_str(&format!("d {} ", variable));
-            for &dependency in self.dependencies.iter() {
+            for &dependency in &self.dependencies {
                 dimacs.push_str(&format!("{} ", dependency));
             }
             dimacs.push_str("0\n");
@@ -79,13 +79,13 @@ impl Dimacs for Scope {
 }
 
 impl PartialEq for Scope {
-    fn eq(&self, other: &Scope) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         self.dependencies == other.dependencies
     }
 }
 
 impl PartialOrd for Scope {
-    fn partial_cmp(&self, other: &Scope) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.dependencies.len() == other.dependencies.len() {
             // self can only be equal or incomparable
             if self.dependencies == other.dependencies {
@@ -290,9 +290,9 @@ impl DependencyPrefix {
 
     /// Returns `true` is scope is maximal
     pub fn is_maximal(&self, scope: &Scope) -> bool {
-        self.scopes.iter().fold(true, |val, other| {
+        self.scopes.iter().all(|other| {
             // checks that other is not a strict superset
-            val && (other.dependencies.len() <= scope.dependencies.len()
+            (other.dependencies.len() <= scope.dependencies.len()
                 || !other.dependencies.is_superset(&scope.dependencies))
         })
     }
@@ -302,7 +302,7 @@ impl Prefix for DependencyPrefix {
     type V = DQVariableInfo;
 
     fn new(num_variables: usize) -> Self {
-        DependencyPrefix {
+        Self {
             variables: VariableStore::new(num_variables),
             scopes: Vec::new(),
         }
@@ -375,9 +375,9 @@ impl Dimacs for DependencyPrefix {
         let mut dimacs = String::new();
         let mut universals = FxHashSet::default();
         for scope in &self.scopes {
-            universals = universals.union(&scope.dependencies).map(|x| *x).collect();
+            universals = universals.union(&scope.dependencies).cloned().collect();
         }
-        if universals.len() > 0 {
+        if !universals.is_empty() {
             dimacs.push_str("a ");
             for universal in &universals {
                 dimacs.push_str(&format!("{} ", universal))

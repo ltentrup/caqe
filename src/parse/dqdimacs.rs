@@ -24,12 +24,12 @@ pub fn parse_prefix(
 
     loop {
         // first character after newline, either `e`, `a`, `d`, or literal (in which case we return)
-        match lexer.next()? {
+        match lexer.next_token()? {
             DimacsToken::Quant(q) => match q {
                 QuantKind::Exists => {
                     // dependencies are all prior bound universal variables
                     loop {
-                        match lexer.next()? {
+                        match lexer.next_token()? {
                             DimacsToken::Lit(l) => {
                                 if l.signed() {
                                     return Err(ParseError {
@@ -46,7 +46,7 @@ pub fn parse_prefix(
                             }
                             DimacsToken::Zero => {
                                 // end of quantifier block
-                                lexer.expect_next(DimacsToken::EOL)?;
+                                lexer.expect_next(&DimacsToken::EOL)?;
                                 break;
                             }
                             token => {
@@ -60,7 +60,7 @@ pub fn parse_prefix(
                 }
                 QuantKind::Forall => {
                     loop {
-                        match lexer.next()? {
+                        match lexer.next_token()? {
                             DimacsToken::Lit(l) => {
                                 if l.signed() {
                                     return Err(ParseError {
@@ -76,7 +76,7 @@ pub fn parse_prefix(
                             }
                             DimacsToken::Zero => {
                                 // end of quantifier block
-                                lexer.expect_next(DimacsToken::EOL)?;
+                                lexer.expect_next(&DimacsToken::EOL)?;
                                 break;
                             }
                             token => {
@@ -90,7 +90,7 @@ pub fn parse_prefix(
                 }
                 QuantKind::Henkin => {
                     // the first literal is the existential variable, followed by the dependency set
-                    let existential = match lexer.next()? {
+                    let existential = match lexer.next_token()? {
                         DimacsToken::Lit(l) => {
                             if l.signed() {
                                 return Err(ParseError {
@@ -112,7 +112,7 @@ pub fn parse_prefix(
                     };
                     let mut dependencies = FxHashSet::default();
                     loop {
-                        match lexer.next()? {
+                        match lexer.next_token()? {
                             DimacsToken::Lit(l) => {
                                 if l.signed() {
                                     return Err(ParseError {
@@ -127,7 +127,7 @@ pub fn parse_prefix(
                             }
                             DimacsToken::Zero => {
                                 // end of quantifier block
-                                lexer.expect_next(DimacsToken::EOL)?;
+                                lexer.expect_next(&DimacsToken::EOL)?;
                                 matrix.prefix.add_existential(existential, &dependencies);
                                 break;
                             }

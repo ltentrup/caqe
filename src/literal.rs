@@ -31,19 +31,19 @@ impl Into<usize> for Variable {
 
 impl From<u32> for Variable {
     fn from(val: u32) -> Self {
-        Variable(val)
+        Self(val)
     }
 }
 impl From<usize> for Variable {
     fn from(val: usize) -> Self {
-        Variable(val as u32)
+        Self(val as u32)
     }
 }
 
 impl Literal {
-    pub fn new<V: Into<Variable>>(variable: V, signed: bool) -> Literal {
+    pub fn new<V: Into<Variable>>(variable: V, signed: bool) -> Self {
         let variable = variable.into();
-        Literal {
+        Self {
             x: variable.0 << 1 | (signed as u32),
         }
     }
@@ -53,22 +53,22 @@ impl Literal {
     /// # Examples
     ///
     /// ```
-    /// assert!(caqe::Literal::new(0u32, true).signed());
-    /// assert!(!caqe::Literal::new(0u32, false).signed());
+    /// assert!(caqe::Literal::new(0_u32, true).signed());
+    /// assert!(!caqe::Literal::new(0_u32, false).signed());
     /// ```
-    pub fn signed(&self) -> bool {
+    pub fn signed(self) -> bool {
         (self.x & 1) != 0
     }
 
-    pub fn unsigned(&self) -> Literal {
-        Literal { x: self.x & !1 }
+    pub fn unsigned(self) -> Self {
+        Self { x: self.x & !1 }
     }
 
-    pub fn variable(&self) -> Variable {
+    pub fn variable(self) -> Variable {
         Variable(self.x >> 1)
     }
 
-    pub fn dimacs(&self) -> i32 {
+    pub fn dimacs(self) -> i32 {
         let base = self.variable().0 as i32;
         if self.signed() {
             -base
@@ -79,10 +79,10 @@ impl Literal {
 }
 
 impl ops::Neg for Literal {
-    type Output = Literal;
+    type Output = Self;
 
-    fn neg(self) -> Literal {
-        Literal { x: self.x ^ 1 }
+    fn neg(self) -> Self {
+        Self { x: self.x ^ 1 }
     }
 }
 
@@ -90,7 +90,7 @@ impl From<i32> for Literal {
     fn from(literal: i32) -> Self {
         let signed = literal < 0;
         let abs = Variable(literal.abs() as u32);
-        Literal::new(abs, signed)
+        Self::new(abs, signed)
     }
 }
 
@@ -107,7 +107,7 @@ impl std::fmt::Display for Variable {
 }
 
 impl Assignment {
-    pub(crate) fn hamming(&self, other: &Assignment) -> u32 {
+    pub(crate) fn hamming(&self, other: &Self) -> u32 {
         let mut count = 0;
         for (var, &val) in &self.0 {
             if other.0[var] != val {
@@ -119,8 +119,8 @@ impl Assignment {
 }
 
 impl From<FxHashMap<Variable, bool>> for Assignment {
-    fn from(map: FxHashMap<Variable, bool>) -> Assignment {
-        Assignment(map)
+    fn from(map: FxHashMap<Variable, bool>) -> Self {
+        Self(map)
     }
 }
 

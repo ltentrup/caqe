@@ -35,8 +35,8 @@ pub struct SourcePos {
 }
 
 impl SourcePos {
-    fn new() -> SourcePos {
-        SourcePos { line: 0, column: 0 }
+    fn new() -> Self {
+        Self { line: 0, column: 0 }
     }
 
     fn advance(&mut self, len: usize) {
@@ -66,7 +66,7 @@ impl<'a> CharIterator<'a> {
         let mut chars = content.chars();
         CharIterator {
             next_char: chars.next(),
-            chars: chars,
+            chars,
             pos: SourcePos::new(),
         }
     }
