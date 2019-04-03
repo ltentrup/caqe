@@ -7,6 +7,7 @@ image: "rust:latest"
 before_script:
 - apt-get update -yqq
 - apt-get install -yqq --no-install-recommends build-essential cmake xxd
+- rustup component add clippy-preview rustfmt-preview
 
 # Use cargo to test the project
 cargo:test:
@@ -16,27 +17,18 @@ cargo:test:
 
 # Use cargo to check the source code formatting
 cargo:check-format:
-  stage: test
-  image: rust:latest
-  before_script:
-    - rustup component add rustfmt-preview
   script:
     - rustc --version && cargo --version      # Print version info for debugging
     - cargo fmt --all --verbose -- --check
 
 # Use cargo to run clippy (Rust linter)
 cargo:clippy:
-  stage: test
-  image: rust:latest
-  before_script:
-    - rustup component add clippy-preview
   script:
     - rustc --version && cargo --version      # Print version info for debugging
     - cargo clippy -- -D warnings
 
 # Use cargo to test the project on nightly toolchain
 cargo:test-nightly:
-  stage: test
   image: rustlang/rust:nightly
   script:
     - rustc --version && cargo --version      # Print version info for debugging
