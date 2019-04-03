@@ -1,4 +1,4 @@
-#![warn(clippy::all, clippy::pedantic)]
+#![deny(clippy::all, clippy::pedantic)]
 
 use clap::{App, Arg};
 use simplelog::{CombinedLogger, LevelFilter, TermLogger};

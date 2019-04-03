@@ -673,170 +673,11 @@ impl ScopeSolverData {
     }
 
     fn new_existential(&mut self, matrix: &QMatrix, options: &SolverOptions, scope: &Scope) {
-        let sat_clause = &mut self.sat_solver_assumptions;
-        sat_clause.clear();
-
         // build SAT instance for existential quantifier: abstract all literals that are not contained in quantifier into b- and t-literals
-        'next_clause: for (clause_id, clause) in matrix.enumerate() {
+        for (clause_id, clause) in matrix.enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
-            debug_assert!(sat_clause.is_empty());
 
-            let mut contains_variables = false;
-            let mut contains_outer_var = false;
-            let mut contains_inner_var = false;
-            let mut outer = None;
-            let mut inner = None;
-            let mut current = None;
-
-            for &literal in clause.iter() {
-                let info = matrix.prefix.variables().get(literal.variable());
-                if info.scope_id.unwrap() == self.scope_id {
-                    // variable of current scope
-                    debug_assert!(self.sat.variable_to_sat.contains_key(&literal.variable()));
-                    debug_assert!(info.level == self.level);
-                    self.relevant_clauses.set(clause_id as usize, true);
-                    self.clause_tree_branch.set(clause_id as usize, true);
-                    current = Some(literal);
-                    contains_variables = true;
-                    sat_clause.push(self.sat.lit_to_sat_lit(literal));
-                } else if info.level < scope.level {
-                    outer = Some(literal);
-                    contains_outer_var = true;
-                } else if info.level > scope.level {
-                    inner = Some(literal);
-                    contains_inner_var = true;
-                }
-            }
-
-            // add t- and b-lits to existential quantifiers:
-            // * we add t-lit if there is an outer variable
-            // * we add b-lit if there is an inner variable
-            let need_t_lit = contains_variables && contains_outer_var;
-            let need_b_lit = contains_variables && contains_inner_var;
-
-            let outer_equal_to = None;
-            let inner_equal_to = None;
-
-            if !contains_outer_var && !contains_variables && contains_inner_var {
-                // remove the clause from relevant clauses as current scope (nor any outer) influence it
-                self.relevant_clauses.set(clause_id as usize, false);
-            }
-
-            if !contains_variables {
-                debug_assert!(!need_t_lit);
-                debug_assert!(!need_b_lit);
-                debug_assert!(sat_clause.is_empty());
-                continue;
-            }
-            // check if the clause is equal to another clause w.r.t. variables bound at the current level or outer
-            // in this case, we do not need to add a clause to SAT solver, but rather just need an entry in b-literals
-            if options.abstraction_literal_optimization && need_b_lit && current.is_some() {
-                for &other_clause_id in matrix
-                    .occurrences(current.unwrap())
-                    .filter(|&&id| id < clause_id)
-                {
-                    let other_clause = &matrix.clauses[other_clause_id as usize];
-                    let predicate = |l: &Literal| {
-                        let info = matrix.prefix.variables().get(l.variable());
-                        info.level <= scope.level
-                    };
-                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
-                        debug_assert!(need_b_lit);
-                        if let Some(&b_lit) = self.sat.b_literals.get(&other_clause_id) {
-                            self.sat.b_literals.insert(clause_id, b_lit);
-                            sat_clause.clear();
-                            continue 'next_clause;
-                        }
-                    }
-                }
-            }
-            if false && options.abstraction_literal_optimization && outer.is_some() {
-                for &other_clause_id in matrix
-                    .occurrences(outer.unwrap())
-                    .filter(|&&id| id < clause_id)
-                {
-                    let other_clause = &matrix.clauses[other_clause_id as usize];
-                    let predicate = |l: &Literal| {
-                        let info = matrix.prefix.variables().get(l.variable());
-                        info.level < scope.level
-                    };
-                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
-                        debug_assert!(need_t_lit);
-                        /*let pos = self
-                            .sat
-                            .t_literals
-                            .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
-                        if pos.is_ok() {
-                            let sat_var = self.sat.t_literals[pos.unwrap()].1;
-                            outer_equal_to = Some(sat_var);
-                            break;
-                        }*/
-                    }
-                }
-            }
-            if false && options.abstraction_literal_optimization && inner.is_some() {
-                for &other_clause_id in matrix
-                    .occurrences(inner.unwrap())
-                    .filter(|&&id| id < clause_id)
-                {
-                    let other_clause = &matrix.clauses[other_clause_id as usize];
-                    let predicate = |l: &Literal| {
-                        let info = matrix.prefix.variables().get(l.variable());
-                        info.level > scope.level
-                    };
-                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
-                        debug_assert!(need_b_lit);
-                        /*let pos = self
-                            .sat
-                            .b_literals
-                            .binary_search_by(|elem| elem.0.cmp(&other_clause_id));
-                        if pos.is_ok() {
-                            let sat_var = self.sat.b_literals[pos.unwrap()].1;
-                            inner_equal_to = Some(sat_var);
-                            break;
-                        }*/
-                    }
-                }
-            }
-
-            if need_t_lit {
-                if outer_equal_to.is_none() {
-                    let t_lit = self.sat.new_var();
-                    sat_clause.push(t_lit);
-                    self.sat.t_literals.insert(clause_id, t_lit);
-                    self.sat.reverse_t_literals.insert(t_lit.var(), clause_id);
-                } else {
-                    let t_lit = outer_equal_to.unwrap();
-                    sat_clause.push(t_lit);
-                    // we don't need to add it to t-literals since it will be already assumed by earlier clause
-                    // otherwise, we would assume twice
-                    //self.t_literals.push((clause_id as ClauseId, t_lit));
-                }
-            }
-
-            if need_b_lit {
-                let b_lit = if inner_equal_to.is_none() {
-                    self.sat.new_var()
-                } else {
-                    inner_equal_to.unwrap()
-                };
-                if options.abstraction_equivalence {
-                    for lit in sat_clause.iter() {
-                        self.sat.sat.add_clause(&[lit.not(), b_lit]);
-                    }
-                }
-                sat_clause.push(!b_lit);
-                self.sat.b_literals.insert(clause_id, b_lit);
-            }
-
-            debug_assert!(!sat_clause.is_empty());
-            self.sat.sat.add_clause(sat_clause.as_ref());
-            sat_clause.clear();
-
-            if !contains_inner_var {
-                debug_assert!(contains_variables);
-                self.max_clauses.set(clause_id as usize, true);
-            }
+            self.encode_existential_clause(matrix, options, scope, clause_id, clause);
         }
 
         debug!("Scope {} with level {}", scope.id, scope.level);
@@ -861,103 +702,10 @@ impl ScopeSolverData {
 
     fn new_universal(&mut self, matrix: &QMatrix, options: &SolverOptions, scope: &Scope) {
         // build SAT instance for negation of clauses, i.e., basically we only build binary clauses
-        'next_clause: for (clause_id, clause) in matrix.enumerate() {
+        for (clause_id, clause) in matrix.enumerate() {
             debug_assert!(clause.len() != 0, "unit clauses indicate a problem");
 
-            let mut levels = MinMax::new();
-
-            // check if there is at most one variable bound in current level (and no outer variables)
-            // then one can replace the b-literal by the variable itself
-            let mut single_literal = None;
-            let mut num_scope_variables = 0;
-            for &literal in clause.iter() {
-                let var_level = matrix.prefix.variables().get(literal.variable()).level;
-                levels.update(var_level);
-                if !self.sat.variable_to_sat.contains_key(&literal.variable()) {
-                    continue;
-                }
-                self.relevant_clauses.set(clause_id as usize, true);
-                self.clause_tree_branch.set(clause_id as usize, true);
-                num_scope_variables += 1;
-                if single_literal.is_none() {
-                    single_literal = Some(literal);
-                }
-            }
-            let (min_level, max_level) = levels.get();
-
-            // We check whether the clause is equal to a prior clause w.r.t. outer and current variables.
-            // In this case, we can re-use the b-literal from other clause (and can omit t-literal all together).
-            if options.abstraction_literal_optimization
-                && single_literal.is_some()
-                && (num_scope_variables > 1 || min_level < scope.level)
-            {
-                let literal = single_literal.unwrap();
-                // iterate only over prior clauses
-                for &other_clause_id in matrix
-                    .occurrences(literal)
-                    .filter(|&&id| id < clause_id as ClauseId)
-                {
-                    let other_clause = &matrix.clauses[other_clause_id as usize];
-                    let predicate = |l: &Literal| {
-                        let info = matrix.prefix.variables().get(l.variable());
-                        info.level <= scope.level
-                    };
-                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
-                        let sat_var = self.sat.b_literals[&other_clause_id];
-                        self.sat.b_literals.insert(clause_id as ClauseId, sat_var);
-                        continue 'next_clause;
-                    }
-                }
-            }
-
-            let sat_var;
-
-            // there is a single literal and no outer variables, replace t-literal by literal
-            if options.abstraction_literal_optimization
-                && num_scope_variables == 1
-                && min_level == scope.level
-            {
-                let literal = single_literal.unwrap();
-                sat_var = !self.sat.lit_to_sat_lit(literal);
-            } else if num_scope_variables > 0 {
-                // build abstraction
-                sat_var = self.sat.new_var();
-                for &literal in clause.iter() {
-                    if !self.sat.variable_to_sat.contains_key(&literal.variable()) {
-                        continue;
-                    }
-                    let lit = self.sat.lit_to_sat_lit(literal);
-                    self.sat.sat.add_clause(&[!sat_var, !lit]);
-                }
-            } else {
-                // no variable of current scope
-                // do not add t-literal nor b-literal, we adapt abstraction during solving if needed
-                continue;
-            }
-
-            debug_assert!(self.relevant_clauses[clause_id as usize]);
-
-            let need_t_lit = min_level < scope.level && scope.level <= max_level;
-            let need_b_lit = min_level <= scope.level && scope.level <= max_level;
-
-            debug_assert!(min_level <= scope.level);
-            debug_assert!(max_level >= scope.level);
-
-            if need_t_lit {
-                self.sat.t_literals.insert(clause_id as ClauseId, sat_var);
-                debug_assert!(!self.sat.reverse_t_literals.contains_key(&sat_var.var()));
-                self.sat
-                    .reverse_t_literals
-                    .insert(sat_var.var(), clause_id as ClauseId);
-            }
-
-            if need_b_lit {
-                self.sat.b_literals.insert(clause_id as ClauseId, sat_var);
-            }
-
-            if min_level == scope.level {
-                self.max_clauses.set(clause_id as usize, true);
-            }
+            self.encode_universal_clause(matrix, options, scope, clause_id, clause);
         }
 
         debug!("Scope {} with level {}", scope.id, scope.level);
@@ -977,6 +725,266 @@ impl ScopeSolverData {
                 b_literals.push_str(&format!(" b{}", clause_id));
             }
             debug!("b-literals: {}", b_literals);
+        }
+    }
+
+    #[allow(clippy::cyclomatic_complexity)]
+    fn encode_existential_clause(
+        &mut self,
+        matrix: &QMatrix,
+        options: &SolverOptions,
+        scope: &Scope,
+        clause_id: ClauseId,
+        clause: &Clause,
+    ) {
+        let sat_clause = &mut self.sat_solver_assumptions;
+        sat_clause.clear();
+
+        let mut contains_variables = false;
+        let mut contains_outer_var = false;
+        let mut contains_inner_var = false;
+        let mut outer = None;
+        let mut inner = None;
+        let mut current = None;
+
+        debug_assert!(sat_clause.is_empty());
+
+        for &literal in clause.iter() {
+            let info = matrix.prefix.variables().get(literal.variable());
+            if info.scope_id.unwrap() == self.scope_id {
+                // variable of current scope
+                debug_assert!(self.sat.variable_to_sat.contains_key(&literal.variable()));
+                debug_assert!(info.level == self.level);
+                self.relevant_clauses.set(clause_id as usize, true);
+                self.clause_tree_branch.set(clause_id as usize, true);
+                current = Some(literal);
+                contains_variables = true;
+                sat_clause.push(self.sat.lit_to_sat_lit(literal));
+            } else if info.level < scope.level {
+                outer = Some(literal);
+                contains_outer_var = true;
+            } else if info.level > scope.level {
+                inner = Some(literal);
+                contains_inner_var = true;
+            }
+        }
+
+        // add t- and b-lits to existential quantifiers:
+        // * we add t-lit if there is an outer variable
+        // * we add b-lit if there is an inner variable
+        let need_t_lit = contains_variables && contains_outer_var;
+        let need_b_lit = contains_variables && contains_inner_var;
+
+        let mut outer_equal_to = None;
+        let mut inner_equal_to = None;
+
+        if !contains_outer_var && !contains_variables && contains_inner_var {
+            // remove the clause from relevant clauses as current scope (nor any outer) influence it
+            self.relevant_clauses.set(clause_id as usize, false);
+        }
+
+        if !contains_variables {
+            debug_assert!(!need_t_lit);
+            debug_assert!(!need_b_lit);
+            debug_assert!(sat_clause.is_empty());
+            return;
+        }
+        // check if the clause is equal to another clause w.r.t. variables bound at the current level or outer
+        // in this case, we do not need to add a clause to SAT solver, but rather just need an entry in b-literals
+        if options.abstraction_literal_optimization && need_b_lit && current.is_some() {
+            for &other_clause_id in matrix
+                .occurrences(current.unwrap())
+                .filter(|&&id| id < clause_id)
+            {
+                let other_clause = &matrix.clauses[other_clause_id as usize];
+                let predicate = |l: &Literal| {
+                    let info = matrix.prefix.variables().get(l.variable());
+                    info.level <= scope.level
+                };
+                if clause.is_equal_wrt_predicate(other_clause, predicate) {
+                    debug_assert!(need_b_lit);
+                    if let Some(&b_lit) = self.sat.b_literals.get(&other_clause_id) {
+                        self.sat.b_literals.insert(clause_id, b_lit);
+                        sat_clause.clear();
+                        return;
+                    }
+                }
+            }
+        }
+        if options.abstraction_literal_optimization && outer.is_some() {
+            for &other_clause_id in matrix
+                .occurrences(outer.unwrap())
+                .filter(|&&id| id < clause_id)
+            {
+                let other_clause = &matrix.clauses[other_clause_id as usize];
+                let predicate = |l: &Literal| {
+                    let info = matrix.prefix.variables().get(l.variable());
+                    info.level < scope.level
+                };
+                if clause.is_equal_wrt_predicate(other_clause, predicate) {
+                    debug_assert!(need_t_lit);
+                    if let Some(t_lit) = self.sat.t_literals.get(&other_clause_id) {
+                        outer_equal_to = Some(*t_lit);
+                        break;
+                    }
+                }
+            }
+        }
+        if options.abstraction_literal_optimization && inner.is_some() {
+            for &other_clause_id in matrix
+                .occurrences(inner.unwrap())
+                .filter(|&&id| id < clause_id)
+            {
+                let other_clause = &matrix.clauses[other_clause_id as usize];
+                let predicate = |l: &Literal| {
+                    let info = matrix.prefix.variables().get(l.variable());
+                    info.level > scope.level
+                };
+                if clause.is_equal_wrt_predicate(other_clause, predicate) {
+                    debug_assert!(need_b_lit);
+                    if let Some(b_lit) = self.sat.t_literals.get(&other_clause_id) {
+                        inner_equal_to = Some(*b_lit);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if need_t_lit {
+            if outer_equal_to.is_none() {
+                let t_lit = self.sat.new_var();
+                sat_clause.push(t_lit);
+                self.sat.t_literals.insert(clause_id, t_lit);
+                self.sat.reverse_t_literals.insert(t_lit.var(), clause_id);
+            } else {
+                let t_lit = outer_equal_to.unwrap();
+                sat_clause.push(t_lit);
+                // we don't need to add it to t-literals since it will be already assumed by earlier clause
+                // otherwise, we would assume twice
+                //self.t_literals.push((clause_id as ClauseId, t_lit));
+            }
+        }
+
+        if need_b_lit {
+            let b_lit = if inner_equal_to.is_none() {
+                self.sat.new_var()
+            } else {
+                inner_equal_to.unwrap()
+            };
+            if options.abstraction_equivalence {
+                for lit in sat_clause.iter() {
+                    self.sat.sat.add_clause(&[lit.not(), b_lit]);
+                }
+            }
+            sat_clause.push(!b_lit);
+            self.sat.b_literals.insert(clause_id, b_lit);
+        }
+
+        debug_assert!(!sat_clause.is_empty());
+        self.sat.sat.add_clause(sat_clause.as_ref());
+        sat_clause.clear();
+
+        if !contains_inner_var {
+            debug_assert!(contains_variables);
+            self.max_clauses.set(clause_id as usize, true);
+        }
+    }
+
+    fn encode_universal_clause(
+        &mut self,
+        matrix: &QMatrix,
+        options: &SolverOptions,
+        scope: &Scope,
+        clause_id: ClauseId,
+        clause: &Clause,
+    ) {
+        // check if there is at most one variable bound in current level (and no outer variables)
+        // then one can replace the b-literal by the variable itself
+        let mut single_literal = None;
+        let mut num_scope_variables = 0;
+        let mut contains_outer = false;
+        for &literal in clause.iter() {
+            let var_level = matrix.prefix.variables().get(literal.variable()).level;
+            if var_level < scope.level {
+                contains_outer = true;
+            }
+            if !self.sat.variable_to_sat.contains_key(&literal.variable()) {
+                continue;
+            }
+            self.relevant_clauses.set(clause_id as usize, true);
+            self.clause_tree_branch.set(clause_id as usize, true);
+            num_scope_variables += 1;
+            if single_literal.is_none() {
+                single_literal = Some(literal);
+            }
+        }
+
+        // We check whether the clause is equal to a prior clause w.r.t. outer and current variables.
+        // In this case, we can re-use the b-literal from other clause (and can omit t-literal all together).
+        if options.abstraction_literal_optimization
+            && single_literal.is_some()
+            && (num_scope_variables > 1 || contains_outer)
+        {
+            let literal = single_literal.unwrap();
+            // iterate only over prior clauses
+            for &other_clause_id in matrix
+                .occurrences(literal)
+                .filter(|&&id| id < clause_id as ClauseId)
+            {
+                let other_clause = &matrix.clauses[other_clause_id as usize];
+                let predicate = |l: &Literal| {
+                    let info = matrix.prefix.variables().get(l.variable());
+                    info.level <= scope.level
+                };
+                if clause.is_equal_wrt_predicate(other_clause, predicate) {
+                    let sat_var = self.sat.b_literals[&other_clause_id];
+                    self.sat.b_literals.insert(clause_id as ClauseId, sat_var);
+                    return;
+                }
+            }
+        }
+
+        let sat_var;
+
+        // there is a single literal and no outer variables, replace t-literal by literal
+        if options.abstraction_literal_optimization && num_scope_variables == 1 && !contains_outer {
+            let literal = single_literal.unwrap();
+            sat_var = !self.sat.lit_to_sat_lit(literal);
+        } else if num_scope_variables > 0 {
+            // build abstraction
+            sat_var = self.sat.new_var();
+            for &literal in clause.iter() {
+                if !self.sat.variable_to_sat.contains_key(&literal.variable()) {
+                    continue;
+                }
+                let lit = self.sat.lit_to_sat_lit(literal);
+                self.sat.sat.add_clause(&[!sat_var, !lit]);
+            }
+        } else {
+            // no variable of current scope
+            // do not add t-literal nor b-literal, we adapt abstraction during solving if needed
+            return;
+        }
+
+        debug_assert!(self.relevant_clauses[clause_id as usize]);
+
+        let need_t_lit = contains_outer;
+        let need_b_lit = true;
+
+        if need_t_lit {
+            self.sat.t_literals.insert(clause_id as ClauseId, sat_var);
+            debug_assert!(!self.sat.reverse_t_literals.contains_key(&sat_var.var()));
+            self.sat
+                .reverse_t_literals
+                .insert(sat_var.var(), clause_id as ClauseId);
+        }
+
+        if need_b_lit {
+            self.sat.b_literals.insert(clause_id as ClauseId, sat_var);
+        }
+
+        if !contains_outer {
+            self.max_clauses.set(clause_id as usize, true);
         }
     }
 
@@ -1401,6 +1409,7 @@ impl ScopeSolverData {
         let mut debug_print = String::new();
 
         for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
+            #[allow(clippy::cast_possible_truncation)]
             let clause_id = i as ClauseId;
             let b_lit = self.sat.add_b_lit_and_adapt_abstraction(clause_id);
             blocking_clause.push(b_lit);
@@ -1435,6 +1444,7 @@ impl ScopeSolverData {
 
         // was the clause processed before?
         for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
+            #[allow(clippy::cast_possible_truncation)]
             let clause_id = i as ClauseId;
             if let Some(&(literal, opt)) = self.strong_unsat_cache.get(&clause_id) {
                 if opt {
@@ -1531,6 +1541,7 @@ impl ScopeSolverData {
             if !entry[i] {
                 continue;
             }
+            #[allow(clippy::cast_possible_truncation)]
             let clause_id = i as ClauseId;
             let clause = &matrix.clauses[i];
             for &literal in clause.iter() {
@@ -1852,6 +1863,7 @@ impl ScopeSolverData {
                 }
                 sat_clause.push(sat_var);
             }
+            #[allow(clippy::cast_possible_truncation)]
             let clause_id = i as ClauseId;
             if sat.b_literals.get(&clause_id).is_some() {
                 let sat_lit = sat.add_b_lit_and_adapt_abstraction(clause_id);
@@ -1922,50 +1934,6 @@ impl ScopeSolverData {
         }
         debug!("conflict clause {:?}", literals);
         matrix.add(Clause::new(literals));
-    }
-}
-
-struct MinMax {
-    min: Option<u32>,
-    max: Option<u32>,
-}
-
-impl MinMax {
-    fn new() -> Self {
-        Self {
-            min: None,
-            max: None,
-        }
-    }
-
-    fn update(&mut self, value: u32) {
-        match (self.min, self.max) {
-            (None, None) => {
-                self.min = Some(value);
-                self.max = Some(value);
-            }
-            (Some(min), Some(max)) => {
-                if value < min {
-                    self.min = Some(value);
-                }
-                if value > max {
-                    self.max = Some(value);
-                }
-            }
-            _ => panic!("inconsistent internal state"),
-        }
-    }
-
-    fn min(&self) -> u32 {
-        self.min.unwrap()
-    }
-
-    fn max(&self) -> u32 {
-        self.max.unwrap()
-    }
-
-    fn get(&self) -> (u32, u32) {
-        (self.min(), self.max())
     }
 }
 
