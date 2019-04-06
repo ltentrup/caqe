@@ -13,19 +13,19 @@ before_script:
 cargo:test:
   script:
   - rustc --version && cargo --version      # Print version info for debugging
-  - cargo test --all --verbose
+  - cargo test --all --all-features --verbose
 
 # Use cargo to check the source code formatting
 cargo:check-format:
   script:
     - rustc --version && cargo --version      # Print version info for debugging
-    - cargo fmt --all --verbose -- --check
+    - cargo fmt --all --all-features --verbose -- --check
 
 # Use cargo to run clippy (Rust linter)
 cargo:clippy:
   script:
     - rustc --version && cargo --version      # Print version info for debugging
-    - cargo clippy -- -D warnings
+    - cargo clippy --all-features -- -D warnings
 
 # Use cargo to test the project on nightly toolchain
 cargo:test-nightly:

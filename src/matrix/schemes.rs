@@ -122,7 +122,7 @@ e 2 3 0
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.refl_res_path_dep_scheme();
 
-        assert!(!matrix.prefix.depends_on(2u32, 4u32));
-        assert!(!matrix.prefix.depends_on(3u32, 4u32));
+        assert!(!matrix.prefix.depends_on(2_u32, 4_u32));
+        assert!(!matrix.prefix.depends_on(3_u32, 4_u32));
     }
 }

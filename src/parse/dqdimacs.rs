@@ -169,10 +169,10 @@ mod tests {
         assert!(result.is_ok());
         let matrix = result.unwrap();
 
-        let v1 = Variable::from(1u32);
-        let v2 = Variable::from(2u32);
-        let v3 = Variable::from(3u32);
-        let v4 = Variable::from(4u32);
+        let v1 = Variable::from(1_u32);
+        let v2 = Variable::from(2_u32);
+        let v3 = Variable::from(3_u32);
+        let v4 = Variable::from(4_u32);
 
         // prefix
         let variables = matrix.prefix.variables();

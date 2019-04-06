@@ -400,10 +400,10 @@ mod tests {
     #[test]
     fn test_closure() {
         let mut prefix = DependencyPrefix::new(4);
-        let v1 = Variable::from(1u32);
-        let v2 = Variable::from(2u32);
-        let v3 = Variable::from(3u32);
-        let v4 = Variable::from(4u32);
+        let v1 = Variable::from(1_u32);
+        let v2 = Variable::from(2_u32);
+        let v3 = Variable::from(3_u32);
+        let v4 = Variable::from(4_u32);
         prefix.add_universal(v1);
         prefix.add_universal(v2);
         let mut dep = FxHashSet::default();
@@ -448,12 +448,12 @@ mod tests {
     #[test]
     fn test_closure_recursive() {
         let mut prefix = DependencyPrefix::new(6);
-        let v1 = Variable::from(1u32);
-        let v2 = Variable::from(2u32);
-        let v3 = Variable::from(3u32);
-        let v4 = Variable::from(4u32);
-        let v5 = Variable::from(5u32);
-        let v6 = Variable::from(6u32);
+        let v1 = Variable::from(1_u32);
+        let v2 = Variable::from(2_u32);
+        let v3 = Variable::from(3_u32);
+        let v4 = Variable::from(4_u32);
+        let v5 = Variable::from(5_u32);
+        let v6 = Variable::from(6_u32);
 
         prefix.add_universal(v1);
         prefix.add_universal(v2);
@@ -486,12 +486,12 @@ mod tests {
     #[test]
     fn test_dep_on() {
         let mut prefix = DependencyPrefix::new(6);
-        let v1 = Variable::from(1u32);
-        let v2 = Variable::from(2u32);
-        let v3 = Variable::from(3u32);
-        let v4 = Variable::from(4u32);
-        let v5 = Variable::from(5u32);
-        let v6 = Variable::from(6u32);
+        let v1 = Variable::from(1_u32);
+        let v2 = Variable::from(2_u32);
+        let v3 = Variable::from(3_u32);
+        let v4 = Variable::from(4_u32);
+        let v5 = Variable::from(5_u32);
+        let v6 = Variable::from(6_u32);
 
         prefix.add_universal(v1);
         prefix.add_universal(v2);
@@ -540,8 +540,8 @@ mod tests {
 
     #[test]
     fn test_scope_comparison() {
-        let v1 = Variable::from(1u32);
-        let v2 = Variable::from(2u32);
+        let v1 = Variable::from(1_u32);
+        let v2 = Variable::from(2_u32);
         let scope1 = Scope::new(&vec![v1].iter().map(|x| *x).collect());
         let scope2 = Scope::new(&vec![v2].iter().map(|x| *x).collect());
         let empty = Scope::new(&FxHashSet::default());

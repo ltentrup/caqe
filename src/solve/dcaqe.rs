@@ -251,7 +251,11 @@ impl<'a> DCaqeSolver<'a> {
                                     if abstraction.scope_id.unwrap() == scope_id {
                                         // found the existential level to refine
                                         abstraction.refine(&self.global.unsat_core);
-                                        Self::standard_expansion(&self.global, matrix, abstraction);
+                                        Self::standard_expansion(
+                                            &mut self.global,
+                                            matrix,
+                                            abstraction,
+                                        );
                                     }
                                 }
                             }
@@ -353,7 +357,7 @@ impl<'a> DCaqeSolver<'a> {
     }
 
     fn standard_expansion(
-        global: &GlobalSolverData,
+        global: &mut GlobalSolverData,
         matrix: &DQMatrix,
         abstraction: &mut Abstraction,
     ) {
@@ -1275,6 +1279,9 @@ impl Abstraction {
     fn refine(&mut self, learned: &BitVec) {
         trace!("refine");
 
+        #[cfg(feature = "statistics")]
+        let mut _timer = self.statistics.start(SolverScopeEvents::Refinement);
+
         let blocking_clause = &mut self.sat_solver_assumptions;
         blocking_clause.clear();
 
@@ -1480,7 +1487,7 @@ impl Abstraction {
 
     #[cfg(feature = "statistics")]
     pub fn print_statistics(&self) {
-        println!("scope {:?} at level {}", self.scope_id, self.level);
+        println!("scope {:?} at level {}", self.scope_id, self.level);
         self.statistics.print();
     }
 }

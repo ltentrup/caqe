@@ -12,14 +12,14 @@ where
 }
 
 impl<E: Hash + Eq + Ord> CountingStats<E> {
-    pub fn new() -> CountingStats<E> {
-        CountingStats {
+    pub fn new() -> Self {
+        Self {
             values: HashMap::new(),
         }
     }
 
-    pub fn get(&self, value: E) -> usize {
-        *self.values.get(&value).unwrap_or(&0)
+    pub fn get(&self, value: &E) -> usize {
+        *self.values.get(value).unwrap_or(&0)
     }
 
     pub fn inc(&mut self, value: E) {
@@ -38,7 +38,7 @@ impl<E: fmt::Display + Hash + Eq + Ord + Copy> fmt::Display for CountingStats<E>
         let mut vals: Vec<_> = self.values.keys().collect();
         vals.sort();
         for event in &vals {
-            write!(f, "{}\t{}\n", event, self.get(**event))?;
+            writeln!(f, "{}\t{}", event, self.get(*event))?;
         }
         Ok(())
     }
@@ -64,7 +64,7 @@ impl<E: Eq + Hash + Copy> Timer<E> {
     pub fn stop(&mut self) {
         let duration = self.begin.elapsed();
         let mut values = self.pointer.borrow_mut();
-        let e = values.entry(self.phase).or_insert(Vec::new());
+        let e = values.entry(self.phase).or_insert_with(Vec::new);
         e.push(duration);
         self.stopped = true;
     }
@@ -86,8 +86,8 @@ where
 }
 
 impl<E: Eq + Hash + Copy> TimingStats<E> {
-    pub fn new() -> TimingStats<E> {
-        TimingStats {
+    pub fn new() -> Self {
+        Self {
             pointer: Rc::new(RefCell::new(HashMap::new())),
         }
     }
@@ -95,7 +95,7 @@ impl<E: Eq + Hash + Copy> TimingStats<E> {
     pub fn start(&self, phase: E) -> Timer<E> {
         Timer {
             pointer: self.pointer.clone(),
-            phase: phase,
+            phase,
             begin: Instant::now(),
             stopped: false,
         }
@@ -103,26 +103,28 @@ impl<E: Eq + Hash + Copy> TimingStats<E> {
 
     pub fn count(&self, phase: E) -> usize {
         let values = self.pointer.borrow();
-        values.get(&phase).map(|v| v.len()).unwrap_or(0)
+        values.get(&phase).map_or(0, |v| v.len())
     }
 
     pub fn sum(&self, phase: E) -> Duration {
         let values = self.pointer.borrow();
         values
             .get(&phase)
-            .map(|v| v.iter().sum())
-            .unwrap_or(Duration::new(0, 0))
+            .map_or_else(|| Duration::new(0, 0), |v| v.iter().sum())
     }
 
     pub fn avg(&self, phase: E) -> Duration {
-        self.sum(phase) / self.count(phase) as u32
+        #[allow(clippy::cast_possible_truncation)]
+        let count = self.count(phase) as u32;
+
+        self.sum(phase) / count
     }
 
     pub fn min(&self, phase: E) -> Duration {
         let values = self.pointer.borrow();
-        values
-            .get(&phase)
-            .map(|v| {
+        values.get(&phase).map_or_else(
+            || Duration::new(0, 0),
+            |v| {
                 v.iter()
                     .fold(Duration::new(u64::max_value(), 0), |acc, &val| {
                         if acc < val {
@@ -131,15 +133,15 @@ impl<E: Eq + Hash + Copy> TimingStats<E> {
                             val
                         }
                     })
-            })
-            .unwrap_or(Duration::new(0, 0))
+            },
+        )
     }
 
     pub fn max(&self, phase: E) -> Duration {
         let values = self.pointer.borrow();
-        values
-            .get(&phase)
-            .map(|v| {
+        values.get(&phase).map_or_else(
+            || Duration::new(0, 0),
+            |v| {
                 v.iter().fold(
                     Duration::new(0, 0),
                     |acc, &val| {
@@ -150,8 +152,8 @@ impl<E: Eq + Hash + Copy> TimingStats<E> {
                         }
                     },
                 )
-            })
-            .unwrap_or(Duration::new(0, 0))
+            },
+        )
     }
 }
 
@@ -168,13 +170,13 @@ impl<E: Eq + Hash + Copy + fmt::Display> TimingStats<E> {
                 stat,
                 self.count(stat),
                 sum.as_secs(),
-                sum.subsec_nanos() / 1_000_000,
+                sum.subsec_millis(),
                 avg.as_secs(),
-                avg.subsec_nanos() / 1_000_000,
+                avg.subsec_millis(),
                 min.as_secs(),
-                min.subsec_nanos() / 1_000_000,
+                min.subsec_millis(),
                 max.as_secs(),
-                max.subsec_nanos() / 1_000_000
+                max.subsec_millis()
             );
         }
     }
@@ -185,7 +187,7 @@ mod tests {
 
     use super::*;
 
-    #[derive(PartialEq, Eq, Hash, Clone, Copy)]
+    #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
     enum TestEnum {
         Case1,
         Case2,
@@ -195,12 +197,12 @@ mod tests {
     fn counter() {
         let mut counter = CountingStats::new();
         counter.inc(TestEnum::Case1);
-        assert_eq!(counter.get(TestEnum::Case1), 1);
-        assert_eq!(counter.get(TestEnum::Case2), 0);
+        assert_eq!(counter.get(&TestEnum::Case1), 1);
+        assert_eq!(counter.get(&TestEnum::Case2), 0);
         counter.inc(TestEnum::Case2);
         counter.inc(TestEnum::Case2);
-        assert_eq!(counter.get(TestEnum::Case1), 1);
-        assert_eq!(counter.get(TestEnum::Case2), 2);
+        assert_eq!(counter.get(&TestEnum::Case1), 1);
+        assert_eq!(counter.get(&TestEnum::Case2), 2);
     }
 
     #[test]
@@ -210,7 +212,7 @@ mod tests {
         let mut timer2 = timing.start(TestEnum::Case2);
         timer1.stop();
         {
-            let timer1 = timing.start(TestEnum::Case1);
+            let _timer = timing.start(TestEnum::Case1);
             // atomatically stopped when dropped
         }
         timer2.stop();

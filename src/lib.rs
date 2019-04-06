@@ -416,6 +416,7 @@ impl CaqeConfig {
 
             let _removed = matrix.refl_res_path_dep_scheme();
 
+            #[allow(clippy::used_underscore_binding)]
             #[cfg(feature = "statistics")]
             counter.inc_by(MatrixStats::RemovedDependencies, _removed);
 
@@ -577,6 +578,7 @@ impl DCaqeConfig {
 
             let _removed = matrix.refl_res_path_dep_scheme();
 
+            #[allow(clippy::used_underscore_binding)]
             #[cfg(feature = "statistics")]
             counter.inc_by(MatrixStats::RemovedDependencies, _removed);
 
