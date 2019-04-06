@@ -19,7 +19,7 @@ cargo:test:
 cargo:check-format:
   script:
     - rustc --version && cargo --version      # Print version info for debugging
-    - cargo fmt --all --all-features --verbose -- --check
+    - cargo fmt --all --verbose -- --check
 
 # Use cargo to run clippy (Rust linter)
 cargo:clippy:
@@ -28,9 +28,9 @@ cargo:clippy:
     - cargo clippy --all-features -- -D warnings
 
 # Use cargo to test the project on nightly toolchain
-cargo:test-nightly:
-  image: rustlang/rust:nightly
-  script:
-    - rustc --version && cargo --version      # Print version info for debugging
-    - cargo test --all --all-features --verbose
-  allow_failure: true
+# cargo:test-nightly:
+#   image: rustlang/rust:nightly
+#   script:
+#     - rustc --version && cargo --version      # Print version info for debugging
+#     - cargo test --all --all-features --verbose
+#   allow_failure: true
