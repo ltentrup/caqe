@@ -542,10 +542,10 @@ mod tests {
     fn test_scope_comparison() {
         let v1 = Variable::from(1_u32);
         let v2 = Variable::from(2_u32);
-        let scope1 = Scope::new(&vec![v1].iter().map(|x| *x).collect());
-        let scope2 = Scope::new(&vec![v2].iter().map(|x| *x).collect());
+        let scope1 = Scope::new(&vec![v1].iter().cloned().collect());
+        let scope2 = Scope::new(&vec![v2].iter().cloned().collect());
         let empty = Scope::new(&FxHashSet::default());
-        let full = Scope::new(&vec![v1, v2].iter().map(|x| *x).collect());
+        let full = Scope::new(&vec![v1, v2].iter().cloned().collect());
 
         assert_eq!(scope1.partial_cmp(&scope1), Some(Ordering::Equal));
         assert_eq!(scope1.partial_cmp(&scope2), None);
