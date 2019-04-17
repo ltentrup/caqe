@@ -1,9 +1,10 @@
+use super::dimacs::Dimacs;
+use serde::{Deserialize, Serialize};
+
 pub mod caqe;
 pub mod dcaqe;
 
-use super::dimacs::Dimacs;
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub enum SolverResult {
     Satisfiable = 10,
     Unsatisfiable = 20,

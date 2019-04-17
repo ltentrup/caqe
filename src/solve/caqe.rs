@@ -6,36 +6,61 @@ use bit_vec::BitVec;
 use cryptominisat::*;
 use log::{debug, info, trace};
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::Not as _;
+use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "statistics")]
 use crate::utils::statistics::TimingStats;
 
 type QMatrix = Matrix<HierarchicalPrefix>;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SolverOptions {
+    pub abstraction: AbstractionOptions,
+    pub expansion: ExpansionOptions,
     pub strong_unsat_refinement: bool,
-    pub expansion_refinement: Option<ExpansionMode>,
     pub refinement_literal_subsumption: bool,
-    pub abstraction_literal_optimization: bool,
-    pub extended_abstraction_literal_optimization: bool,
     pub miniscoping: bool,
-    pub dependency_schemes: bool,
     pub build_conflict_clauses: bool,
-    pub conflict_clause_expansion: bool,
     pub flip_assignments_from_sat_solver: bool,
-    pub skip_levels: bool,
-    pub abstraction_equivalence: bool,
+    pub skip_levels: Option<SkipLevelMode>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbstractionOptions {
+    pub reuse_b_literals: bool,
+    pub reuse_t_literals: bool,
+    pub additional_t_literal_constraints: bool,
+    pub additional_b_literal_constraints: bool,
+    pub equivalence_constraints: bool,
+    pub universal_reuse_b_literals: bool,
+    pub replace_t_literal_by_variable: bool,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpansionOptions {
+    pub expansion_refinement: Option<ExpansionMode>,
+    pub dependency_schemes: bool,
+    pub conflict_clause_expansion: bool,
+    pub hamming_heuristics: bool,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpansionMode {
     /// Light expansion, i.e., innermost EAE quantifier only
     Light,
     /// Full expansion
     Full,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SkipLevelMode {
+    /// Build refinements
+    Refinements,
+    /// Do not build Refinements
+    NoRefinements,
 }
 
 #[allow(clippy::module_name_repetitions)]
@@ -54,6 +79,7 @@ struct ScopeRecursiveSolver {
 struct GlobalSolverData {
     options: SolverOptions,
     conflicts: Vec<(BitVec, u32)>,
+    interrupted: Arc<Mutex<bool>>,
 }
 
 /// Contains the SAT solver and the translation between Variables and SAT solver literals
@@ -141,8 +167,23 @@ impl<'a> CaqeSolver<'a> {
         }
     }
 
+    pub(crate) fn set_interrupt(&mut self, interrupt: Arc<Mutex<bool>>) {
+        self.global.interrupted = interrupt;
+    }
+
     #[cfg(feature = "statistics")]
     pub(crate) fn print_statistics(&self, statistics: Statistics) {
+        println!("iterations: {}", self.get_iterations());
+
+        if statistics == Statistics::Detailed {
+            for abstraction in &self.abstraction {
+                abstraction.print_statistics();
+            }
+        }
+    }
+
+    #[cfg(feature = "statistics")]
+    pub(crate) fn get_iterations(&self) -> usize {
         fn get_iterations_rec(scope: &ScopeRecursiveSolver) -> usize {
             let num = scope
                 .data
@@ -159,13 +200,8 @@ impl<'a> CaqeSolver<'a> {
         for abstraction in &self.abstraction {
             iterations += get_iterations_rec(abstraction);
         }
-        println!("iterations: {}", iterations);
 
-        if statistics == Statistics::Detailed {
-            for abstraction in &self.abstraction {
-                abstraction.print_statistics();
-            }
-        }
+        iterations
     }
 
     pub fn qdimacs_output(&self) -> qdimacs::PartialQDIMACSCertificate {
@@ -239,10 +275,13 @@ impl<'a> super::Solver for CaqeSolver<'a> {
     fn solve(&mut self) -> SolverResult {
         for abstraction in &mut self.abstraction {
             self.global.conflicts.clear();
-            let result = abstraction.solve_recursive(self.matrix, &mut self.global);
-            if result == SolverResult::Unsatisfiable {
-                self.result = SolverResult::Unsatisfiable;
-                return result;
+
+            match abstraction.solve_recursive(self.matrix, &mut self.global) {
+                result if result != SolverResult::Satisfiable => {
+                    self.result = result;
+                    return result;
+                }
+                _ => {}
             }
         }
         self.result = SolverResult::Satisfiable;
@@ -253,18 +292,27 @@ impl<'a> super::Solver for CaqeSolver<'a> {
 impl Default for SolverOptions {
     fn default() -> Self {
         Self {
+            abstraction: AbstractionOptions {
+                reuse_b_literals: true,
+                reuse_t_literals: true,
+                additional_t_literal_constraints: true,
+                additional_b_literal_constraints: false,
+                equivalence_constraints: true,
+                universal_reuse_b_literals: true,
+                replace_t_literal_by_variable: true,
+            },
+            expansion: ExpansionOptions {
+                expansion_refinement: Some(ExpansionMode::Full),
+                dependency_schemes: false,
+                conflict_clause_expansion: true,
+                hamming_heuristics: false,
+            },
             strong_unsat_refinement: false,
-            expansion_refinement: Some(ExpansionMode::Full),
             refinement_literal_subsumption: false,
-            abstraction_literal_optimization: true,
-            extended_abstraction_literal_optimization: true,
             miniscoping: true,
-            dependency_schemes: false,
             build_conflict_clauses: false,
-            conflict_clause_expansion: true,
             flip_assignments_from_sat_solver: false,
-            skip_levels: true,
-            abstraction_equivalence: false,
+            skip_levels: Some(SkipLevelMode::Refinements),
         }
     }
 }
@@ -274,6 +322,7 @@ impl GlobalSolverData {
         Self {
             options,
             conflicts: Vec::new(),
+            interrupted: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -429,6 +478,10 @@ impl ScopeRecursiveSolver {
     ) -> SolverResult {
         trace!("solve_recursive");
 
+        if *global.interrupted.lock().expect("mutex failed") {
+            return SolverResult::Unknown;
+        }
+
         // mutable split
         let current = &mut self.data;
         let next = &mut self.next;
@@ -487,19 +540,27 @@ impl ScopeRecursiveSolver {
 
                             let new_assignments =
                                 current.update_expansion_tree(matrix, scope, global);
-                            if global.options.skip_levels
-                                && !current.is_influenced_by_witness(matrix, scope)
+                            
+                            let skip_level = global.options.skip_levels.is_some()
+                                && !current.is_influenced_by_witness(matrix, scope);
+                            
+                            if !skip_level || global.options.skip_levels.unwrap() == SkipLevelMode::Refinements {
+                                current.refine(matrix, scope, global, new_assignments.clone());
+                            } 
+                            if skip_level
                             {
                                 // copy witness
                                 current.entry.clear();
                                 current.entry.union(&scope.data.entry);
 
                                 // push assignments as well
-                                current.current_expansions.extend(new_assignments);
+                                if global.options.skip_levels.unwrap() == SkipLevelMode::NoRefinements {
+                                    current.current_expansions.extend(new_assignments);
+                                }
 
                                 return bad_result;
                             }
-                            current.refine(matrix, scope, global, new_assignments);
+                            
                             if global.options.build_conflict_clauses {
                                 current.extract_conflict_clause(matrix, scope);
                             }
@@ -791,7 +852,7 @@ impl ScopeSolverData {
         }
         // check if the clause is equal to another clause w.r.t. variables bound at the current level or outer
         // in this case, we do not need to add a clause to SAT solver, but rather just need an entry in b-literals
-        if options.abstraction_literal_optimization && need_b_lit && current.is_some() {
+        if options.abstraction.reuse_b_literals && need_b_lit && current.is_some() {
             for &other_clause_id in matrix
                 .occurrences(current.unwrap())
                 .filter(|&&id| id < clause_id)
@@ -811,7 +872,9 @@ impl ScopeSolverData {
                 }
             }
         }
-        if options.extended_abstraction_literal_optimization && outer.is_some() {
+        // check if there is a clause that is equal with respect to the outer variables,
+        // in this case, we can re-use t-literals
+        if options.abstraction.reuse_t_literals && outer.is_some() {
             for &other_clause_id in matrix
                 .occurrences(outer.unwrap())
                 .filter(|&&id| id < clause_id)
@@ -839,7 +902,7 @@ impl ScopeSolverData {
                 self.sat.reverse_t_literals.insert(t_lit.var(), clause_id);
 
                 // check if we can build additional constraints over the t-literals
-                if options.extended_abstraction_literal_optimization && outer.is_some() {
+                if options.abstraction.additional_t_literal_constraints && outer.is_some() {
                     for &other_clause_id in matrix
                         .occurrences(outer.unwrap())
                         .filter(|&&id| id < clause_id)
@@ -871,7 +934,7 @@ impl ScopeSolverData {
         if need_b_lit {
             let b_lit = self.sat.new_var();
 
-            if options.extended_abstraction_literal_optimization && inner.is_some() {
+            if options.abstraction.additional_b_literal_constraints && inner.is_some() {
                 // build additional constrainst in case there are clauses that subsume the current one
                 for &other_clause_id in matrix
                     .occurrences(inner.unwrap())
@@ -892,7 +955,7 @@ impl ScopeSolverData {
                 }
             }
 
-            if options.abstraction_equivalence {
+            if options.abstraction.equivalence_constraints {
                 for lit in sat_clause.iter() {
                     self.sat.sat.add_clause(&[lit.not(), b_lit]);
                 }
@@ -942,7 +1005,7 @@ impl ScopeSolverData {
 
         // We check whether the clause is equal to a prior clause w.r.t. outer and current variables.
         // In this case, we can re-use the b-literal from other clause (and can omit t-literal all together).
-        if options.abstraction_literal_optimization
+        if options.abstraction.universal_reuse_b_literals
             && single_literal.is_some()
             && (num_scope_variables > 1 || contains_outer)
         {
@@ -968,7 +1031,10 @@ impl ScopeSolverData {
         let sat_var;
 
         // there is a single literal and no outer variables, replace t-literal by literal
-        if options.abstraction_literal_optimization && num_scope_variables == 1 && !contains_outer {
+        if options.abstraction.replace_t_literal_by_variable
+            && num_scope_variables == 1
+            && !contains_outer
+        {
             let literal = single_literal.unwrap();
             sat_var = !self.sat.lit_to_sat_lit(literal);
         } else if num_scope_variables > 0 {
@@ -1387,35 +1453,37 @@ impl ScopeSolverData {
         let options = &global.options;
         let conflicts = &mut global.conflicts;
 
-        #[cfg(debug_assertions)]
-        {
-            if !self.is_universal && global.options.expansion_refinement.is_some() {
-                let current_univ_assignment: Assignment =
-                    next.get_universal_assignmemnt(FxHashMap::default()).into();
-                if let Some(prev_assignment) = &self.prev_assignment {
-                    print!("h{} ", prev_assignment.hamming(&current_univ_assignment));
-                    if !self.current_expansions.is_empty() {
-                        assert_ne!(*prev_assignment, current_univ_assignment);
+        let mut equal_universal_assignments = false;
+
+        if !self.is_universal && global.options.expansion.expansion_refinement.is_some() {
+            let current_univ_assignment: Assignment =
+                next.get_universal_assignmemnt(FxHashMap::default()).into();
+            if let Some(prev_assignment) = &self.prev_assignment {
+                //print!("h{} ", prev_assignment.hamming(&current_univ_assignment));
+                if !self.current_expansions.is_empty() {
+                    debug_assert_ne!(*prev_assignment, current_univ_assignment);
+                    if *prev_assignment == current_univ_assignment {
+                        equal_universal_assignments = true;
                     }
                 }
-                if !self.current_expansions.is_empty() {
-                    self.prev_assignment = Some(current_univ_assignment);
-                }
-                if assignments.is_empty() {
-                    // reset assignments if their is no expansion-tree, e.g.,
-                    // through early termination due to an improved abstraction
-                    self.prev_assignment = None;
-                }
+            }
+            if !self.current_expansions.is_empty() {
+                self.prev_assignment = Some(current_univ_assignment);
+            }
+            if assignments.is_empty() {
+                // reset assignments if their is no expansion-tree, e.g.,
+                // through early termination due to an improved abstraction
+                self.prev_assignment = None;
             }
         }
 
         // store entry in conflicts
-        if !self.is_universal && options.conflict_clause_expansion {
+        if !self.is_universal && options.expansion.conflict_clause_expansion {
             conflicts.push((next.data.entry.clone(), self.level));
         }
 
-        if options.expansion_refinement.is_some()
-            && self.is_expansion_refinement_applicable(next, options)
+        if options.expansion.expansion_refinement.is_some()
+            && self.is_expansion_refinement_applicable(next, options, equal_universal_assignments)
         {
             //debug_assert!(!self.current_expansions.is_empty());
             for assignment in &assignments {
@@ -1628,12 +1696,16 @@ impl ScopeSolverData {
         &self,
         next: &mut ScopeRecursiveSolver,
         options: &SolverOptions,
+        equal_universal_assignments: bool,
     ) -> bool {
-        debug_assert!(options.expansion_refinement.is_some());
+        debug_assert!(options.expansion.expansion_refinement.is_some());
         if self.is_universal {
             return false;
         }
-        if options.expansion_refinement.unwrap() == ExpansionMode::Full {
+        if !equal_universal_assignments && options.expansion.hamming_heuristics {
+            return false;
+        }
+        if options.expansion.expansion_refinement.unwrap() == ExpansionMode::Full {
             return true;
         }
         debug_assert_eq!(next.next.len(), 1, "scope {:?}", self.scope_id);
@@ -1691,7 +1763,7 @@ impl ScopeSolverData {
             self.expand_clause(matrix, data, clause_id, clause, &universal_assignment);
         }
 
-        if !options.conflict_clause_expansion {
+        if !options.expansion.conflict_clause_expansion {
             return;
         }
 
@@ -2554,6 +2626,45 @@ e 6 9 13 0
         assert_eq!(
             solver.qdimacs_output().dimacs(),
             "s cnf 1 13 9\nV 3 0\nV -4 0\nV -5 0\nV 9 0\nV 10 0\nV -11 0\n"
+        );
+    }
+
+    #[test]
+    fn test_abstraction_literal_constraint_regression() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 19 20
+e 1 2 0
+a 3 0
+e 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 0
+-1 0
+1 2 -11 0
+-11 16 0
+1 -11 0
+5 -16 0
+-5 9 0
+7 -9 0
+-7 13 0
+-13 17 0
+8 -17 0
+-8 10 0
+-10 19 0
+18 -19 0
+15 -18 0
+6 -15 0
+1 2 -4 0
+3 -14 0
+-6 12 0
+4 0
+-12 14 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 19 20\nV -1 0\nV 2 0\n"
         );
     }
 }

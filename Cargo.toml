@@ -16,6 +16,11 @@ uncover = "0.1.1"     # test maintainence
 ena = "0.11"          # union-find implementation
 dot = "0.1.4"         # graphviz dot representation of structures
 jemallocator = { version = "0.1.9", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+indicatif = "0.11.0"          # progress bars
+atomicwrites = "0.2.2"  # atomic file writes
+colored-diff = "0.2.1"      # visualize differences in configurations
 
 
 [patch.crates-io]
@@ -32,3 +37,15 @@ lto = true
 codegen-units = 1
 incremental = false
 
+[[bin]]
+name = "caqe"
+path = "src/bin/caqe.rs"
+
+[[bin]]
+name = "dcaqe"
+path = "src/bin/dcaqe.rs"
+
+[[bin]]
+name = "experiment"
+path = "src/bin/experiment.rs"
+required-features = ["statistics"]

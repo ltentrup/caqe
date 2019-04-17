@@ -1,4 +1,5 @@
-#![deny(clippy::all, clippy::pedantic)]
+#![warn(clippy::all, clippy::pedantic)]
+#![deny(unused_must_use)]
 
 use clap::{App, Arg};
 use simplelog::{CombinedLogger, LevelFilter, TermLogger};
@@ -42,6 +43,8 @@ pub mod solve;
 pub use crate::solve::caqe::{CaqeSolver, ExpansionMode, SolverOptions};
 pub use crate::solve::dcaqe::DCaqeSolver;
 pub use crate::solve::{Solver, SolverResult};
+
+pub mod experiment;
 
 #[cfg(feature = "statistics")]
 use utils::statistics::{CountingStats, TimingStats};
@@ -154,6 +157,13 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
 
         let default = |val| if val { "1" } else { "0" };
         app.arg(
+            Arg::with_name("config")
+                .long("--config")
+                .value_name("name_of_config.json")
+                .takes_value(true)
+                .help("Name of the solver configuration file to use (overwrites command line options)"),
+        )
+        .arg(
             Arg::with_name("preprocessor")
                 .help("Sets the preprocessor to use")
                 .long("--preprocessor")
@@ -179,7 +189,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         .arg(
             Arg::with_name("dependency-schemes")
                 .long("--dependency-schemes")
-                .default_value(default(default_options.dependency_schemes))
+                .default_value(default(default_options.expansion.dependency_schemes))
                 .value_name("bool")
                 .takes_value(true)
                 .possible_values(&["0", "1"])
@@ -215,16 +225,6 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
                 .help("Controls whether refinements are minimized according to subsumption rules"),
         )
         .arg(
-            Arg::with_name("abstraction-literal-optimization")
-                .long("--abstraction-literal-optimization")
-                .default_value(default(default_options.abstraction_literal_optimization))
-                .value_name("bool")
-                .takes_value(true)
-                .possible_values(&["0", "1"])
-                .hide_possible_values(true)
-                .help("Controls whether abstractions should be optimized using subsumption rules"),
-        )
-        .arg(
             Arg::with_name("build-conflict-clauses")
                 .long("--build-conflict-clauses")
                 .default_value(default(default_options.build_conflict_clauses))
@@ -237,7 +237,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         .arg(
             Arg::with_name("conflict-clause-expansion")
                 .long("--conflict-clause-expansion")
-                .default_value(default(default_options.conflict_clause_expansion))
+                .default_value(default(default_options.expansion.conflict_clause_expansion))
                 .value_name("bool")
                 .takes_value(true)
                 .possible_values(&["0", "1"])
@@ -245,19 +245,9 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
                 .help("Controls whether conflict clauses should be used in expansion refinement"),
         )
         .arg(
-            Arg::with_name("skip-levels")
-                .long("--skip-levels")
-                .default_value(default(default_options.skip_levels))
-                .value_name("bool")
-                .takes_value(true)
-                .possible_values(&["0", "1"])
-                .hide_possible_values(true)
-                .help("Controls whether levels should be skipped if they do not influence conflict"),
-        )
-        .arg(
             Arg::with_name("abstraction-equivalence")
                 .long("--abstraction-equivalence")
-                .default_value(default(default_options.abstraction_equivalence))
+                .default_value(default(default_options.abstraction.equivalence_constraints))
                 .value_name("bool")
                 .takes_value(true)
                 .possible_values(&["0", "1"])
@@ -276,34 +266,37 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
 
         options.miniscoping = matches.value_of("miniscoping").unwrap() == "1";
 
-        options.dependency_schemes = matches.value_of("dependency-schemes").unwrap() == "1";
+        options.expansion.dependency_schemes =
+            matches.value_of("dependency-schemes").unwrap() == "1";
 
         options.strong_unsat_refinement =
             matches.value_of("strong-unsat-refinement").unwrap() == "1";
 
-        options.conflict_clause_expansion =
+        options.expansion.conflict_clause_expansion =
             matches.value_of("conflict-clause-expansion").unwrap() == "1";
-        options.expansion_refinement = match matches.value_of("expansion-refinement").unwrap() {
-            "0" | "none" => None,
-            "1" | "full" => Some(ExpansionMode::Full),
-            "light" => Some(ExpansionMode::Light),
-            _ => unreachable!(),
-        };
+        options.expansion.expansion_refinement =
+            match matches.value_of("expansion-refinement").unwrap() {
+                "0" | "none" => None,
+                "1" | "full" => Some(ExpansionMode::Full),
+                "light" => Some(ExpansionMode::Light),
+                _ => unreachable!(),
+            };
 
         options.refinement_literal_subsumption =
             matches.value_of("refinement-literal-subsumption").unwrap() == "1";
 
-        options.abstraction_literal_optimization = matches
-            .value_of("abstraction-literal-optimization")
-            .unwrap()
-            == "1";
-
         options.build_conflict_clauses = matches.value_of("build-conflict-clauses").unwrap() == "1";
 
-        options.skip_levels = matches.value_of("skip-levels").unwrap() == "1";
-
-        options.abstraction_equivalence =
+        options.abstraction.equivalence_constraints =
             matches.value_of("abstraction-equivalence").unwrap() == "1";
+
+        if let Some(config_file) = matches.value_of("config") {
+            let mut file = File::open(&config_file).unwrap_or_else(|e| panic!("Cannot open given config file `{}`: {}", config_file, e));
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).unwrap_or_else(|e| panic!("Cannot read from given config file `{}`: {}", config_file, e));
+
+            options = serde_json::from_str(&contents).unwrap_or_else(|e| panic!("Cannot parse given config file `{}`: {}", config_file, e));
+        }
 
         Self {
             options,
@@ -410,7 +403,7 @@ impl CaqeConfig {
             timer.stop();
         }
 
-        if self.specific.options.dependency_schemes {
+        if self.specific.options.expansion.dependency_schemes {
             #[cfg(feature = "statistics")]
             let mut timer = statistics.start(SolverPhases::ComputeDepScheme);
 
