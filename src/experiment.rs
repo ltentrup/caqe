@@ -15,12 +15,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
 pub struct ExperimentConfig {
     config_file: String,
     mode: ExperimentMode,
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
 pub enum ExperimentMode {
     Run,
@@ -28,6 +30,7 @@ pub enum ExperimentMode {
     Compare(usize, usize),
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExperimentResult {
     result: SolverResult,
@@ -89,7 +92,7 @@ impl ExperimentConfig {
                 let benchmarks: Vec<String> = matches
                     .values_of("benchmarks")
                     .unwrap()
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect();
                 eprintln!("Selected {:?} benchmarks", benchmarks.len());
 
@@ -104,11 +107,11 @@ impl ExperimentConfig {
                     config_file: config_file.to_string(),
                 }
             }
-            ("continue", Some(_matches)) => Self {
+            ("continue", Some(_)) => Self {
                 mode: ExperimentMode::Run,
                 config_file: config_file.to_string(),
             },
-            ("analyze", Some(_matches)) => Self {
+            ("analyze", Some(_)) => Self {
                 mode: ExperimentMode::Analyze,
                 config_file: config_file.to_string(),
             },
@@ -176,11 +179,11 @@ impl ExperimentConfig {
                     }
                 })
         });
-        let bar = ProgressBar::new(num_open);
-        bar.set_style(
+        let progress_bar = ProgressBar::new(num_open);
+        progress_bar.set_style(
             ProgressStyle::default_bar().template("{wide_bar} {pos}/{len} {eta} remaining"),
         );
-        bar.enable_steady_tick(100);
+        progress_bar.enable_steady_tick(100);
 
         for benchmark in &results.benchmarks {
             for (config_idx, &config) in results.configs.iter().enumerate() {
@@ -246,7 +249,7 @@ impl ExperimentConfig {
                     _ => panic!("channel error"),
                 }
 
-                bar.inc(1);
+                progress_bar.inc(1);
 
                 let af = AtomicFile::new(&self.config_file, AllowOverwrite);
                 af.write(|f| serde_json::to_writer_pretty(f, &results))?;
@@ -258,7 +261,7 @@ impl ExperimentConfig {
             }
         }
 
-        bar.finish();
+        progress_bar.finish();
 
         Ok(())
     }
@@ -279,12 +282,15 @@ impl ExperimentConfig {
                     match res.result {
                         SolverResult::Satisfiable => sat.push(config_idx),
                         SolverResult::Unsatisfiable => unsat.push(config_idx),
-                        _ => {},
+                        _ => {}
                     }
                 }
             }
             if !sat.is_empty() && !unsat.is_empty() {
-                println!("inconsistent result {}: sat {:?}, unsat {:?}", benchmark, sat, unsat);
+                println!(
+                    "inconsistent result {}: sat {:?}, unsat {:?}",
+                    benchmark, sat, unsat
+                );
             }
         }
 
@@ -326,10 +332,14 @@ impl ExperimentConfig {
         //println!("cfg {}: {}", base_idx, serde_json::to_string_pretty(&results.configs[base_idx])?);
         //println!("cfg {}: {}", other_idx, serde_json::to_string_pretty(&results.configs[other_idx])?);
 
-        println!("{}", colored_diff::PrettyDifference { expected: &format!("{:#?}", &results.configs[base_idx]), actual: &format!("{:#?}", &results.configs[other_idx]) });
+        println!(
+            "{}",
+            colored_diff::PrettyDifference {
+                expected: &serde_json::to_string_pretty(&results.configs[base_idx])?,
+                actual: &serde_json::to_string_pretty(&results.configs[other_idx])?
+            }
+        );
 
-
-        // all w.r.t. other
         let mut equal_num_iterations = 0;
         let mut base_less_num_iterations = 0;
         let mut other_less_num_iterations = 0;
@@ -339,8 +349,16 @@ impl ExperimentConfig {
         let mut unique_base = Vec::new();
         let mut unique_other = Vec::new();
         for benchmark in &results.benchmarks {
-            let base_res = &results.results[base_idx][benchmark];
-            let other_res = &results.results[other_idx][benchmark];
+            let base_res = if let Some(res) = results.results[base_idx].get(benchmark) {
+                res
+            } else {
+                continue;
+            };
+            let other_res = if let Some(res) = results.results[other_idx].get(benchmark) {
+                res
+            } else {
+                continue;
+            };
 
             match (base_res.result, other_res.result) {
                 (SolverResult::Unknown, SolverResult::Unknown) => {
@@ -407,9 +425,12 @@ impl ExperimentConfig {
         );
         println!(
             "uniquely solved: cfg  {}: {}, cfg {}: {}",
-            base_idx, unique_base.len(), other_idx, unique_other.len()
+            base_idx,
+            unique_base.len(),
+            other_idx,
+            unique_other.len()
         );
-        
+
         if !unique_base.is_empty() {
             println!("\nunique cfg {}", base_idx);
             for (bench, res) in &unique_base {

@@ -30,13 +30,24 @@ pub struct SolverOptions {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AbstractionOptions {
-    pub reuse_b_literals: bool,
-    pub reuse_t_literals: bool,
-    pub additional_t_literal_constraints: bool,
+    pub reuse_b_literals: Option<Mode>,
+    pub reuse_t_literals: Option<Mode>,
+    pub additional_t_literal_constraints: Option<Mode>,
     pub additional_b_literal_constraints: bool,
     pub equivalence_constraints: bool,
     pub universal_reuse_b_literals: bool,
     pub replace_t_literal_by_variable: bool,
+}
+
+/// Indicates whether a feature should be applied partially or completely.
+/// For example, partial for the abstraction options typically means we only
+/// search the occurrence list of a single literal in a clause.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Mode {
+    /// Non-complete search in order to save time
+    Partial,
+    /// Complete search over all possibilities
+    Complete,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,9 +304,9 @@ impl Default for SolverOptions {
     fn default() -> Self {
         Self {
             abstraction: AbstractionOptions {
-                reuse_b_literals: true,
-                reuse_t_literals: true,
-                additional_t_literal_constraints: true,
+                reuse_b_literals: Some(Mode::Partial),
+                reuse_t_literals: Some(Mode::Partial),
+                additional_t_literal_constraints: Some(Mode::Partial),
                 additional_b_literal_constraints: false,
                 equivalence_constraints: true,
                 universal_reuse_b_literals: true,
@@ -304,15 +315,15 @@ impl Default for SolverOptions {
             expansion: ExpansionOptions {
                 expansion_refinement: Some(ExpansionMode::Full),
                 dependency_schemes: false,
-                conflict_clause_expansion: true,
+                conflict_clause_expansion: false,
                 hamming_heuristics: false,
             },
-            strong_unsat_refinement: false,
+            strong_unsat_refinement: true,
             refinement_literal_subsumption: false,
             miniscoping: true,
             build_conflict_clauses: false,
-            flip_assignments_from_sat_solver: false,
-            skip_levels: Some(SkipLevelMode::Refinements),
+            flip_assignments_from_sat_solver: true,
+            skip_levels: None,
         }
     }
 }
@@ -540,27 +551,30 @@ impl ScopeRecursiveSolver {
 
                             let new_assignments =
                                 current.update_expansion_tree(matrix, scope, global);
-                            
+
                             let skip_level = global.options.skip_levels.is_some()
                                 && !current.is_influenced_by_witness(matrix, scope);
-                            
-                            if !skip_level || global.options.skip_levels.unwrap() == SkipLevelMode::Refinements {
-                                current.refine(matrix, scope, global, new_assignments.clone());
-                            } 
-                            if skip_level
+
+                            if !skip_level
+                                || global.options.skip_levels.unwrap() == SkipLevelMode::Refinements
                             {
+                                current.refine(matrix, scope, global, new_assignments.clone());
+                            }
+                            if skip_level {
                                 // copy witness
                                 current.entry.clear();
                                 current.entry.union(&scope.data.entry);
 
                                 // push assignments as well
-                                if global.options.skip_levels.unwrap() == SkipLevelMode::NoRefinements {
+                                if global.options.skip_levels.unwrap()
+                                    == SkipLevelMode::NoRefinements
+                                {
                                     current.current_expansions.extend(new_assignments);
                                 }
 
                                 return bad_result;
                             }
-                            
+
                             if global.options.build_conflict_clauses {
                                 current.extract_conflict_clause(matrix, scope);
                             }
@@ -805,9 +819,7 @@ impl ScopeSolverData {
         let mut contains_variables = false;
         let mut contains_outer_var = false;
         let mut contains_inner_var = false;
-        let mut outer = None;
         let mut inner = None;
-        let mut current = None;
 
         debug_assert!(sat_clause.is_empty());
 
@@ -819,11 +831,9 @@ impl ScopeSolverData {
                 debug_assert!(info.level == self.level);
                 self.relevant_clauses.set(clause_id as usize, true);
                 self.clause_tree_branch.set(clause_id as usize, true);
-                current = Some(literal);
                 contains_variables = true;
                 sat_clause.push(self.sat.lit_to_sat_lit(literal));
             } else if info.level < scope.level {
-                outer = Some(literal);
                 contains_outer_var = true;
             } else if info.level > scope.level {
                 inner = Some(literal);
@@ -852,44 +862,57 @@ impl ScopeSolverData {
         }
         // check if the clause is equal to another clause w.r.t. variables bound at the current level or outer
         // in this case, we do not need to add a clause to SAT solver, but rather just need an entry in b-literals
-        if options.abstraction.reuse_b_literals && need_b_lit && current.is_some() {
-            for &other_clause_id in matrix
-                .occurrences(current.unwrap())
-                .filter(|&&id| id < clause_id)
-            {
-                let other_clause = &matrix.clauses[other_clause_id as usize];
-                let predicate = |l: &Literal| {
-                    let info = matrix.prefix.variables().get(l.variable());
-                    info.level <= scope.level
-                };
-                if clause.is_equal_wrt_predicate(other_clause, predicate) {
-                    debug_assert!(need_b_lit);
-                    if let Some(&b_lit) = self.sat.b_literals.get(&other_clause_id) {
-                        self.sat.b_literals.insert(clause_id, b_lit);
-                        sat_clause.clear();
-                        return;
+        if options.abstraction.reuse_b_literals.is_some() && need_b_lit {
+            for &literal in clause.iter() {
+                let info = matrix.prefix.variables().get(literal.variable());
+                if info.scope_id.unwrap() != self.scope_id {
+                    continue;
+                }
+
+                for &other_clause_id in matrix.occurrences(literal).filter(|&&id| id < clause_id) {
+                    let other_clause = &matrix.clauses[other_clause_id as usize];
+                    let predicate = |l: &Literal| {
+                        let info = matrix.prefix.variables().get(l.variable());
+                        info.level <= scope.level
+                    };
+                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
+                        debug_assert!(need_b_lit);
+                        if let Some(&b_lit) = self.sat.b_literals.get(&other_clause_id) {
+                            self.sat.b_literals.insert(clause_id, b_lit);
+                            sat_clause.clear();
+                            return;
+                        }
                     }
+                }
+                if options.abstraction.reuse_b_literals.unwrap() == Mode::Partial {
+                    break;
                 }
             }
         }
         // check if there is a clause that is equal with respect to the outer variables,
         // in this case, we can re-use t-literals
-        if options.abstraction.reuse_t_literals && outer.is_some() {
-            for &other_clause_id in matrix
-                .occurrences(outer.unwrap())
-                .filter(|&&id| id < clause_id)
-            {
-                let other_clause = &matrix.clauses[other_clause_id as usize];
-                let predicate = |l: &Literal| {
-                    let info = matrix.prefix.variables().get(l.variable());
-                    info.level < scope.level
-                };
-                if clause.is_equal_wrt_predicate(other_clause, predicate) {
-                    debug_assert!(need_t_lit);
-                    if let Some(t_lit) = self.sat.t_literals.get(&other_clause_id) {
-                        outer_equal_to = Some(*t_lit);
-                        break;
+        if options.abstraction.reuse_t_literals.is_some() {
+            for &literal in clause.iter() {
+                let info = matrix.prefix.variables().get(literal.variable());
+                if info.level >= scope.level {
+                    continue;
+                }
+                for &other_clause_id in matrix.occurrences(literal).filter(|&&id| id < clause_id) {
+                    let other_clause = &matrix.clauses[other_clause_id as usize];
+                    let predicate = |l: &Literal| {
+                        let info = matrix.prefix.variables().get(l.variable());
+                        info.level < scope.level
+                    };
+                    if clause.is_equal_wrt_predicate(other_clause, predicate) {
+                        debug_assert!(need_t_lit);
+                        if let Some(t_lit) = self.sat.t_literals.get(&other_clause_id) {
+                            outer_equal_to = Some(*t_lit);
+                            break;
+                        }
                     }
+                }
+                if options.abstraction.reuse_t_literals.unwrap() == Mode::Partial {
+                    break;
                 }
             }
         }
@@ -902,23 +925,43 @@ impl ScopeSolverData {
                 self.sat.reverse_t_literals.insert(t_lit.var(), clause_id);
 
                 // check if we can build additional constraints over the t-literals
-                if options.abstraction.additional_t_literal_constraints && outer.is_some() {
-                    for &other_clause_id in matrix
-                        .occurrences(outer.unwrap())
-                        .filter(|&&id| id < clause_id)
-                    {
-                        let other_clause = &matrix.clauses[other_clause_id as usize];
-                        let predicate = |l: &Literal| {
-                            let info = matrix.prefix.variables().get(l.variable());
-                            info.level < scope.level
-                        };
-                        if clause.is_subset_wrt_predicate(other_clause, predicate) {
-                            // clause ⊆ other_clause w.r.t. inner variables
-                            // constraint: ¬other_t_lit => ¬t_lit
+                if options
+                    .abstraction
+                    .additional_t_literal_constraints
+                    .is_some()
+                {
+                    for &literal in clause.iter() {
+                        let info = matrix.prefix.variables().get(literal.variable());
+                        if info.level >= scope.level {
+                            continue;
+                        }
 
-                            if let Some(&other_t_lit) = self.sat.t_literals.get(&other_clause_id) {
-                                self.sat.sat.add_clause(&[other_t_lit, t_lit.not()]);
+                        for &other_clause_id in
+                            matrix.occurrences(literal).filter(|&&id| id < clause_id)
+                        {
+                            let other_clause = &matrix.clauses[other_clause_id as usize];
+                            let predicate = |l: &Literal| {
+                                let info = matrix.prefix.variables().get(l.variable());
+                                info.level < scope.level
+                            };
+                            if clause.is_subset_wrt_predicate(other_clause, predicate) {
+                                // clause ⊆ other_clause w.r.t. inner variables
+                                // constraint: ¬other_t_lit => ¬t_lit
+
+                                if let Some(&other_t_lit) =
+                                    self.sat.t_literals.get(&other_clause_id)
+                                {
+                                    self.sat.sat.add_clause(&[other_t_lit, t_lit.not()]);
+                                }
                             }
+                        }
+                        if options
+                            .abstraction
+                            .additional_t_literal_constraints
+                            .unwrap()
+                            == Mode::Partial
+                        {
+                            break;
                         }
                     }
                 }

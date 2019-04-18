@@ -291,11 +291,20 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
             matches.value_of("abstraction-equivalence").unwrap() == "1";
 
         if let Some(config_file) = matches.value_of("config") {
-            let mut file = File::open(&config_file).unwrap_or_else(|e| panic!("Cannot open given config file `{}`: {}", config_file, e));
+            let mut file = File::open(&config_file).unwrap_or_else(|e| {
+                panic!("Cannot open given config file `{}`: {}", config_file, e)
+            });
             let mut contents = String::new();
-            file.read_to_string(&mut contents).unwrap_or_else(|e| panic!("Cannot read from given config file `{}`: {}", config_file, e));
+            file.read_to_string(&mut contents).unwrap_or_else(|e| {
+                panic!(
+                    "Cannot read from given config file `{}`: {}",
+                    config_file, e
+                )
+            });
 
-            options = serde_json::from_str(&contents).unwrap_or_else(|e| panic!("Cannot parse given config file `{}`: {}", config_file, e));
+            options = serde_json::from_str(&contents).unwrap_or_else(|e| {
+                panic!("Cannot parse given config file `{}`: {}", config_file, e)
+            });
         }
 
         Self {

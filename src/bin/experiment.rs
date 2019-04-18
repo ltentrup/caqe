@@ -9,7 +9,7 @@ fn main() {
         process::exit(1);
     });
 
-    let _result = config.run().unwrap_or_else(|err| {
+    config.run().unwrap_or_else(|err| {
         eprintln!("Error during execution: {}", err);
         process::exit(1);
     });
