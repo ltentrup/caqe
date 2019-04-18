@@ -315,10 +315,10 @@ impl Default for SolverOptions {
             expansion: ExpansionOptions {
                 expansion_refinement: Some(ExpansionMode::Full),
                 dependency_schemes: false,
-                conflict_clause_expansion: false,
+                conflict_clause_expansion: true,
                 hamming_heuristics: false,
             },
-            strong_unsat_refinement: true,
+            strong_unsat_refinement: false,
             refinement_literal_subsumption: false,
             miniscoping: true,
             build_conflict_clauses: false,
