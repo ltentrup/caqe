@@ -112,7 +112,9 @@ impl<T: SolverSpecificConfig> CommonSolverConfig<T> {
 
         let matches = flags.get_matches_from(args);
 
-        let filename = matches.value_of("INPUT").map(|s| s.to_string());
+        let filename = matches
+            .value_of("INPUT")
+            .map(std::string::ToString::to_string);
 
         let verbosity = match matches.occurrences_of("v") {
             0 => LevelFilter::Warn,

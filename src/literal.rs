@@ -110,6 +110,7 @@ impl std::fmt::Display for Variable {
 }
 
 impl Assignment {
+    #[allow(dead_code)]
     pub(crate) fn hamming(&self, other: &Self) -> u32 {
         let mut count = 0;
         for (var, &val) in &self.0 {

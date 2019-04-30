@@ -9,7 +9,8 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::Not as _;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 #[cfg(feature = "statistics")]
 use crate::utils::statistics::TimingStats;
@@ -90,7 +91,7 @@ struct ScopeRecursiveSolver {
 struct GlobalSolverData {
     options: SolverOptions,
     conflicts: Vec<(BitVec, u32)>,
-    interrupted: Arc<Mutex<bool>>,
+    interrupted: Arc<AtomicBool>,
 }
 
 /// Contains the SAT solver and the translation between Variables and SAT solver literals
@@ -178,7 +179,7 @@ impl<'a> CaqeSolver<'a> {
         }
     }
 
-    pub(crate) fn set_interrupt(&mut self, interrupt: Arc<Mutex<bool>>) {
+    pub(crate) fn set_interrupt(&mut self, interrupt: Arc<AtomicBool>) {
         self.global.interrupted = interrupt;
     }
 
@@ -333,7 +334,7 @@ impl GlobalSolverData {
         Self {
             options,
             conflicts: Vec::new(),
-            interrupted: Arc::new(Mutex::new(false)),
+            interrupted: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -489,7 +490,7 @@ impl ScopeRecursiveSolver {
     ) -> SolverResult {
         trace!("solve_recursive");
 
-        if *global.interrupted.lock().expect("mutex failed") {
+        if global.interrupted.load(Ordering::Relaxed) {
             return SolverResult::Unknown;
         }
 

@@ -103,7 +103,7 @@ impl<E: Eq + Hash + Copy> TimingStats<E> {
 
     pub fn count(&self, phase: E) -> usize {
         let values = self.pointer.borrow();
-        values.get(&phase).map_or(0, |v| v.len())
+        values.get(&phase).map_or(0, Vec::len)
     }
 
     pub fn sum(&self, phase: E) -> Duration {

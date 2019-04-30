@@ -10,20 +10,21 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read as _;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::mpsc::{channel, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExperimentConfig {
     config_file: String,
     mode: ExperimentMode,
 }
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ExperimentMode {
     Run,
     Analyze,
@@ -31,14 +32,14 @@ pub enum ExperimentMode {
 }
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentResult {
     result: SolverResult,
     iterations: usize,
     duration: Duration,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Results {
     benchmarks: Vec<String>,
     configs: Vec<SolverOptions>,
@@ -47,6 +48,8 @@ struct Results {
 }
 
 impl ExperimentConfig {
+    #[allow(unreachable_code)]
+    #[allow(unused_variables)]
     pub fn new(args: &[String]) -> Result<Self, Box<Error>> {
         let flags = App::new("experiment")
             .version(env!("CARGO_PKG_VERSION"))
@@ -207,7 +210,7 @@ impl ExperimentConfig {
 
                 let (tx, rx) = channel();
 
-                let interrupt_handler = Arc::new(Mutex::new(false));
+                let interrupt_handler = Arc::new(AtomicBool::new(false));
 
                 let interrupted = interrupt_handler.clone();
 
@@ -222,6 +225,8 @@ impl ExperimentConfig {
                     let mut solver = CaqeSolver::new_with_options(&mut matrix, config);
                     solver.set_interrupt(interrupted);
                     let result = solver.solve();
+                    #[allow(unused_assignments)]
+                    #[allow(unused_mut)]
                     let mut iterations = 0;
 
                     #[cfg(feature = "statistics")]
@@ -238,8 +243,7 @@ impl ExperimentConfig {
                         results.results[config_idx].insert(benchmark.clone(), result);
                     }
                     Err(RecvTimeoutError::Timeout) => {
-                        let mut interrupted = interrupt_handler.lock().expect("mutex failed");
-                        *interrupted = true;
+                        interrupt_handler.store(true, AtomicOrdering::Relaxed);
 
                         results.results[config_idx].insert(
                             benchmark.clone(),
@@ -300,7 +304,7 @@ impl ExperimentConfig {
             let mut unsat = 0;
             let mut iterations = 0;
 
-            for (_, result) in &results.results[config_idx] {
+            for result in results.results[config_idx].values() {
                 match result.result {
                     SolverResult::Unknown => continue,
                     SolverResult::Satisfiable => {
