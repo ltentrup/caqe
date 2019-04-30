@@ -1,0 +1,64 @@
+\documentclass[11pt,twocolumn]{article}
+
+\title{CAQE, dCAQE, and QuAbS at QBFEval 2019}
+\author{Leander Tentrup, Saarland University}
+\date{}
+
+\usepackage{amsmath}
+\usepackage{mathpazo}
+\usepackage{Alegreya}
+\usepackage{url}
+\usepackage{cite}
+
+\newcommand{\caqe}{\text{CAQE}}
+\newcommand{\dcaqe}{\text{dCAQE}}
+\newcommand{\quabs}{\text{QuAbS}}
+
+\begin{document}
+
+\maketitle
+  
+\section{Introduction}
+
+This paper gives an overview of the submissions to QBFEval 2019.
+The prenex CNF solver $\caqe$~\cite{conf/fmcad/RabeT15}, the prenex non-CNF solver $\quabs$~\cite{journals/corr/Tentrup16}, and the DQBF solver $\dcaqe$~\cite{conf/sat/RabeT19}.
+
+\subsection{$\caqe$ and $\dcaqe$}
+
+The solver $\caqe$ (version $4.0$) is based on the \emph{clausal abstraction} algorithm~\cite{conf/fmcad/RabeT15,conf/ijcai/JanotaM15}\footnote{called \emph{clause selection} in~\cite{conf/ijcai/JanotaM15}} for solving QBF.
+$\dcaqe$ implements a variant of the algorithm for dependency quantified Boolean formulas~\cite{conf/sat/RabeT19}.
+The implementation is written in Rust and uses CryptoMiniSat~\cite{conf/sat/SoosNC09} in version 5.0.1 as the underlying SAT solver.
+The source code of $\caqe$ and $\dcaqe$ is available at \url{https://github.com/ltentrup/caqe}.
+We submitted three configurations of $\caqe$, one using only HQSPre~\cite{conf/tacas/WimmerRM017} as preprocessor, one configuration using both, Bloqqer~\cite{conf/cade/BiereLS11} and HQSPre, and one configuration that produces QDIMACS outputs using the partial assignments from Bloqqer~\cite{conf/date/SeidlK14}.
+For $\dcaqe$, we submitted one configuration using HQSPre as preprocessor.
+
+\subsection{$\quabs$}
+
+$\quabs$ is based on the extension of clausal abstraction to formulas in negation normal form~\cite{journals/corr/Tentrup16,conf/sat/Tentrup16}.
+The implementation is written in C++ and uses CryptoMiniSat~\cite{conf/sat/SoosNC09} in version 5.5 as the underlying SAT solver.
+The source code of $\quabs$ is available at \url{https://github.com/ltentrup/quabs}.
+In addition to $\quabs$, we submitted a configuration of $\caqe$ that transforms the circuit representation and its negation to CNF.
+
+\section{Major Improvements}
+
+\paragraph{Improved Expansions.}
+
+Previous versions of $\caqe$ only implemented expansion refinement for the innermost quantifier alternation.
+$\caqe$ version $4.0$ produces partial expansion trees during solving and builds expansion refinements at every existential quantifier as described in~\cite{conf/cav/Tentrup17}.
+
+\paragraph{Expanding Conflict Clauses.}
+
+In~\cite{conf/cav/Tentrup17} we proposed to apply $\forall\text{Exp+Res}$~\cite{journals/tcs/JanotaM15} as an axiom rule to the clausal abstraction proof system.
+During solving additional clauses, called \emph{conflict clauses} as they are learned as a reason why an existential assignment leads to unsatisfiability, are added to the formula.
+$\caqe$ version $4.0$ expands those clauses as well when applying expansion refinement.
+
+
+\section{Acknowledgments}
+
+This work was partially supported by the German Research Foundation (DFG) as part of the Collaborative Research Center ``Foundations of Perspicuous Software Systems’' (TRR 248, 389792660) and by the European Research Council (ERC) Grant OSARES (No. 683300).
+
+
+\bibliographystyle{plain}
+\bibliography{main}
+
+\end{document}
