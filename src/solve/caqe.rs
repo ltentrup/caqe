@@ -322,7 +322,7 @@ impl Default for SolverOptions {
             refinement_literal_subsumption: false,
             miniscoping: true,
             build_conflict_clauses: false,
-            flip_assignments_from_sat_solver: true,
+            flip_assignments_from_sat_solver: false,
             skip_levels: None,
         }
     }
@@ -2709,5 +2709,37 @@ e 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 0
             solver.qdimacs_output().dimacs(),
             "s cnf 1 19 20\nV -1 0\nV 2 0\n"
         );
+    }
+
+    #[test]
+    fn test_strong_unsat_regression() {
+        let instance = "c
+c This instance was solved incorrectly in earlier versions.
+p cnf 14 14
+e 7 0
+a 1 2 3 0
+e 5 6 0
+a 4 0
+e 8 9 10 11 12 13 14 0
+3 5 0
+6 0
+-4 9 0
+4 10 0
+-3 11 0
+2 11 0
+-3 12 0
+-1 13 0
+1 14 0
+7 -9 0
+-10 -5 -12 0
+-6 -13 -14 0
+-9 -10 -11 0
+-5 -6 -8 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 14 14\nV 7 0\n");
     }
 }
