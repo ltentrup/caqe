@@ -493,15 +493,15 @@ impl Default for DCaqeSpecificSolverConfig {
     fn default() -> Self {
         Self {
             expansion_refinement: true,
-            dependency_schemes: true,
+            dependency_schemes: false,
         }
     }
 }
 
 impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
-    const NAME: &'static str = "DCAQE";
+    const NAME: &'static str = "dCAQE";
     const DESC: &'static str =
-        "DCAQE is a solver for dependency quantified Boolean formulas (DQBF) in DQDIMACS format.";
+        "dCAQE is a solver for dependency quantified Boolean formulas (DQBF) in DQDIMACS format.";
 
     fn add_arguments<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
         let default_options = Self::default();
@@ -559,9 +559,17 @@ impl DCaqeConfig {
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Parsing);
 
-        let mut file = File::open(self.filename.as_ref().unwrap())?;
         let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
+        match &self.filename {
+            None => {
+                //reading from stdin
+                std::io::stdin().read_to_string(&mut contents)?;
+            }
+            Some(filename) => {
+                let mut f = File::open(&filename)?;
+                f.read_to_string(&mut contents)?;
+            }
+        }
 
         let mut matrix = parse::dqdimacs::parse(&contents)?;
 

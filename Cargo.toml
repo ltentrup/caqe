@@ -1,6 +1,6 @@
 [package]
 name = "caqe"
-version = "4.0.0-dev"
+version = "4.0.0"
 authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 edition = "2018"
 
