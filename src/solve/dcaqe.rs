@@ -45,6 +45,14 @@ impl<'a> DCaqeSolver<'a> {
         let mut abstractions: Vec<SolverLevel> = Vec::new();
         let mut global = GlobalSolverData::new(matrix, config);
 
+        /*#[cfg(debug_assertions)]
+        {
+            for clause in &matrix.clauses {
+                assert!(!matrix.prefix.contains_dependency_fork(clause));
+            }
+            println!("no dependency forks initially");
+        }*/
+
         let mut bound_universals = FxHashSet::default();
         for antichain in &antichains {
             let universals = antichain
@@ -1493,7 +1501,7 @@ impl Abstraction {
 }
 
 #[derive(Debug)]
-struct MaxElements<T>
+pub(crate) struct MaxElements<T>
 where
     T: PartialOrd,
 {
@@ -1505,7 +1513,7 @@ impl<T> MaxElements<T>
 where
     T: PartialOrd,
 {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             elements: Vec::new(),
         }
@@ -1513,7 +1521,7 @@ where
 
     /// We remove all elements that are smaller than `element`.
     /// Then, we add `element` if there is no other element that is greater or equal.
-    fn add(&mut self, element: T) {
+    pub(crate) fn add(&mut self, element: T) {
         self.elements.retain(|other|
             // !(other < &element)
             match other.partial_cmp(&element) {
@@ -1541,7 +1549,7 @@ where
         self.elements.remove(index)
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.elements.len()
     }
 

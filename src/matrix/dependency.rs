@@ -297,6 +297,20 @@ impl DependencyPrefix {
                 || !other.dependencies.is_superset(&scope.dependencies))
         })
     }
+
+    pub(crate) fn contains_dependency_fork(&self, clause: &Clause) -> bool {
+        use crate::solve::dcaqe::MaxElements;
+        let mut maximal_scopes: MaxElements<Scope> = MaxElements::new();
+        for &literal in clause.iter() {
+            let info = self.variables().get(literal.variable());
+            if let Some(scope_id) = *info.get_scope_id() {
+                // TODO: we need a clone here, since the prefix is modified below, but this is wasteful
+                let scope = self.get_scope(scope_id).clone();
+                maximal_scopes.add(scope);
+            }
+        }
+        maximal_scopes.len() > 1
+    }
 }
 
 impl Prefix for DependencyPrefix {
