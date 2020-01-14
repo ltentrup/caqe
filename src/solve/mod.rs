@@ -12,11 +12,12 @@ pub enum SolverResult {
 }
 
 impl Dimacs for SolverResult {
+    #[must_use]
     fn dimacs(&self) -> String {
         match *self {
-            SolverResult::Satisfiable => String::from("1"),
-            SolverResult::Unsatisfiable => String::from("0"),
-            SolverResult::Unknown => String::from("-1"),
+            Self::Satisfiable => String::from("1"),
+            Self::Unsatisfiable => String::from("0"),
+            Self::Unknown => String::from("-1"),
         }
     }
 }

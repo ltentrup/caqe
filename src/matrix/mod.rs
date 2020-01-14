@@ -36,6 +36,7 @@ pub struct Matrix<P: Prefix> {
 }
 
 impl<P: Prefix> Matrix<P> {
+    #[must_use]
     pub fn new(num_variables: usize, num_clauses: usize) -> Self {
         Self {
             prefix: P::new(num_variables),
@@ -101,7 +102,7 @@ where
             self.prefix.variables().max_variable_id(),
             self.clauses.len()
         ));
-        dimacs.push_str(&self.prefix.dimacs().to_string());
+        dimacs.push_str(&self.prefix.dimacs());
         for clause in &self.clauses {
             dimacs.push_str(&format!("{}\n", clause.dimacs()));
         }
@@ -278,5 +279,4 @@ e 3 4 0
         let dimacs = matrix.dimacs();
         assert_eq!(instance, dimacs);
     }
-
 }

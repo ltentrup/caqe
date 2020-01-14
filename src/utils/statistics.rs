@@ -219,5 +219,4 @@ mod tests {
         assert_eq!(timing.count(TestEnum::Case1), 2);
         assert_eq!(timing.count(TestEnum::Case2), 1);
     }
-
 }

@@ -17,11 +17,11 @@ pub enum QBFPreprocessor {
 }
 
 impl FromStr for QBFPreprocessor {
-    type Err = Box<Error>;
+    type Err = Box<dyn Error>;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "bloqqer" => Ok(QBFPreprocessor::Bloqqer),
-            "hqspre" => Ok(QBFPreprocessor::HQSPre),
+            "bloqqer" => Ok(Self::Bloqqer),
+            "hqspre" => Ok(Self::HQSPre),
             _ => panic!("unknown value {} for QBFPreprocessor", s),
         }
     }
@@ -40,7 +40,7 @@ pub fn preprocess(
         Matrix<HierarchicalPrefix>,
         Option<qdimacs::PartialQDIMACSCertificate>,
     ),
-    Box<Error>,
+    Box<dyn Error>,
 > {
     let mut partial_qdo = None;
     let mut contents = String::new();

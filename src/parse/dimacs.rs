@@ -32,8 +32,8 @@ pub(crate) enum DimacsToken {
 impl Into<Literal> for DimacsToken {
     fn into(self) -> Literal {
         match self {
-            DimacsToken::Zero => Literal::new(0_u32, false),
-            DimacsToken::Lit(l) => l,
+            Self::Zero => Literal::new(0_u32, false),
+            Self::Lit(l) => l,
             _ => panic!("cannot convert {:?} into Literal", self),
         }
     }
@@ -52,7 +52,8 @@ pub struct DimacsTokenStream<'a> {
 }
 
 impl<'a> DimacsTokenStream<'a> {
-    pub fn new(content: &'a str) -> DimacsTokenStream<'a> {
+    #[must_use]
+    pub fn new(content: &'a str) -> Self {
         DimacsTokenStream {
             chars: CharIterator::new(content),
         }

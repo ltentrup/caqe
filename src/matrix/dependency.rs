@@ -298,6 +298,7 @@ impl DependencyPrefix {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn contains_dependency_fork(&self, clause: &Clause) -> bool {
         use crate::solve::dcaqe::MaxElements;
         let mut maximal_scopes: MaxElements<Scope> = MaxElements::new();

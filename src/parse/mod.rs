@@ -20,11 +20,13 @@ impl std::fmt::Display for ParseError {
 }
 
 impl Error for ParseError {
+    #[must_use]
     fn description(&self) -> &str {
         self.msg.as_str()
     }
 
-    fn cause(&self) -> Option<&Error> {
+    #[must_use]
+    fn cause(&self) -> Option<&dyn Error> {
         Some(self)
     }
 }
@@ -122,13 +124,13 @@ impl<'a> CharIterator<'a> {
             }
         }
         if let Some(value) = value {
-            return Ok(Literal::new(value, signed));
+            Ok(Literal::new(value, signed))
         } else {
             assert!(first == '-');
-            return Err(ParseError {
+            Err(ParseError {
                 msg: "Expect digits following `-` character".to_string(),
                 pos: self.pos,
-            });
+            })
         }
     }
 

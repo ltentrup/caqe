@@ -50,7 +50,7 @@ struct Results {
 impl ExperimentConfig {
     #[allow(unreachable_code)]
     #[allow(unused_variables)]
-    pub fn new(args: &[String]) -> Result<Self, Box<Error>> {
+    pub fn new(args: &[String]) -> Result<Self, Box<dyn Error>> {
         let flags = App::new("experiment")
             .version(env!("CARGO_PKG_VERSION"))
             .author(env!("CARGO_PKG_AUTHORS"))
@@ -139,7 +139,7 @@ impl ExperimentConfig {
         })
     }
 
-    pub fn run(&self) -> Result<(), Box<Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn Error>> {
         match self.mode {
             ExperimentMode::Run => {
                 self.run_experiment()?;
@@ -150,7 +150,7 @@ impl ExperimentConfig {
         }
     }
 
-    fn run_experiment(&self) -> Result<(), Box<Error>> {
+    fn run_experiment(&self) -> Result<(), Box<dyn Error>> {
         let mut file = File::open(&self.config_file)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
@@ -270,7 +270,7 @@ impl ExperimentConfig {
         Ok(())
     }
 
-    fn analyze_experiment(&self) -> Result<(), Box<Error>> {
+    fn analyze_experiment(&self) -> Result<(), Box<dyn Error>> {
         let mut file = File::open(&self.config_file)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
@@ -326,7 +326,12 @@ impl ExperimentConfig {
         Ok(())
     }
 
-    fn compare_solver_configs(&self, base_idx: usize, other_idx: usize) -> Result<(), Box<Error>> {
+    #[allow(clippy::too_many_lines)]
+    fn compare_solver_configs(
+        &self,
+        base_idx: usize,
+        other_idx: usize,
+    ) -> Result<(), Box<dyn Error>> {
         let mut file = File::open(&self.config_file)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;

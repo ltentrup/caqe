@@ -459,10 +459,8 @@ impl SolverLevel {
         clauses: &[ClauseId],
     ) {
         match self {
-            SolverLevel::Universal(abstraction) => {
-                abstraction.add_clauses(matrix, level_lookup, clauses)
-            }
-            SolverLevel::Existential(abstractions) => {
+            Self::Universal(abstraction) => abstraction.add_clauses(matrix, level_lookup, clauses),
+            Self::Existential(abstractions) => {
                 for abstraction in abstractions.iter_mut() {
                     abstraction.add_clauses(matrix, level_lookup, clauses)
                 }
@@ -566,6 +564,7 @@ impl GlobalSolverData {
         Clause::new(literals)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn dependency_conflict_resolution(
         &mut self,
         matrix: &mut DQMatrix,
@@ -1541,8 +1540,7 @@ where
         self.elements
             .iter()
             .enumerate()
-            .filter_map(|(i, ele)| if f(ele) { Some(i) } else { None })
-            .next()
+            .find_map(|(i, ele)| if f(ele) { Some(i) } else { None })
     }
 
     fn remove(&mut self, index: usize) -> T {

@@ -258,6 +258,7 @@ impl SolverSpecificConfig for CaqeSpecificSolverConfig {
         )
     }
 
+    #[must_use]
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
         let mut options = SolverOptions::default();
         let qdimacs_output = matches.is_present("qdimacs-output");
@@ -332,12 +333,12 @@ enum SolverPhases {
 impl std::fmt::Display for SolverPhases {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SolverPhases::Preprocessing => write!(f, "Preprocessing"),
-            SolverPhases::Parsing => write!(f, "Parsing"),
-            SolverPhases::Initializing => write!(f, "Initialization"),
-            SolverPhases::Solving => write!(f, "Solving"),
-            SolverPhases::Miniscoping => write!(f, "Miniscoping"),
-            SolverPhases::ComputeDepScheme => write!(f, "Compute Dep Scheme"),
+            Self::Preprocessing => write!(f, "Preprocessing"),
+            Self::Parsing => write!(f, "Parsing"),
+            Self::Initializing => write!(f, "Initialization"),
+            Self::Solving => write!(f, "Solving"),
+            Self::Miniscoping => write!(f, "Miniscoping"),
+            Self::ComputeDepScheme => write!(f, "Compute Dep Scheme"),
         }
     }
 }
@@ -352,13 +353,13 @@ enum MatrixStats {
 impl std::fmt::Display for MatrixStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MatrixStats::RemovedDependencies => write!(f, "Dependencies removed: "),
+            Self::RemovedDependencies => write!(f, "Dependencies removed: "),
         }
     }
 }
 
 impl CaqeConfig {
-    pub fn run(&self) -> Result<SolverResult, Box<Error>> {
+    pub fn run(&self) -> Result<SolverResult, Box<dyn Error>> {
         #[cfg(debug_assertions)]
         CombinedLogger::init(vec![
             TermLogger::new(self.verbosity, simplelog::Config::default())
@@ -492,6 +493,7 @@ pub struct DCaqeSpecificSolverConfig {
 }
 
 impl Default for DCaqeSpecificSolverConfig {
+    #[must_use]
     fn default() -> Self {
         Self {
             expansion_refinement: true,
@@ -531,6 +533,7 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
         )
     }
 
+    #[must_use]
     fn parse_arguments(matches: &clap::ArgMatches) -> Self {
         let expansion_refinement = matches.value_of("expansion-refinement").unwrap() == "1";
         let dependency_schemes = matches.value_of("dependency-schemes").unwrap() == "1";
@@ -543,7 +546,7 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
 }
 
 impl DCaqeConfig {
-    pub fn run(&self) -> Result<SolverResult, Box<Error>> {
+    pub fn run(&self) -> Result<SolverResult, Box<dyn Error>> {
         #[cfg(debug_assertions)]
         CombinedLogger::init(vec![
             TermLogger::new(self.verbosity, simplelog::Config::default())

@@ -216,6 +216,7 @@ impl<'a> CaqeSolver<'a> {
         iterations
     }
 
+    #[must_use]
     pub fn qdimacs_output(&self) -> qdimacs::PartialQDIMACSCertificate {
         let mut certificate = qdimacs::PartialQDIMACSCertificate::new(
             self.result,
@@ -302,6 +303,7 @@ impl<'a> super::Solver for CaqeSolver<'a> {
 }
 
 impl Default for SolverOptions {
+    #[must_use]
     fn default() -> Self {
         Self {
             abstraction: AbstractionOptions {
@@ -805,7 +807,8 @@ impl ScopeSolverData {
         }
     }
 
-    #[allow(clippy::cyclomatic_complexity)]
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::too_many_lines)]
     fn encode_existential_clause(
         &mut self,
         matrix: &QMatrix,
@@ -2742,5 +2745,20 @@ e 8 9 10 11 12 13 14 0
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 14 14\nV 7 0\n");
+    }
+
+    #[test]
+    fn test_empty_with_unniversals() {
+        let instance = "c
+c This instance crashed in earlier versions.
+c Thanks to Andreas Niskanen for the report.
+p cnf 36 0
+a 16 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 36 0\n");
     }
 }

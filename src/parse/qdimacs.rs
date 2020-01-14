@@ -12,6 +12,12 @@ pub fn parse(content: &str) -> Result<Matrix<HierarchicalPrefix>, ParseError> {
     let token = parse_prefix(&mut lexer, &mut matrix)?;
     parse_matrix(&mut lexer, &mut matrix, token, num_clauses)?;
     matrix.prefix.compute_dependencies();
+
+    // in the case the last scope is universal, we remove it
+    let last_scope = matrix.prefix.last_scope();
+    if matrix.prefix.scopes[last_scope.to_usize()].quant == Quantifier::Universal {
+        matrix.prefix.remove_scope(last_scope);
+    }
     Ok(matrix)
 }
 
@@ -94,6 +100,7 @@ pub struct PartialQDIMACSCertificate {
 }
 
 impl PartialQDIMACSCertificate {
+    #[must_use]
     pub fn new(result: SolverResult, num_variables: usize, num_clauses: usize) -> Self {
         Self {
             result,
@@ -268,6 +275,7 @@ impl FromStr for PartialQDIMACSCertificate {
 }
 
 impl Dimacs for PartialQDIMACSCertificate {
+    #[must_use]
     fn dimacs(&self) -> String {
         let mut dimacs = String::new();
         dimacs.push_str(&format!(
@@ -428,5 +436,4 @@ mod tests {
         let parsed: PartialQDIMACSCertificate = dimacs_output.parse().unwrap();
         assert_eq!(certificate, parsed);
     }
-
 }
