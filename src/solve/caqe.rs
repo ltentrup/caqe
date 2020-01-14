@@ -2748,7 +2748,7 @@ e 8 9 10 11 12 13 14 0
     }
 
     #[test]
-    fn test_empty_with_unniversals() {
+    fn test_innermost_unniversals() {
         let instance = "c
 c This instance crashed in earlier versions.
 c Thanks to Andreas Niskanen for the report.
@@ -2760,5 +2760,28 @@ a 16 0
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 36 0\n");
+    }
+
+    #[test]
+    fn test_miniscoping_qdo() {
+        let instance = "c
+c This instance crashed in earlier versions.
+c Thanks to Valentin Mayer-Eichberger for the report.
+p cnf 4 3
+e 1 0
+a 2 0
+e 3 4 0
+-1 0
+-3 0
+2 -4 0
+";
+        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        matrix.unprenex_by_miniscoping();
+        let mut solver = CaqeSolver::new(&mut matrix);
+        assert_eq!(solver.solve(), SolverResult::Satisfiable);
+        assert_eq!(
+            solver.qdimacs_output().dimacs(),
+            "s cnf 1 4 3\nV -1 0\nV -2 0\n"
+        );
     }
 }

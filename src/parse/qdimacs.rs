@@ -111,7 +111,9 @@ impl PartialQDIMACSCertificate {
     }
 
     pub fn add_assignment(&mut self, assignment: Literal) {
-        assert!(self.assignments.binary_search(&assignment).is_err());
+        if self.assignments.binary_search(&assignment).is_ok() {
+            return;
+        }
         self.assignments.push(assignment);
         self.assignments.sort();
     }
