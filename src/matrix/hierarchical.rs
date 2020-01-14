@@ -3,6 +3,7 @@ use dot;
 use ena::unify::{InPlaceUnificationTable, UnifyKey};
 use log::{debug, info};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::convert::TryInto;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub struct ScopeId(u32);
@@ -123,8 +124,8 @@ impl Quantifier {
     #[allow(dead_code)]
     pub fn swap(self) -> Self {
         match self {
-            Quantifier::Existential => Quantifier::Universal,
-            Quantifier::Universal => Quantifier::Existential,
+            Self::Existential => Self::Universal,
+            Self::Universal => Self::Existential,
         }
     }
 }
@@ -132,8 +133,8 @@ impl Quantifier {
 impl Dimacs for Quantifier {
     fn dimacs(&self) -> String {
         match self {
-            Quantifier::Existential => String::from("e"),
-            Quantifier::Universal => String::from("a"),
+            Self::Existential => String::from("e"),
+            Self::Universal => String::from("a"),
         }
     }
 }
@@ -188,10 +189,11 @@ impl HierarchicalPrefix {
     /// Creates a new scope with given quantification type
     pub(crate) fn new_scope(&mut self, prev: ScopeId, quantifier: Quantifier) -> ScopeId {
         let prev_scope = &self.scopes[prev.to_usize()];
+        let prev_scope_level = prev_scope.level;
         if prev_scope.quant == quantifier {
             prev
         } else {
-            let id = self.create_scope(quantifier, prev_scope.level + 1);
+            let id = self.create_scope(quantifier, prev_scope_level + 1);
             self.next_scopes[prev.to_usize()].push(id);
             id
         }
@@ -205,17 +207,26 @@ impl HierarchicalPrefix {
         debug_assert!(self.scopes.len() == self.next_scopes.len());
         next_id
     }
-    /*
+
     /// Returns the last created scope
-    pub fn last_scope(&self) -> ScopeId {
-        debug_assert!(self.scopes.len() > 0);
-        (self.scopes.len() - 1) as ScopeId
+    pub(crate) fn last_scope(&self) -> ScopeId {
+        debug_assert!(!self.scopes.is_empty());
+        ScopeId((self.scopes.len() - 1).try_into().unwrap())
     }
-    */
+
+    pub(crate) fn remove_scope(&mut self, scope_id: ScopeId) {
+        let successors = self.next_scopes[scope_id.to_usize()].clone();
+        for next_scope in &mut self.next_scopes {
+            if let Some(idx) = next_scope.iter().position(|other| other == &scope_id) {
+                next_scope.remove(idx);
+                next_scope.extend(&successors);
+            }
+        }
+    }
 
     /// Adds a variable to a given scope
     ///
-    /// Panics, if variable is already bound or scope does not exist (use new_scope first)
+    /// Panics, if variable is already bound or scope does not exist (use `new_scope` first)
     pub fn add_variable<V: Into<Variable>>(&mut self, variable: V, scope_id: ScopeId) {
         let variable = variable.into();
         self.variables.import(variable);
@@ -411,6 +422,7 @@ impl Matrix<HierarchicalPrefix> {
     }
 
     /// Splits the current existential scope according to unification table, returns the new scopes
+    #[allow(clippy::too_many_lines)]
     fn partition_scopes(
         &mut self,
         scope_id: ScopeId,
@@ -646,7 +658,7 @@ impl Matrix<HierarchicalPrefix> {
                     let exist_scope_id = self.prefix.next_scopes[next_scope_id.to_usize()]
                         .first()
                         .expect("has exactly one successor");
-                    let scope_var = self.prefix.scopes[exist_scope_id.to_usize()]
+                    let scope_var = *self.prefix.scopes[exist_scope_id.to_usize()]
                         .variables
                         .first()
                         .expect("existential scopes should not be empty");
@@ -655,7 +667,7 @@ impl Matrix<HierarchicalPrefix> {
                         &scope,
                         table,
                         &mut renaming,
-                        *scope_var,
+                        scope_var,
                         next_scope_id,
                     );
                     self.prefix.scopes[next_scope_id.to_usize()]
@@ -899,12 +911,15 @@ type Nd = ScopeId;
 type Ed = (Nd, Nd);
 
 impl<'a> dot::Labeller<'a, Nd, Ed> for &HierarchicalPrefix {
+    #[must_use]
     fn graph_id(&'a self) -> dot::Id<'a> {
         dot::Id::new("quantifier_prefix").unwrap()
     }
+    #[must_use]
     fn node_id(&'a self, n: &Nd) -> dot::Id<'a> {
         dot::Id::new(format!("N{}", n.0)).unwrap()
     }
+    #[must_use]
     fn node_label<'b>(&'b self, n: &Nd) -> dot::LabelText<'b> {
         if n.0 == u32::max_value() {
             dot::LabelText::LabelStr("root".into())
@@ -914,17 +929,20 @@ impl<'a> dot::Labeller<'a, Nd, Ed> for &HierarchicalPrefix {
             dot::LabelText::LabelStr(format!("SId {}\n{}", n, vars.join(", ")).into())
         }
     }
+    #[must_use]
     fn edge_label<'b>(&'b self, _: &Ed) -> dot::LabelText<'b> {
         dot::LabelText::LabelStr("".into())
     }
 }
 
 impl<'a> dot::GraphWalk<'a, Nd, Ed> for &HierarchicalPrefix {
+    #[must_use]
     fn nodes(&'a self) -> dot::Nodes<'a, Nd> {
         let mut nodes: Vec<Nd> = self.scopes.iter().map(|s| s.id).collect();
         nodes.push(ScopeId::new(u32::max_value() as usize)); // dummy root node
         nodes.into()
     }
+    #[must_use]
     fn edges(&'a self) -> dot::Edges<'a, Ed> {
         let mut edges: Vec<Ed> = self
             .next_scopes
@@ -942,9 +960,11 @@ impl<'a> dot::GraphWalk<'a, Nd, Ed> for &HierarchicalPrefix {
         });
         edges.into()
     }
+    #[must_use]
     fn source(&self, e: &Ed) -> Nd {
         e.0
     }
+    #[must_use]
     fn target(&self, e: &Ed) -> Nd {
         e.1
     }

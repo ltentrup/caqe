@@ -18,6 +18,7 @@ impl Into<u32> for Variable {
     }
 }
 impl Into<u32> for &Variable {
+    #[must_use]
     fn into(self) -> u32 {
         self.0
     }
@@ -57,18 +58,22 @@ impl Literal {
     /// assert!(caqe::Literal::new(0_u32, true).signed());
     /// assert!(!caqe::Literal::new(0_u32, false).signed());
     /// ```
+    #[must_use]
     pub fn signed(self) -> bool {
         (self.x & 1) != 0
     }
 
+    #[must_use]
     pub fn unsigned(self) -> Self {
         Self { x: self.x & !1 }
     }
 
+    #[must_use]
     pub fn variable(self) -> Variable {
         Variable(self.x >> 1)
     }
 
+    #[must_use]
     pub fn dimacs(self) -> i32 {
         #[allow(clippy::cast_possible_wrap)]
         let base = self.variable().0 as i32;
@@ -83,12 +88,14 @@ impl Literal {
 impl ops::Neg for Literal {
     type Output = Self;
 
+    #[must_use]
     fn neg(self) -> Self {
         Self { x: self.x ^ 1 }
     }
 }
 
 impl From<i32> for Literal {
+    #[must_use]
     fn from(literal: i32) -> Self {
         let signed = literal < 0;
         #[allow(clippy::cast_sign_loss)]

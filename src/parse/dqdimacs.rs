@@ -16,6 +16,7 @@ pub fn parse(content: &str) -> Result<Matrix<DependencyPrefix>, ParseError> {
 
 /// Parses the quantifier prefix of a DQDIMACS file, e.g., `a 1 2\ne 3 0\nd 4 1\n`.
 /// Returns the first token *after* the matrix.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn parse_prefix(
     lexer: &mut DimacsTokenStream,
     matrix: &mut Matrix<DependencyPrefix>,

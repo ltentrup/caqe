@@ -283,5 +283,4 @@ mod tests {
         let clause = Clause::new(vec![lit1, -lit2, lit3]);
         assert_eq!(clause.dimacs(), "1 -2 3 0");
     }
-
 }
