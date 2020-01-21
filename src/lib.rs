@@ -1,5 +1,7 @@
-#![warn(clippy::all, clippy::pedantic)]
+#![deny(unsafe_code)]
 #![deny(unused_must_use)]
+#![warn(clippy::all, clippy::pedantic)]
+//#![warn(clippy::cargo)]
 
 use clap::{App, Arg};
 use simplelog::{CombinedLogger, LevelFilter, TermLogger};
@@ -362,8 +364,12 @@ impl CaqeConfig {
     pub fn run(&self) -> Result<SolverResult, Box<dyn Error>> {
         #[cfg(debug_assertions)]
         CombinedLogger::init(vec![
-            TermLogger::new(self.verbosity, simplelog::Config::default())
-                .expect("Could not initialize TermLogger"),
+            TermLogger::new(
+                self.verbosity,
+                simplelog::Config::default(),
+                simplelog::TerminalMode::Mixed,
+            )
+            .expect("Could not initialize TermLogger"),
             //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
         ])
         .expect("Could not initialize logging");
@@ -549,8 +555,12 @@ impl DCaqeConfig {
     pub fn run(&self) -> Result<SolverResult, Box<dyn Error>> {
         #[cfg(debug_assertions)]
         CombinedLogger::init(vec![
-            TermLogger::new(self.verbosity, simplelog::Config::default())
-                .expect("Could not initialize TermLogger"),
+            TermLogger::new(
+                self.verbosity,
+                simplelog::Config::default(),
+                simplelog::TerminalMode::Mixed,
+            )
+            .expect("Could not initialize TermLogger"),
             //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
         ])
         .expect("Could not initialize logging");
