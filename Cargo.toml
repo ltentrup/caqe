@@ -1,26 +1,26 @@
 [package]
 name = "caqe"
-version = "4.0.0"
+version = "4.0.1"
 authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 edition = "2018"
 
 [dependencies]
 cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git", rev = "d812d3032eaa0c31f5f25534df9a1d72c5d354cc" }
-log = { version = "0.4.6", features = ["release_max_level_warn"] }
-simplelog = "0.5.3"
-bit-vec = "0.5.0"
-tempfile = "3.0.6"    # for first running preprocessor and piping result to temporary
-clap = "2.32.0"       # parsing command line arguments
+log = { version = "0.4.8", features = ["release_max_level_warn"] }
+simplelog = "0.7.4"
+bit-vec = "0.6.1"
+tempfile = "3.1.0"    # for first running preprocessor and piping result to temporary
+clap = "2.33.0"       # parsing command line arguments
 rustc-hash = "1.0.1"  # fast, non-randomized HashMap/HashSet
 uncover = "0.1.1"     # test maintainence
-ena = "0.11"          # union-find implementation
+ena = "0.13.1"          # union-find implementation
 dot = "0.1.4"         # graphviz dot representation of structures
-jemallocator = { version = "0.1.9", optional = true }
+jemallocator = { version = "0.3.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-indicatif = "0.11.0"          # progress bars
-atomicwrites = "0.2.2"  # atomic file writes
-colored-diff = "0.2.1"      # visualize differences in configurations
+indicatif = "0.13.0"          # progress bars
+atomicwrites = "0.2.5"  # atomic file writes
+colored-diff = "0.2.2"      # visualize differences in configurations
 
 
 [patch.crates-io]
