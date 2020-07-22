@@ -1,7 +1,11 @@
-use super::super::matrix::dependency::*;
-use super::super::*;
-use super::dimacs::*;
-use super::ParseError;
+use crate::{
+    literal::Variable,
+    matrix::{dependency::DependencyPrefix, Matrix},
+    parse::{
+        dimacs::{parse_header, parse_matrix, DimacsToken, DimacsTokenStream, QuantKind},
+        ParseError,
+    },
+};
 use rustc_hash::FxHashSet;
 
 /// Parses the QDIMACS string into its matrix representation
@@ -163,6 +167,10 @@ pub(crate) fn parse_prefix(
 mod tests {
 
     use super::*;
+    use crate::{
+        clause::Clause,
+        matrix::{Prefix, VariableInfo},
+    };
 
     #[test]
     fn test_simple() {

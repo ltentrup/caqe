@@ -1,5 +1,4 @@
-use super::super::matrix::dependency::*;
-use super::super::*;
+use crate::matrix::dependency::*;
 use bit_vec::BitVec;
 use cryptominisat::*;
 use log::{debug, error, info, log_enabled, trace};
@@ -8,7 +7,7 @@ use simplelog::Level;
 use std::cmp::Ordering;
 
 #[cfg(feature = "statistics")]
-use super::super::utils::statistics::{CountingStats, TimingStats};
+use crate::utils::statistics::{CountingStats, TimingStats};
 
 type DQMatrix = Matrix<DependencyPrefix>;
 

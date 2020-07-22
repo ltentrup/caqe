@@ -1,12 +1,15 @@
-use super::matrix::hierarchical::*;
-use super::parse::qdimacs;
-use super::*;
-use std::fs::File;
-use std::io::prelude::*;
-use std::io::SeekFrom;
-use std::io::{self, Read};
-use std::process::{Command, Stdio};
-use std::str::FromStr;
+use crate::{
+    matrix::{hierarchical::HierarchicalPrefix, Matrix},
+    parse::qdimacs,
+    CaqeSpecificSolverConfig,
+};
+use std::{
+    error::Error,
+    fs::File,
+    io::{self, prelude::*, Read, SeekFrom},
+    process::{Command, Stdio},
+    str::FromStr,
+};
 use tempfile::tempfile;
 
 #[allow(clippy::module_name_repetitions)]

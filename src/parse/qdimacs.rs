@@ -1,7 +1,16 @@
-use super::super::matrix::hierarchical::*;
-use super::super::*;
-use super::dimacs::*;
-use super::ParseError;
+use crate::{
+    dimacs::Dimacs,
+    literal::Literal,
+    matrix::{
+        hierarchical::{HierarchicalPrefix, Quantifier},
+        Matrix,
+    },
+    parse::{
+        dimacs::{parse_header, parse_matrix, DimacsToken, DimacsTokenStream, QuantKind},
+        ParseError,
+    },
+    solve::SolverResult,
+};
 use std::str::FromStr;
 
 /// Parses the QDIMACS string into its matrix representation
@@ -297,6 +306,11 @@ impl Dimacs for PartialQDIMACSCertificate {
 mod tests {
 
     use super::*;
+    use crate::{
+        clause::Clause,
+        literal::Variable,
+        matrix::{Prefix, VariableInfo},
+    };
 
     #[test]
     fn test_simple() {

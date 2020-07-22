@@ -1,20 +1,28 @@
-use crate::parse::qdimacs;
-use crate::solve::caqe::{CaqeSolver, SolverOptions};
-use crate::solve::{Solver, SolverResult};
+use crate::{
+    parse::qdimacs,
+    solve::{
+        caqe::{CaqeSolver, SolverOptions},
+        Solver, SolverResult,
+    },
+};
 use atomicwrites::{AllowOverwrite, AtomicFile};
 use clap::{App, Arg, SubCommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::error::Error;
-use std::fs::File;
-use std::io::Read as _;
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::mpsc::{channel, RecvTimeoutError};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    error::Error,
+    fs::File,
+    io::Read as _,
+    sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        mpsc::{channel, RecvTimeoutError},
+        Arc,
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone)]

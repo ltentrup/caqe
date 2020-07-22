@@ -2,9 +2,8 @@ pub mod dimacs;
 pub mod dqdimacs;
 pub mod qdimacs;
 
-use super::*;
-use std::error::Error;
-use std::str::Chars;
+use crate::literal::Literal;
+use std::{error::Error, str::Chars};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Eq, PartialEq)]

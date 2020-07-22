@@ -3,15 +3,6 @@
 #![warn(clippy::all, clippy::pedantic)]
 //#![warn(clippy::cargo)]
 
-use clap::{App, Arg};
-use simplelog::{CombinedLogger, LevelFilter, TermLogger};
-use std::default::Default;
-use std::error::Error;
-use std::fs::File;
-use std::io::Read;
-use std::str::FromStr;
-use uncover::define_uncover_macros;
-
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
@@ -20,34 +11,34 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 // They will be no-ops unless `cfg!(debug_assertions)` is true.
 define_uncover_macros!(enable_if(cfg!(debug_assertions)));
 
-// modules
-mod literal;
-pub use self::literal::Literal;
-use crate::literal::*; // re-export literals
-
 mod clause;
-use crate::clause::*;
-
+pub mod dimacs;
+pub mod experiment;
+mod literal;
 mod matrix;
-pub use self::matrix::Matrix;
-use crate::matrix::*;
-
-mod dimacs;
-pub use crate::dimacs::*;
-
-mod preprocessor;
-use crate::preprocessor::*;
-
 pub mod parse;
+mod preprocessor;
+pub mod solve;
 mod utils;
 
-pub mod solve;
-pub use crate::solve::caqe::{CaqeSolver, ExpansionMode, SolverOptions};
-#[cfg(dcaqe)]
-pub use crate::solve::dcaqe::DCaqeSolver;
-pub use crate::solve::{Solver, SolverResult};
+use crate::{dimacs::Dimacs, preprocessor::preprocess, preprocessor::QBFPreprocessor};
+use clap::{App, Arg};
+use simplelog::{CombinedLogger, LevelFilter, TermLogger};
+use std::{default::Default, error::Error, fs::File, io::Read, str::FromStr};
+use uncover::define_uncover_macros;
 
-pub mod experiment;
+// re-exports
+pub use crate::{
+    literal::Literal,
+    matrix::Matrix,
+    solve::{
+        caqe::{CaqeSolver, ExpansionMode, SolverOptions},
+        Solver, SolverResult,
+    },
+};
+
+#[cfg(dcaqe)]
+pub use crate::solve::DCaqeSolver;
 
 #[cfg(feature = "statistics")]
 use utils::statistics::{CountingStats, TimingStats};

@@ -6,9 +6,10 @@
 //! [1] ``Soundness of Q-resolution with dependency schemes'' by Slivovsky and Szeider
 //! [2] ``Dependency Schemes for DQBF'' by Wimmer et al.
 
-use super::{Matrix, Prefix};
-use crate::literal::{Literal, Variable};
-use crate::matrix::VariableInfo;
+use crate::{
+    literal::{Literal, Variable},
+    matrix::{Matrix, Prefix, VariableInfo},
+};
 use log::{debug, trace};
 use rustc_hash::FxHashSet;
 

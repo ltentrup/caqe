@@ -1,16 +1,26 @@
-use super::super::matrix::hierarchical::*;
-use super::super::parse::qdimacs;
-use super::super::*;
-use crate::literal::Assignment;
+use crate::{
+    clause::Clause,
+    literal::{Assignment, Literal, Variable},
+    matrix::{
+        hierarchical::{HierarchicalPrefix, Quantifier, Scope, ScopeId},
+        ClauseId, Matrix, Prefix, VariableInfo,
+    },
+    parse::qdimacs,
+    solve::SolverResult,
+};
 use bit_vec::BitVec;
 use cryptominisat::*;
 use log::{debug, info, trace};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::ops::Not as _;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::{
+    collections::BTreeMap,
+    ops::Not as _,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 #[cfg(feature = "statistics")]
 use crate::utils::statistics::TimingStats;
@@ -2096,7 +2106,7 @@ impl ScopeSolverData {
 mod tests {
 
     use super::*;
-    use crate::solve::Solver;
+    use crate::{dimacs::Dimacs, solve::Solver};
 
     #[test]
     fn test_false() {
@@ -2126,7 +2136,7 @@ e 3 4 0
 -3 -4 0
 -1 2 4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2144,7 +2154,7 @@ e 3 4 0
 -3 -4 0
 1 2 4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2187,7 +2197,7 @@ e 4 5 6 7 8 9 10 11 0
 -8 -10 11 0
 11 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2207,7 +2217,7 @@ e 2 0
 3 -4 0
 -2 -1 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2222,7 +2232,7 @@ p cnf 1 2
 -1 0
 1 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2239,7 +2249,7 @@ e 3 0
 3 -2 0
 -3 -1 2 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2259,7 +2269,7 @@ e 3 0
 -3 -2 0
 3 -4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2281,7 +2291,7 @@ e 2 4 0
 -4 -5 -1 0
 2 3 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2301,7 +2311,7 @@ e 2 0
 2 -3 -4 0
 -1 -4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2321,7 +2331,7 @@ e 2 0
 -2 3 0
 3 2 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2341,7 +2351,7 @@ e 1 0
 -2 3 0
 3 1 -4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2365,7 +2375,7 @@ e 2 3 0
 -2 4 0
 5 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2385,7 +2395,7 @@ e 1 3 0
 3 -4 0
 -3 2 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2405,7 +2415,7 @@ e 1 3 0
 4 -3 0
 1 2 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2430,7 +2440,7 @@ e 1 3 0
 -2 7 0
 -3 -2 -1 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2452,7 +2462,7 @@ e 2 0
 4 0
 -4 2 1 3 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2475,7 +2485,7 @@ e 7 8 0
 7 -3 0
 4 1 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2501,7 +2511,7 @@ e 2 3 6 0
 -2 0
 -3 -5 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
@@ -2523,7 +2533,7 @@ e 3 0
 -4 0
 5 -2 6 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2562,7 +2572,7 @@ e 14 15 16 17 18 19 0
 -6 -9 0
 -4 -16 -17 -18 -19 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2587,7 +2597,7 @@ e 5 6 7 8 0
 -4 7 0
 -3 -7 -8 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2612,7 +2622,7 @@ e 5 6 7 0
 7 -2 0
 -5 -1 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2636,7 +2646,7 @@ e 4 5 0
 4 2 0
 -3 4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2666,7 +2676,7 @@ e 6 9 13 0
 10 -3 0
 13 3 12 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2705,7 +2715,7 @@ e 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 0
 4 0
 -12 14 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2740,7 +2750,7 @@ e 8 9 10 11 12 13 14 0
 -9 -10 -11 0
 -5 -6 -8 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2755,7 +2765,7 @@ c Thanks to Andreas Niskanen for the report.
 p cnf 36 0
 a 16 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
@@ -2775,7 +2785,7 @@ e 3 4 0
 -3 0
 2 -4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
