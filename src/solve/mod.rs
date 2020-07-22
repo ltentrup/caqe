@@ -2,6 +2,7 @@ use super::dimacs::Dimacs;
 use serde::{Deserialize, Serialize};
 
 pub mod caqe;
+#[cfg(dcaqe)]
 pub mod dcaqe;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
