@@ -1,9 +1,9 @@
-use super::dimacs::Dimacs;
-use serde::{Deserialize, Serialize};
-
 pub mod caqe;
 #[cfg(dcaqe)]
 pub mod dcaqe;
+
+use crate::dimacs::Dimacs;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub enum SolverResult {

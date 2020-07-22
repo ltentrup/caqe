@@ -1,7 +1,9 @@
-use std::cmp::{Eq, Ord};
-use std::collections::HashMap;
-use std::fmt;
-use std::hash::Hash;
+use std::{
+    cmp::{Eq, Ord},
+    collections::HashMap,
+    fmt,
+    hash::Hash,
+};
 
 #[derive(Debug)]
 pub struct CountingStats<E>

@@ -1,5 +1,9 @@
-use super::super::*;
-use super::{CharIterator, ParseError, SourcePos};
+use crate::{
+    clause::Clause,
+    literal::Literal,
+    matrix::{Matrix, Prefix},
+    parse::{CharIterator, ParseError, SourcePos},
+};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Eq, PartialEq)]

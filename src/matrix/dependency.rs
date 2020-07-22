@@ -1,4 +1,9 @@
-use super::*;
+use crate::{
+    clause::Clause,
+    dimacs::Dimacs,
+    literal::Variable,
+    matrix::{Prefix, VariableInfo, VariableStore},
+};
 use rustc_hash::FxHashSet;
 use std::cmp::Ordering;
 

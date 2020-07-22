@@ -1,5 +1,9 @@
-use super::*;
-use dot;
+use crate::{
+    clause::Clause,
+    dimacs::Dimacs,
+    literal::{Literal, Variable},
+    matrix::{ClauseId, Matrix, Prefix, VariableInfo, VariableStore},
+};
 use ena::unify::{InPlaceUnificationTable, UnifyKey};
 use log::{debug, info};
 use rustc_hash::{FxHashMap, FxHashSet};

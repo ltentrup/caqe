@@ -1,10 +1,14 @@
-use super::*;
-use bit_vec::BitVec;
-use rustc_hash::{FxHashMap, FxHashSet};
-
 pub mod dependency;
 pub mod hierarchical;
 mod schemes;
+
+use crate::{
+    clause::Clause,
+    dimacs::Dimacs,
+    literal::{Literal, Variable},
+};
+use bit_vec::BitVec;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub type ClauseId = u32;
 
@@ -199,6 +203,7 @@ impl<V: VariableInfo> VariableStore<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parse::qdimacs;
 
     #[test]
     fn test_matrix_occurrences() {
@@ -215,7 +220,7 @@ e 3 4 0
         let lit2 = Literal::new(2_u32, false);
         let lit3 = Literal::new(3_u32, false);
         let lit4 = Literal::new(4_u32, false);
-        let matrix = parse::qdimacs::parse(&instance).unwrap();
+        let matrix = qdimacs::parse(&instance).unwrap();
         assert_eq!(matrix.occurrences(lit1).len(), 2);
         assert_eq!(matrix.occurrences(-lit1).len(), 1);
         assert_eq!(matrix.occurrences(lit2).len(), 1);
@@ -237,7 +242,7 @@ e 3 4 0
 -3 -4 0
 1 2 4 0
 ";
-        let matrix = parse::qdimacs::parse(&instance).unwrap();
+        let matrix = qdimacs::parse(&instance).unwrap();
         let dimacs = matrix.dimacs();
         assert_eq!(instance, dimacs);
     }
@@ -259,7 +264,7 @@ e 7 8 9 10 0
 -10 -6 8 0
 -10 6 -8 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         assert!(matrix.prefix.roots.len() == 2);
     }
@@ -274,7 +279,7 @@ e 3 4 0
 -3 -4 0
 1 2 4 0
 ";
-        let mut matrix = parse::qdimacs::parse(&instance).unwrap();
+        let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let dimacs = matrix.dimacs();
         assert_eq!(instance, dimacs);

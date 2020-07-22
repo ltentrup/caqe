@@ -1,5 +1,8 @@
-use super::matrix::hierarchical::*;
-use super::*;
+use crate::{
+    dimacs::Dimacs,
+    literal::{Literal, Variable},
+    matrix::{hierarchical::*, Prefix, VariableInfo},
+};
 use rustc_hash::FxHashMap;
 
 #[derive(PartialEq, Eq, Debug, Clone)]

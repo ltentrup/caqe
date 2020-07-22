@@ -4,14 +4,14 @@ extern crate test;
 
 mod instances;
 
-use caqe::*;
+use caqe::{dimacs::Dimacs, parse::qdimacs, CaqeSolver, Solver, SolverResult};
 use test::Bencher;
 
 #[bench]
 fn endtoend_bench_arbiter_05_comp_error01_qbf_hardness_depth_8_qdimacs(b: &mut Bencher) {
     b.iter(|| {
         let instance = &instances::ARBITER_05_COMP_ERROR01_QBF_HARDNESS_DEPTH_8_QDIMACS;
-        let mut matrix = parse::qdimacs::parse(instance).unwrap();
+        let mut matrix = qdimacs::parse(instance).unwrap();
         matrix.unprenex_by_miniscoping();
         let mut solver = CaqeSolver::new(&mut matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
