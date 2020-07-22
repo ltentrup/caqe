@@ -377,19 +377,19 @@ impl ScopeRecursiveSolver {
             {
                 // the branches have pairwise disjoint relevant clauses
                 let mut copy = relevant_clauses.clone();
-                copy.intersect(&next_scope.data.relevant_clauses);
+                copy.and(&next_scope.data.relevant_clauses);
                 assert!(copy.none());
             }
-            relevant_clauses.union(&next_scope.data.relevant_clauses);
+            relevant_clauses.or(&next_scope.data.relevant_clauses);
 
             #[cfg(debug_assertions)]
             {
                 // the branches have pairwise disjoint relevant clauses
                 let mut copy = clause_tree_branch.clone();
-                copy.intersect(&next_scope.data.clause_tree_branch);
+                copy.and(&next_scope.data.clause_tree_branch);
                 assert!(copy.none());
             }
-            clause_tree_branch.union(&next_scope.data.clause_tree_branch);
+            clause_tree_branch.or(&next_scope.data.clause_tree_branch);
         }
         let mut candidate = Self {
             data: ScopeSolverData::new(matrix, scope, relevant_clauses, clause_tree_branch),
@@ -576,7 +576,7 @@ impl ScopeRecursiveSolver {
                             if skip_level {
                                 // copy witness
                                 current.entry.clear();
-                                current.entry.union(&scope.data.entry);
+                                current.entry.or(&scope.data.entry);
 
                                 // push assignments as well
                                 if global.options.skip_levels.unwrap()
@@ -603,7 +603,7 @@ impl ScopeRecursiveSolver {
                         // copy entries from inner quantifier
                         current.entry.clear();
                         for scope in next.iter() {
-                            current.entry.union(&scope.data.entry);
+                            current.entry.or(&scope.data.entry);
                         }
                         // apply entry optimization
                         if current.is_universal {
@@ -1134,7 +1134,7 @@ impl ScopeSolverData {
 
     fn check_candidate_exists(&mut self, next: &mut Vec<ScopeRecursiveSolver>) -> Lbool {
         // we need to reset abstraction entries for next scopes, since some entries may be pushed down
-        self.entry.intersect(&self.relevant_clauses);
+        self.entry.and(&self.relevant_clauses);
         for scope in next {
             scope.data.entry.clone_from(&self.entry);
         }
@@ -1392,7 +1392,7 @@ impl ScopeSolverData {
         trace!("entry_minimization");
 
         // add clauses to entry where the current scope is maximal
-        self.entry.union(&self.max_clauses);
+        self.entry.or(&self.max_clauses);
 
         for variable in &self.variables {
             let value = self.assignments[variable];
