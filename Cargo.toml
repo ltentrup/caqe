@@ -30,6 +30,7 @@ colored-diff = "0.2.2"      # visualize differences in configurations
 default = ["jemalloc"]
 statistics = [] # enable statistics
 jemalloc = ["jemallocator"] # use jemalloc allocator instead of system one
+dcaqe = [] # build dcaqe
 
 [profile.release]
 opt-level = 3
@@ -44,6 +45,7 @@ path = "src/bin/caqe.rs"
 [[bin]]
 name = "dcaqe"
 path = "src/bin/dcaqe.rs"
+required-features = ["dcaqe"]
 
 [[bin]]
 name = "experiment"

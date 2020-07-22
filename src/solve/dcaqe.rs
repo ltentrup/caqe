@@ -1929,4 +1929,31 @@ d 9 5 0
         let mut solver = DCaqeSolver::new(&mut matrix, &config);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
     }
+
+    #[test]
+    #[ignore = "not yet fixed"]
+    fn test_regression() {
+        let instance = "c
+c Reported by Juraj Síč
+p cnf 8 9
+a 1 2 3 0
+e 4 5 0
+a 6 0
+d 7 6 0
+d 8 6 0
+-1 2 3 4 5 0
+-1 2 3 -4 0
+-1 2 3 -5 7 0
+1 -2 3 4 5 0
+1 -2 3 -4 8 0
+1 -2 3 -5 0
+1 2 3 4 5 0
+1 2 3 -4 -6 -7 0
+1 2 3 -5 6 -8 0
+";
+        let mut matrix = dqdimacs::parse(&instance).unwrap();
+        let config = DCaqeSpecificSolverConfig::default();
+        let mut solver = DCaqeSolver::new(&mut matrix, &config);
+        assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
+    }
 }

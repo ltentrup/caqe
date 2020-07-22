@@ -293,12 +293,13 @@ impl DependencyPrefix {
     pub fn is_maximal(&self, scope: &Scope) -> bool {
         self.scopes.iter().all(|other| {
             // checks that other is not a strict superset
-            (other.dependencies.len() <= scope.dependencies.len()
-                || !other.dependencies.is_superset(&scope.dependencies))
+            other.dependencies.len() <= scope.dependencies.len()
+                || !other.dependencies.is_superset(&scope.dependencies)
         })
     }
 
     #[allow(dead_code)]
+    #[cfg(dcaqe)]
     pub(crate) fn contains_dependency_fork(&self, clause: &Clause) -> bool {
         use crate::solve::dcaqe::MaxElements;
         let mut maximal_scopes: MaxElements<Scope> = MaxElements::new();

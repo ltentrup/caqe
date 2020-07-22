@@ -43,6 +43,7 @@ mod utils;
 
 pub mod solve;
 pub use crate::solve::caqe::{CaqeSolver, ExpansionMode, SolverOptions};
+#[cfg(dcaqe)]
 pub use crate::solve::dcaqe::DCaqeSolver;
 pub use crate::solve::{Solver, SolverResult};
 
@@ -54,6 +55,7 @@ use utils::statistics::{CountingStats, TimingStats};
 // Command line parsing
 
 pub type CaqeConfig = CommonSolverConfig<CaqeSpecificSolverConfig>;
+#[cfg(dcaqe)]
 pub type DCaqeConfig = CommonSolverConfig<DCaqeSpecificSolverConfig>;
 
 pub trait SolverSpecificConfig {
@@ -551,6 +553,7 @@ impl SolverSpecificConfig for DCaqeSpecificSolverConfig {
     }
 }
 
+#[cfg(dcaqe)]
 impl DCaqeConfig {
     pub fn run(&self) -> Result<SolverResult, Box<dyn Error>> {
         #[cfg(debug_assertions)]
