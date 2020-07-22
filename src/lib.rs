@@ -7,10 +7,6 @@
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-// This defines two macros, `covers!` and `covered_by!`.
-// They will be no-ops unless `cfg!(debug_assertions)` is true.
-define_uncover_macros!(enable_if(cfg!(debug_assertions)));
-
 mod clause;
 pub mod dimacs;
 pub mod experiment;
@@ -23,7 +19,7 @@ mod utils;
 
 use crate::{dimacs::Dimacs, preprocessor::preprocess, preprocessor::QBFPreprocessor};
 use clap::{App, Arg};
-use simplelog::{CombinedLogger, LevelFilter, TermLogger};
+use log::LevelFilter;
 use std::{default::Default, error::Error, fs::File, io::Read, str::FromStr};
 use uncover::define_uncover_macros;
 
@@ -42,6 +38,10 @@ pub use crate::solve::DCaqeSolver;
 
 #[cfg(feature = "statistics")]
 use utils::statistics::{CountingStats, TimingStats};
+
+// This defines two macros, `covers!` and `covered_by!`.
+// They will be no-ops unless `cfg!(debug_assertions)` is true.
+define_uncover_macros!(enable_if(cfg!(debug_assertions)));
 
 // Command line parsing
 
@@ -356,16 +356,7 @@ impl std::fmt::Display for MatrixStats {
 impl CaqeConfig {
     pub fn run(&self) -> Result<SolverResult, Box<dyn Error>> {
         #[cfg(debug_assertions)]
-        CombinedLogger::init(vec![
-            TermLogger::new(
-                self.verbosity,
-                simplelog::Config::default(),
-                simplelog::TerminalMode::Mixed,
-            )
-            .expect("Could not initialize TermLogger"),
-            //WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ])
-        .expect("Could not initialize logging");
+        env_logger::init();
 
         #[cfg(feature = "statistics")]
         let statistics = TimingStats::new();
