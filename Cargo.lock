@@ -62,7 +62,7 @@ dependencies = [
  "bit-vec 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.33.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "colored-diff 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "cryptominisat 5.0.1 (git+https://github.com/ltentrup/cryptominisat-rs.git?rev=d812d3032eaa0c31f5f25534df9a1d72c5d354cc)",
+ "cryptominisat 5.6.6 (git+https://github.com/ltentrup/cryptominisat-rs.git?rev=99b8a08dbbce2352bc15e4c141976de9c81db6dc)",
  "dot 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "ena 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -146,8 +146,8 @@ dependencies = [
 
 [[package]]
 name = "cryptominisat"
-version = "5.0.1"
-source = "git+https://github.com/ltentrup/cryptominisat-rs.git?rev=d812d3032eaa0c31f5f25534df9a1d72c5d354cc#d812d3032eaa0c31f5f25534df9a1d72c5d354cc"
+version = "5.6.6"
+source = "git+https://github.com/ltentrup/cryptominisat-rs.git?rev=99b8a08dbbce2352bc15e4c141976de9c81db6dc#99b8a08dbbce2352bc15e4c141976de9c81db6dc"
 dependencies = [
  "cmake 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.66 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -629,7 +629,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum cmake 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)" = "6ec65ee4f9c9d16f335091d23693457ed4928657ba4982289d7fafee03bc614a"
 "checksum colored-diff 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "516f260afc909bb0d056b76891ad91b3275b83682d851b566792077eee946efd"
 "checksum console 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f5d540c2d34ac9dd0deb5f3b5f54c36c79efa78f6b3ad19106a554d07a7b5d9f"
-"checksum cryptominisat 5.0.1 (git+https://github.com/ltentrup/cryptominisat-rs.git?rev=d812d3032eaa0c31f5f25534df9a1d72c5d354cc)" = "<none>"
+"checksum cryptominisat 5.6.6 (git+https://github.com/ltentrup/cryptominisat-rs.git?rev=99b8a08dbbce2352bc15e4c141976de9c81db6dc)" = "<none>"
 "checksum difference 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "524cbf6897b527295dff137cec09ecf3a05f4fddffd7dfcd1585403449e74198"
 "checksum dot 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "a74b6c4d4a1cff5f454164363c16b72fa12463ca6b31f4b5f2035a65fa3d5906"
 "checksum either 1.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "5527cfe0d098f36e3f8839852688e63c8fff1c90b2b405aef730615f9a7bcf7b"

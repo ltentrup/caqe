@@ -5,7 +5,7 @@ authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 edition = "2018"
 
 [dependencies]
-cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git", rev = "d812d3032eaa0c31f5f25534df9a1d72c5d354cc" }
+cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git", rev = "99b8a08dbbce2352bc15e4c141976de9c81db6dc" }
 log = { version = "0.4.11", features = ["release_max_level_warn"] }
 env_logger = "0.7.1"
 bit-vec = "0.6.2"
@@ -31,6 +31,7 @@ default = ["jemalloc"]
 statistics = [] # enable statistics
 jemalloc = ["jemallocator"] # use jemalloc allocator instead of system one
 dcaqe = [] # build dcaqe
+largemem = ["cryptominisat/largemem"]
 
 [profile.release]
 opt-level = 3
