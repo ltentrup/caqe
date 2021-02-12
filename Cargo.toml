@@ -5,7 +5,7 @@ authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 edition = "2018"
 
 [dependencies]
-cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git", rev = "99b8a08dbbce2352bc15e4c141976de9c81db6dc" }
+cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git", rev = "d0c6eadb79547e3bc5078b228badfff16601a47f" }
 log = { version = "0.4.11", features = ["release_max_level_warn"] }
 env_logger = "0.7.1"
 bit-vec = "0.6.2"
