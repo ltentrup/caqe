@@ -161,7 +161,7 @@ dependencies = [
 [[package]]
 name = "cryptominisat"
 version = "5.6.6"
-source = "git+https://github.com/ltentrup/cryptominisat-rs.git?rev=d0c6eadb79547e3bc5078b228badfff16601a47f#d0c6eadb79547e3bc5078b228badfff16601a47f"
+source = "git+https://github.com/ltentrup/cryptominisat-rs.git?rev=79380e6117fb83dfce7224fffcee992446577686#79380e6117fb83dfce7224fffcee992446577686"
 dependencies = [
  "cmake",
  "libc",

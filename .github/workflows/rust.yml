@@ -13,6 +13,7 @@ jobs:
       run: |
         sudo apt-get update -yqq
         sudo apt-get install -yqq --no-install-recommends build-essential cmake xxd
+        rustup update
         rustup component add clippy rustfmt
     - name: Check format
       run: cargo fmt --verbose -- --check
