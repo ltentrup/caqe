@@ -5,7 +5,7 @@ authors = ["Leander Tentrup <tentrup@react.uni-saarland.de>"]
 edition = "2018"
 
 [dependencies]
-cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git", rev = "d0c6eadb79547e3bc5078b228badfff16601a47f" }
+cryptominisat = { git = "https://github.com/ltentrup/cryptominisat-rs.git", rev = "6f979cb6954f85b9079b8453edf03ee3518d9f9b" }
 log = { version = "0.4.11", features = ["release_max_level_warn"] }
 env_logger = "0.7.1"
 bit-vec = "0.6.2"
@@ -21,6 +21,7 @@ serde_json = "1.0"
 indicatif = "0.15.0"          # progress bars
 atomicwrites = "0.2.5"  # atomic file writes
 colored-diff = "0.2.2"      # visualize differences in configurations
+rayon = "1.5.0"
 
 
 [patch.crates-io]

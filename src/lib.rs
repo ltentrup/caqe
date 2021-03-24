@@ -422,7 +422,7 @@ impl CaqeConfig {
         #[cfg(feature = "statistics")]
         let mut timer = statistics.start(SolverPhases::Initializing);
 
-        let mut solver = CaqeSolver::new_with_options(&mut matrix, self.specific.options);
+        let mut solver = CaqeSolver::new_with_options(matrix, self.specific.options);
 
         #[cfg(feature = "statistics")]
         timer.stop();

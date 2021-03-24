@@ -11,6 +11,7 @@ use crate::{
 use bit_vec::BitVec;
 use cryptominisat::*;
 use log::{debug, info, trace};
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,7 +19,7 @@ use std::{
     ops::Not as _,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex, RwLock,
     },
 };
 
@@ -86,21 +87,22 @@ pub enum SkipLevelMode {
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub struct CaqeSolver<'a> {
-    matrix: &'a mut QMatrix,
+pub struct CaqeSolver {
+    matrix: Arc<RwLock<QMatrix>>,
     result: SolverResult,
     global: GlobalSolverData,
-    abstraction: Vec<ScopeRecursiveSolver>,
+    abstraction: Vec<Arc<Mutex<ScopeRecursiveSolver>>>,
 }
 
 struct ScopeRecursiveSolver {
-    data: ScopeSolverData,
-    next: Vec<ScopeRecursiveSolver>,
+    data: Arc<Mutex<ScopeSolverData>>,
+    next: Vec<Arc<Mutex<ScopeRecursiveSolver>>>,
 }
 
+#[derive(Clone)]
 struct GlobalSolverData {
-    options: SolverOptions,
-    conflicts: Vec<(BitVec, u32)>,
+    options: Arc<SolverOptions>,
+    conflicts: Arc<Mutex<Vec<(BitVec, u32)>>>,
     interrupted: Arc<AtomicBool>,
 }
 
@@ -168,21 +170,21 @@ struct ScopeSolverData {
     statistics: TimingStats<SolverScopeEvents>,
 }
 
-impl<'a> CaqeSolver<'a> {
-    pub fn new(matrix: &mut QMatrix) -> CaqeSolver {
+impl CaqeSolver {
+    pub fn new(matrix: QMatrix) -> CaqeSolver {
         Self::new_with_options(matrix, SolverOptions::default())
     }
 
-    pub fn new_with_options(matrix: &mut QMatrix, options: SolverOptions) -> CaqeSolver {
+    pub fn new_with_options(matrix: QMatrix, options: SolverOptions) -> CaqeSolver {
         let mut abstractions = Vec::new();
         for scope_id in &matrix.prefix.roots {
-            abstractions.push(ScopeRecursiveSolver::init_abstraction_recursively(
-                matrix, &options, *scope_id,
-            ));
+            abstractions.push(Arc::new(Mutex::new(
+                ScopeRecursiveSolver::init_abstraction_recursively(&matrix, &options, *scope_id),
+            )));
         }
         debug_assert!(!matrix.conflict());
         CaqeSolver {
-            matrix,
+            matrix: Arc::new(RwLock::new(matrix)),
             result: SolverResult::Unknown,
             global: GlobalSolverData::new(options),
             abstraction: abstractions,
@@ -228,10 +230,11 @@ impl<'a> CaqeSolver<'a> {
 
     #[must_use]
     pub fn qdimacs_output(&self) -> qdimacs::PartialQDIMACSCertificate {
+        let matrix = self.matrix.read().unwrap();
         let mut certificate = qdimacs::PartialQDIMACSCertificate::new(
             self.result,
-            self.matrix.prefix.variables().orig_max_variable_id(),
-            self.matrix.orig_clause_num,
+            matrix.prefix.variables().orig_max_variable_id(),
+            matrix.orig_clause_num,
         );
 
         if self.result == SolverResult::Unknown {
@@ -240,19 +243,19 @@ impl<'a> CaqeSolver<'a> {
 
         // get the first scope that contains variables (the scope 0 may be empty)
         let mut top_level = Vec::new();
-        let all_outer_scopes_empty = self.matrix.prefix.roots.iter().all(|scope_id| {
-            self.matrix.prefix.scopes[scope_id.to_usize()]
+        let all_outer_scopes_empty = matrix.prefix.roots.iter().all(|scope_id| {
+            matrix.prefix.scopes[scope_id.to_usize()]
                 .variables
                 .is_empty()
         });
         let is_universal = if all_outer_scopes_empty {
             // top-level existential scope is empty
             for abstraction in &self.abstraction {
-                top_level.extend(&abstraction.next);
+                top_level.extend(abstraction.lock().unwrap().next.clone());
             }
             true
         } else {
-            top_level.extend(&self.abstraction);
+            top_level.extend(self.abstraction.clone());
             false
         };
 
@@ -267,15 +270,17 @@ impl<'a> CaqeSolver<'a> {
         // for existential level: combine the assignments
         // for universal level: select only one level
         for scope in &top_level {
+            let scope = scope.lock().unwrap();
+            let scope_data = scope.data.lock().unwrap();
             if self.result == SolverResult::Unsatisfiable
-                && scope.data.sub_result != SolverResult::Unsatisfiable
+                && scope_data.sub_result != SolverResult::Unsatisfiable
             {
                 continue;
             }
 
-            for variable in &scope.data.variables {
-                let value = scope.data.assignments[variable];
-                let info = &self.matrix.prefix.variables().get(*variable);
+            for variable in &scope_data.variables {
+                let value = scope_data.assignments[variable];
+                let info = &matrix.prefix.variables().get(*variable);
                 let orig_variable = if info.copy_of == 0_u32.into() {
                     *variable
                 } else {
@@ -294,18 +299,27 @@ impl<'a> CaqeSolver<'a> {
     }
 }
 
-impl<'a> super::Solver for CaqeSolver<'a> {
+impl super::Solver for CaqeSolver {
     fn solve(&mut self) -> SolverResult {
-        for abstraction in &mut self.abstraction {
-            self.global.conflicts.clear();
+        let abstraction: Vec<_> = self.abstraction.iter().cloned().collect();
+        let res: Vec<_> = abstraction
+            .par_iter()
+            .flat_map(|abstraction| {
+                let mut abstraction = abstraction.lock().unwrap();
+                self.global.conflicts.lock().unwrap().clear();
 
-            match abstraction.solve_recursive(self.matrix, &mut self.global) {
-                result if result != SolverResult::Satisfiable => {
-                    self.result = result;
-                    return result;
+                match abstraction.solve_recursive(self.matrix.clone(), self.global.clone()) {
+                    result if result != SolverResult::Satisfiable => {
+                        return Some(result);
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
+                None
+            })
+            .collect();
+        if let Some(&res) = res.first() {
+            self.result = res;
+            return self.result;
         }
         self.result = SolverResult::Satisfiable;
         self.result
@@ -344,8 +358,8 @@ impl Default for SolverOptions {
 impl GlobalSolverData {
     fn new(options: SolverOptions) -> Self {
         Self {
-            options,
-            conflicts: Vec::new(),
+            options: Arc::new(options),
+            conflicts: Arc::new(Mutex::new(Vec::new())),
             interrupted: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -369,7 +383,12 @@ impl std::fmt::Display for SolverScopeEvents {
 }
 
 impl ScopeRecursiveSolver {
-    fn new(matrix: &QMatrix, options: &SolverOptions, scope: &Scope, next: Vec<Self>) -> Self {
+    fn new(
+        matrix: &QMatrix,
+        options: &SolverOptions,
+        scope: &Scope,
+        next: Vec<Arc<Mutex<Self>>>,
+    ) -> Self {
         let mut relevant_clauses = BitVec::from_elem(matrix.clauses.len(), false);
         let mut clause_tree_branch = BitVec::from_elem(matrix.clauses.len(), false);
         for next_scope in &next {
@@ -377,37 +396,76 @@ impl ScopeRecursiveSolver {
             {
                 // the branches have pairwise disjoint relevant clauses
                 let mut copy = relevant_clauses.clone();
-                copy.and(&next_scope.data.relevant_clauses);
+                copy.and(
+                    &next_scope
+                        .lock()
+                        .unwrap()
+                        .data
+                        .lock()
+                        .unwrap()
+                        .relevant_clauses,
+                );
                 assert!(copy.none());
             }
-            relevant_clauses.or(&next_scope.data.relevant_clauses);
+            relevant_clauses.or(&next_scope
+                .lock()
+                .unwrap()
+                .data
+                .lock()
+                .unwrap()
+                .relevant_clauses);
 
             #[cfg(debug_assertions)]
             {
                 // the branches have pairwise disjoint relevant clauses
                 let mut copy = clause_tree_branch.clone();
-                copy.and(&next_scope.data.clause_tree_branch);
+                copy.and(
+                    &next_scope
+                        .lock()
+                        .unwrap()
+                        .data
+                        .lock()
+                        .unwrap()
+                        .clause_tree_branch,
+                );
                 assert!(copy.none());
             }
-            clause_tree_branch.or(&next_scope.data.clause_tree_branch);
+            clause_tree_branch.or(&next_scope
+                .lock()
+                .unwrap()
+                .data
+                .lock()
+                .unwrap()
+                .clause_tree_branch);
         }
-        let mut candidate = Self {
-            data: ScopeSolverData::new(matrix, scope, relevant_clauses, clause_tree_branch),
+        let candidate = Self {
+            data: Arc::new(Mutex::new(ScopeSolverData::new(
+                matrix,
+                scope,
+                relevant_clauses,
+                clause_tree_branch,
+            ))),
             next,
         };
 
         // add variables of scope to sat solver
         for &variable in &scope.variables {
-            candidate
-                .data
-                .sat
-                .variable_to_sat
-                .insert(variable, candidate.data.sat.sat.new_var());
+            let mut data = candidate.data.lock().unwrap();
+            let var = data.sat.sat.new_var();
+            data.sat.variable_to_sat.insert(variable, var);
         }
 
         match scope.quant {
-            Quantifier::Existential => candidate.data.new_existential(matrix, options, scope),
-            Quantifier::Universal => candidate.data.new_universal(matrix, options, scope),
+            Quantifier::Existential => candidate
+                .data
+                .lock()
+                .unwrap()
+                .new_existential(matrix, options, scope),
+            Quantifier::Universal => candidate
+                .data
+                .lock()
+                .unwrap()
+                .new_universal(matrix, options, scope),
         }
 
         candidate
@@ -420,11 +478,11 @@ impl ScopeRecursiveSolver {
     ) -> Self {
         let mut prev = Vec::new();
         for child_scope_id in &matrix.prefix.next_scopes[scope_id.to_usize()] {
-            prev.push(Self::init_abstraction_recursively(
+            prev.push(Arc::new(Mutex::new(Self::init_abstraction_recursively(
                 matrix,
                 options,
                 *child_scope_id,
-            ))
+            ))))
         }
         let scope = &matrix.prefix.scopes[scope_id.to_usize()];
         let result = Self::new(matrix, options, scope, prev);
@@ -497,8 +555,8 @@ impl ScopeRecursiveSolver {
 
     fn solve_recursive(
         &mut self,
-        matrix: &mut QMatrix,
-        global: &mut GlobalSolverData,
+        matrix: Arc<RwLock<QMatrix>>,
+        global: GlobalSolverData,
     ) -> SolverResult {
         trace!("solve_recursive");
 
@@ -507,116 +565,170 @@ impl ScopeRecursiveSolver {
         }
 
         // mutable split
-        let current = &mut self.data;
-        let next = &mut self.next;
+        let current = &self.data;
+        let next = &self.next;
 
-        let good_result = if current.is_universal {
+        let current_data = current.lock().unwrap();
+
+        let good_result = if current_data.is_universal {
             SolverResult::Unsatisfiable
         } else {
             SolverResult::Satisfiable
         };
-        let bad_result = if current.is_universal {
+        let bad_result = if current_data.is_universal {
             SolverResult::Satisfiable
         } else {
             SolverResult::Unsatisfiable
         };
         debug_assert!(good_result != bad_result);
+        drop(current_data);
 
         loop {
+            let mut current_data = current.lock().unwrap();
             debug!("");
             info!(
                 "solve scope {} at level {}",
-                current.scope_id, current.level
+                current_data.scope_id, current_data.level
             );
 
             #[cfg(feature = "statistics")]
-            let mut timer = current
+            let mut timer = current_data
                 .statistics
                 .start(SolverScopeEvents::SolveScopeAbstraction);
 
-            match current.check_candidate_exists(next) {
+            match current_data.check_candidate_exists(next) {
                 Lbool::True => {
                     // there is a candidate solution, verify it recursively
-                    current.update_assignment();
+                    current_data.update_assignment();
 
                     if next.is_empty() {
                         // innermost scope, propagate result to outer scopes
-                        debug_assert!(!current.is_universal);
+                        debug_assert!(!current_data.is_universal);
                         //current.entry.clear();
-                        current.entry_minimization(matrix);
+                        current_data.entry_minimization(&*matrix.read().unwrap());
                         return good_result;
                     }
 
-                    current.get_assumptions(matrix, next, &global.options);
+                    current_data.get_assumptions(
+                        &*matrix.read().unwrap(),
+                        next,
+                        global.options.clone(),
+                    );
 
                     #[cfg(feature = "statistics")]
                     timer.stop();
 
-                    current.sub_result = good_result;
-                    for scope in next.iter_mut() {
-                        let result = scope.solve_recursive(matrix, global);
-                        if result == bad_result {
-                            debug_assert!(result == bad_result);
-                            current.sub_result = bad_result;
+                    current_data.sub_result = good_result;
+                    drop(current_data);
+                    let next: Vec<Arc<Mutex<ScopeRecursiveSolver>>> =
+                        next.iter().cloned().collect();
+                    let res: Vec<SolverResult> = next
+                        .par_iter()
+                        .flat_map({
+                            let global = global.clone();
+                            let matrix = matrix.clone();
+                            move |scope| {
+                                let result = scope
+                                    .lock()
+                                    .unwrap()
+                                    .solve_recursive(matrix.clone(), global.clone());
+                                if result == good_result {
+                                    return None;
+                                }
+                                debug_assert!(result == bad_result);
+                                let mut current_data = current.lock().unwrap();
+                                current_data.sub_result = bad_result;
 
-                            #[cfg(feature = "statistics")]
-                            let mut timer = current.statistics.start(SolverScopeEvents::Refinement);
+                                #[cfg(feature = "statistics")]
+                                let mut timer =
+                                    current_data.statistics.start(SolverScopeEvents::Refinement);
 
-                            let new_assignments =
-                                current.update_expansion_tree(matrix, scope, global);
+                                let new_assignments =
+                                    current_data.update_expansion_tree(&mut *scope.lock().unwrap());
 
-                            let skip_level = global.options.skip_levels.is_some()
-                                && !current.is_influenced_by_witness(matrix, scope);
+                                let skip_level = global.options.skip_levels.is_some()
+                                    && !current_data.is_influenced_by_witness(
+                                        &*matrix.read().unwrap(),
+                                        &mut *scope.lock().unwrap(),
+                                    );
 
-                            if !skip_level
-                                || global.options.skip_levels.unwrap() == SkipLevelMode::Refinements
-                            {
-                                current.refine(matrix, scope, global, new_assignments.clone());
-                            }
-                            if skip_level {
-                                // copy witness
-                                current.entry.clear();
-                                current.entry.or(&scope.data.entry);
-
-                                // push assignments as well
-                                if global.options.skip_levels.unwrap()
-                                    == SkipLevelMode::NoRefinements
+                                if !skip_level
+                                    || global.options.skip_levels.unwrap()
+                                        == SkipLevelMode::Refinements
                                 {
-                                    current.current_expansions.extend(new_assignments);
+                                    current_data.refine(
+                                        &*matrix.read().unwrap(),
+                                        &mut *scope.lock().unwrap(),
+                                        global.clone(),
+                                        new_assignments.clone(),
+                                    );
+                                }
+                                if skip_level {
+                                    // copy witness
+                                    current_data.entry.clear();
+                                    current_data.entry.or(&scope
+                                        .lock()
+                                        .unwrap()
+                                        .data
+                                        .lock()
+                                        .unwrap()
+                                        .entry);
+
+                                    // push assignments as well
+                                    if global.options.skip_levels.unwrap()
+                                        == SkipLevelMode::NoRefinements
+                                    {
+                                        current_data.current_expansions.extend(new_assignments);
+                                    }
+
+                                    return Some(bad_result);
                                 }
 
-                                return bad_result;
-                            }
+                                if global.options.build_conflict_clauses {
+                                    current_data.extract_conflict_clause(
+                                        &mut *matrix.write().unwrap(),
+                                        &mut *scope.lock().unwrap(),
+                                    );
+                                }
 
-                            if global.options.build_conflict_clauses {
-                                current.extract_conflict_clause(matrix, scope);
+                                #[cfg(feature = "statistics")]
+                                timer.stop();
+                                None
                             }
-
-                            #[cfg(feature = "statistics")]
-                            timer.stop();
-                        }
+                        })
+                        .collect();
+                    if let Some(&res) = res.first() {
+                        assert_eq!(res, bad_result);
+                        return res;
                     }
+                    let mut current_data = current.lock().unwrap();
 
-                    if current.sub_result == bad_result {
+                    if current_data.sub_result == bad_result {
                         continue;
                     } else {
                         // copy entries from inner quantifier
-                        current.entry.clear();
+                        current_data.entry.clear();
                         for scope in next.iter() {
-                            current.entry.or(&scope.data.entry);
+                            current_data.entry.or(&scope
+                                .lock()
+                                .unwrap()
+                                .data
+                                .lock()
+                                .unwrap()
+                                .entry);
                         }
                         // apply entry optimization
-                        if current.is_universal {
-                            current.unsat_propagation(matrix);
+                        if current_data.is_universal {
+                            current_data.unsat_propagation();
                         } else {
-                            current.entry_minimization(matrix);
+                            current_data.entry_minimization(&*matrix.read().unwrap());
                         }
                         return good_result;
                     }
                 }
                 Lbool::False => {
                     // there is no candidate solution, return witness
-                    current.get_unsat_core();
+                    current_data.get_unsat_core();
                     return bad_result;
                 }
                 _ => panic!("inconsistent internal state"),
@@ -633,7 +745,7 @@ impl ScopeRecursiveSolver {
         }
     }
 
-    fn split(&mut self) -> (&mut ScopeSolverData, &mut Vec<Self>) {
+    fn split(&mut self) -> (&mut Arc<Mutex<ScopeSolverData>>, &mut Vec<Arc<Mutex<Self>>>) {
         (&mut self.data, &mut self.next)
     }
 
@@ -641,11 +753,14 @@ impl ScopeRecursiveSolver {
         &self,
         mut assignment: FxHashMap<Variable, bool>,
     ) -> FxHashMap<Variable, bool> {
-        if self.data.is_universal {
-            assignment.extend(self.data.assignments.iter());
+        {
+            let data = self.data.lock().unwrap();
+            if data.is_universal {
+                assignment.extend(data.assignments.iter());
+            }
         }
         for next in &self.next {
-            assignment = next.get_universal_assignmemnt(assignment);
+            assignment = next.lock().unwrap().get_universal_assignmemnt(assignment);
         }
         assignment
     }
@@ -1132,11 +1247,18 @@ impl ScopeSolverData {
         }
     }
 
-    fn check_candidate_exists(&mut self, next: &mut Vec<ScopeRecursiveSolver>) -> Lbool {
+    fn check_candidate_exists(&mut self, next: &Vec<Arc<Mutex<ScopeRecursiveSolver>>>) -> Lbool {
         // we need to reset abstraction entries for next scopes, since some entries may be pushed down
         self.entry.and(&self.relevant_clauses);
         for scope in next {
-            scope.data.entry.clone_from(&self.entry);
+            scope
+                .lock()
+                .unwrap()
+                .data
+                .lock()
+                .unwrap()
+                .entry
+                .clone_from(&self.entry);
         }
 
         self.sat_solver_assumptions.clear();
@@ -1217,24 +1339,24 @@ impl ScopeSolverData {
     fn get_assumptions(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Vec<ScopeRecursiveSolver>,
-        options: &SolverOptions,
+        next: &Vec<Arc<Mutex<ScopeRecursiveSolver>>>,
+        options: Arc<SolverOptions>,
     ) {
         trace!("get_assumptions");
 
         // assumptions in `next` were already cleared in check_candidate_exists
 
         if self.is_universal {
-            self.get_universal_assumptions(matrix, next, options);
+            self.get_universal_assumptions(matrix, next, &*options);
         } else {
-            self.get_existential_assumptions(matrix, next, options);
+            self.get_existential_assumptions(matrix, next, &*options);
         }
     }
 
     fn get_existential_assumptions(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Vec<ScopeRecursiveSolver>,
+        next: &Vec<Arc<Mutex<ScopeRecursiveSolver>>>,
         options: &SolverOptions,
     ) {
         #[cfg(debug_assertions)]
@@ -1267,8 +1389,15 @@ impl ScopeSolverData {
 
         for (&clause_id, &b_lit) in &self.sat.b_literals {
             if self.sat.sat.is_true(b_lit) {
-                next.iter_mut().for_each(|ref mut scope| {
-                    scope.data.entry.set(clause_id as usize, true);
+                next.iter().for_each(|ref mut scope| {
+                    scope
+                        .lock()
+                        .unwrap()
+                        .data
+                        .lock()
+                        .unwrap()
+                        .entry
+                        .set(clause_id as usize, true);
                 });
                 continue;
             }
@@ -1285,8 +1414,15 @@ impl ScopeSolverData {
             // assumption literal was set, but it may be still true that the clause is satisfied
             let clause = &matrix.clauses[clause_id as usize];
             if clause.is_satisfied_by_assignment(&self.assignments) {
-                next.iter_mut().for_each(|ref mut scope| {
-                    scope.data.entry.set(clause_id as usize, true);
+                next.iter().for_each(|ref mut scope| {
+                    scope
+                        .lock()
+                        .unwrap()
+                        .data
+                        .lock()
+                        .unwrap()
+                        .entry
+                        .set(clause_id as usize, true);
                 });
                 continue;
             }
@@ -1302,7 +1438,7 @@ impl ScopeSolverData {
     fn get_universal_assumptions(
         &mut self,
         matrix: &QMatrix,
-        next: &mut Vec<ScopeRecursiveSolver>,
+        next: &Vec<Arc<Mutex<ScopeRecursiveSolver>>>,
         options: &SolverOptions,
     ) {
         #[cfg(debug_assertions)]
@@ -1376,8 +1512,15 @@ impl ScopeSolverData {
                 }*/
             }
 
-            next.iter_mut().for_each(|ref mut scope| {
-                scope.data.entry.set(clause_id as usize, true);
+            next.iter().for_each(|ref mut scope| {
+                scope
+                    .lock()
+                    .unwrap()
+                    .data
+                    .lock()
+                    .unwrap()
+                    .entry
+                    .set(clause_id as usize, true);
             });
 
             #[cfg(debug_assertions)]
@@ -1443,8 +1586,10 @@ impl ScopeSolverData {
     fn is_influenced_by_witness(&self, matrix: &QMatrix, next: &mut ScopeRecursiveSolver) -> bool {
         trace!("is_influenced_by_witness");
 
+        let data = &next.data;
+        let data = data.lock().unwrap();
         // witness
-        let entry = &next.data.entry;
+        let entry = &data.entry;
 
         // check if influenced by current scope
         for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
@@ -1464,9 +1609,7 @@ impl ScopeSolverData {
     /// Returns the assignments representing the partial expansion tree that leads to the refutation
     fn update_expansion_tree(
         &mut self,
-        _matrix: &QMatrix,
         next: &mut ScopeRecursiveSolver,
-        _global: &mut GlobalSolverData,
     ) -> Vec<FxHashMap<Variable, bool>> {
         trace!("update expansion tree");
 
@@ -1475,10 +1618,13 @@ impl ScopeSolverData {
         }
 
         // store universal assignment
-        debug_assert!(next.data.is_universal);
+        let next_data = next.data.lock().unwrap();
+        debug_assert!(next_data.is_universal);
+        let univ_assignment = &next_data.assignments;
+
         debug_assert_eq!(next.next.len(), 1);
-        let next_exist = &mut next.next[0].data;
-        let univ_assignment = &next.data.assignments;
+        let next_next = &mut next.next[0].lock().unwrap();
+        let next_exist = &mut next_next.data.lock().unwrap();
         let mut assignments = std::mem::replace(&mut next_exist.current_expansions, vec![]);
         for assignment in &mut assignments {
             assignment.extend(univ_assignment);
@@ -1486,7 +1632,7 @@ impl ScopeSolverData {
             //println!("x {:?}", _copy);
         }
 
-        if next.next[0].next.is_empty() {
+        if next_next.next.is_empty() {
             // base case, innermost quantifier
             debug_assert!(assignments.is_empty());
             let _copy: Assignment = univ_assignment.clone().into();
@@ -1502,13 +1648,13 @@ impl ScopeSolverData {
         &mut self,
         matrix: &QMatrix,
         next: &mut ScopeRecursiveSolver,
-        global: &mut GlobalSolverData,
+        global: GlobalSolverData,
         assignments: Vec<FxHashMap<Variable, bool>>,
     ) {
         trace!("refine");
 
         let options = &global.options;
-        let conflicts = &mut global.conflicts;
+        let conflicts = &mut global.conflicts.lock().unwrap();
 
         let mut equal_universal_assignments = false;
 
@@ -1536,7 +1682,7 @@ impl ScopeSolverData {
 
         // store entry in conflicts
         if !self.is_universal && options.expansion.conflict_clause_expansion {
-            conflicts.push((next.data.entry.clone(), self.level));
+            conflicts.push((next.data.lock().unwrap().entry.clone(), self.level));
         }
 
         if options.expansion.expansion_refinement.is_some()
@@ -1562,7 +1708,7 @@ impl ScopeSolverData {
             self.refinement_literal_subsumption_optimization(matrix, next);
         }
 
-        let entry = &next.data.entry;
+        let entry = &next.data.lock().unwrap().entry;
         let blocking_clause = &mut self.sat_solver_assumptions;
         blocking_clause.clear();
 
@@ -1600,7 +1746,7 @@ impl ScopeSolverData {
         let blocking_clause = &mut self.sat_solver_assumptions;
         blocking_clause.clear();
 
-        let entry = &next.data.entry;
+        let entry = &next.data.lock().unwrap().entry;
         let level = self.level;
 
         // was the clause processed before?
@@ -1697,7 +1843,7 @@ impl ScopeSolverData {
         next: &mut ScopeRecursiveSolver,
     ) -> bool {
         let mut successful = false;
-        let entry = &mut next.data.entry;
+        let entry = &mut next.data.lock().unwrap().entry;
         'outer: for i in 0..entry.len() {
             if !entry[i] {
                 continue;
@@ -1766,7 +1912,7 @@ impl ScopeSolverData {
             return true;
         }
         debug_assert_eq!(next.next.len(), 1, "scope {:?}", self.scope_id);
-        next.next[0].next.is_empty()
+        next.next[0].lock().unwrap().next.is_empty()
     }
 
     fn expansion_refinement(
@@ -1780,17 +1926,26 @@ impl ScopeSolverData {
         trace!("expansion_refinement");
         //let universal_assignment = next.get_universal_assignmemnt(FxHashMap::default());
         let (data, next) = next.split();
-        debug_assert!(data.is_universal);
+        debug_assert!(data.lock().unwrap().is_universal);
         debug_assert_eq!(next.len(), 1);
         let next = &next[0];
 
         // create the refinement clauses
         for (clause_id, clause) in matrix.enumerate() {
-            if clause_id as usize >= next.data.relevant_clauses.len() {
+            if clause_id as usize
+                >= next
+                    .lock()
+                    .unwrap()
+                    .data
+                    .lock()
+                    .unwrap()
+                    .relevant_clauses
+                    .len()
+            {
                 // clause was added to matrix, but not yet contained in solver
                 continue;
             }
-            if !next.data.clause_tree_branch[clause_id as usize] {
+            if !next.lock().unwrap().data.lock().unwrap().clause_tree_branch[clause_id as usize] {
                 continue;
             }
             // check if assignment belongs to a different path in the prefix tree
@@ -1817,7 +1972,7 @@ impl ScopeSolverData {
                 continue;
             }
 
-            self.expand_clause(matrix, data, clause_id, clause, &universal_assignment);
+            self.expand_clause(matrix, clause_id, clause, &universal_assignment);
         }
 
         if !options.expansion.conflict_clause_expansion {
@@ -1831,7 +1986,13 @@ impl ScopeSolverData {
                     continue;
                 }
                 for i in 0..self.expansions.len() {
-                    self.expand_conflict_clause(matrix, data, &conflict.0, conflict.1, i);
+                    self.expand_conflict_clause(
+                        matrix,
+                        &*data.lock().unwrap(),
+                        &conflict.0,
+                        conflict.1,
+                        i,
+                    );
                 }
             }
         }
@@ -1842,7 +2003,7 @@ impl ScopeSolverData {
         for conflict in conflicts.iter() {
             self.expand_conflict_clause(
                 matrix,
-                data,
+                &*data.lock().unwrap(),
                 &conflict.0,
                 conflict.1,
                 self.expansions.len() - 1,
@@ -1855,7 +2016,6 @@ impl ScopeSolverData {
     fn expand_clause(
         &mut self,
         matrix: &QMatrix,
-        _data: &Self,
         clause_id: ClauseId,
         clause: &Clause,
         universal_assignment: &FxHashMap<Variable, bool>,
@@ -2071,7 +2231,7 @@ impl ScopeSolverData {
     }
 
     /// filters those clauses that are only influenced by this quantifier (or inner)
-    fn unsat_propagation(&mut self, _matrix: &QMatrix) {
+    fn unsat_propagation(&mut self) {
         self.entry.difference(&self.max_clauses);
     }
 
@@ -2085,7 +2245,7 @@ impl ScopeSolverData {
         let mut literals = Vec::new();
 
         // extract conflict clause from entry
-        let entry = &next.data.entry;
+        let entry = &next.data.lock().unwrap().entry;
 
         for (i, _) in entry.iter().enumerate().filter(|&(_, val)| val) {
             let clause = &matrix.clauses[i];
@@ -2120,7 +2280,7 @@ mod tests {
         let instance = "p cnf 0 0";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 0 0\n");
     }
@@ -2138,7 +2298,7 @@ e 3 4 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\n");
     }
@@ -2156,7 +2316,7 @@ e 3 4 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2199,7 +2359,7 @@ e 4 5 6 7 8 9 10 11 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 11 24\n");
     }
@@ -2219,7 +2379,7 @@ e 2 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
     }
@@ -2234,7 +2394,7 @@ p cnf 1 2
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 1 2\n");
     }
@@ -2251,7 +2411,7 @@ e 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 2\n");
     }
@@ -2271,7 +2431,7 @@ e 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 2 0\n");
     }
@@ -2293,7 +2453,7 @@ e 2 4 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 5\n");
     }
@@ -2313,7 +2473,7 @@ e 2 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 3\nV 4 0\n");
     }
@@ -2333,7 +2493,7 @@ e 2 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 3 4\nV 3 0\n");
     }
@@ -2353,7 +2513,7 @@ e 1 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2377,7 +2537,7 @@ e 2 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 5 5\n");
     }
@@ -2397,7 +2557,7 @@ e 1 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 4 4\nV 2 0\n");
     }
@@ -2417,7 +2577,7 @@ e 1 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 4 4\n");
     }
@@ -2442,7 +2602,7 @@ e 1 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 7 6\nV 7 0\n");
     }
@@ -2464,7 +2624,7 @@ e 2 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 5 4\nV 1 0\n");
     }
@@ -2487,7 +2647,7 @@ e 7 8 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2513,7 +2673,7 @@ e 2 3 6 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Unsatisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 0 8 6\nV 1 0\n");
     }
@@ -2535,7 +2695,7 @@ e 3 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2574,7 +2734,7 @@ e 14 15 16 17 18 19 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 19 15\n");
     }
@@ -2599,7 +2759,7 @@ e 5 6 7 8 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2624,7 +2784,7 @@ e 5 6 7 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2648,7 +2808,7 @@ e 4 5 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2678,7 +2838,7 @@ e 6 9 13 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2717,7 +2877,7 @@ e 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),
@@ -2752,7 +2912,7 @@ e 8 9 10 11 12 13 14 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 14 14\nV 7 0\n");
     }
@@ -2767,7 +2927,7 @@ a 16 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(solver.qdimacs_output().dimacs(), "s cnf 1 36 0\n");
     }
@@ -2787,7 +2947,7 @@ e 3 4 0
 ";
         let mut matrix = qdimacs::parse(&instance).unwrap();
         matrix.unprenex_by_miniscoping();
-        let mut solver = CaqeSolver::new(&mut matrix);
+        let mut solver = CaqeSolver::new(matrix);
         assert_eq!(solver.solve(), SolverResult::Satisfiable);
         assert_eq!(
             solver.qdimacs_output().dimacs(),

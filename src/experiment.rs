@@ -230,7 +230,7 @@ impl ExperimentConfig {
                     if config.expansion.dependency_schemes {
                         matrix.refl_res_path_dep_scheme();
                     }
-                    let mut solver = CaqeSolver::new_with_options(&mut matrix, config);
+                    let mut solver = CaqeSolver::new_with_options(matrix, config);
                     solver.set_interrupt(interrupted);
                     let result = solver.solve();
                     #[allow(unused_assignments)]
