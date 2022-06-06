@@ -14,7 +14,7 @@ pub struct ParseError {
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "parse error: {} at {}", self, self.pos)
+        write!(f, "parse error: {} at {}", self.msg, self.pos)
     }
 }
 
